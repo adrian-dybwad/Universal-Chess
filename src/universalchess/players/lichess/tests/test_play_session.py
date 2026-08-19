@@ -655,3 +655,29 @@ def test_remote_takeback_rewinds_the_live_game():
     assert rewound == [2]
 
 
+def test_history_catch_up_is_wired_through_the_session():
+    """A multi-ply first snapshot must reach the game's catch-up hook.
+
+    How the regression manifests: catch_up_moves is never called, so joining
+    an ongoing game never replays onto the logical board or enters correction.
+    """
+    remote = LichessPlayer()
+    session = LichessPlaySession.from_players(HumanPlayer(), remote)
+    caught = []
+    session.attach(
+        player_manager=MagicMock(),
+        game_display=MagicMock(),
+        panel=MagicMock(),
+        info_overlay=MagicMock(),
+        menu_manager=MagicMock(),
+        beep=lambda *_: None,
+        set_game_result=lambda *_: None,
+        splash_seconds=5.0,
+        show_started_splash=lambda *_: None,
+        catch_up_moves=lambda ucis: caught.append(list(ucis)),
+    )
+    remote._player_is_white = True
+    remote._sync_server_moves("e2e4 e7e5 g1f3")
+    assert caught == [["e2e4", "e7e5", "g1f3"]]
+
+

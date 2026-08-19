@@ -100,6 +100,7 @@ class LichessPlaySession:
         splash_seconds: float,
         show_started_splash: Optional[Callable] = None,
         rewind_to_move_count: Optional[Callable[[int], None]] = None,
+        catch_up_moves: Optional[Callable] = None,
         player1_color: str = "white",
         on_unfinished_game: Optional[Callable[[str], None]] = None,
     ) -> None:
@@ -111,6 +112,8 @@ class LichessPlaySession:
         ``on_unfinished_game`` is called with the termination when the remote
         game ends (abort, resign, mate, timeout, draw), so the main loop can
         offer Lobby / Seek / Cancel with that reason in the header.
+        ``catch_up_moves`` replays a multi-ply first snapshot (joining a game
+        already in progress) onto the logical board and starts piece setup.
         """
         self._player_manager = player_manager
         self._game_display = game_display
@@ -134,6 +137,7 @@ class LichessPlaySession:
         self._remote.set_draw_offer_callback(self._on_draw_offer)
         self._remote.set_challenge_offer_callback(self._on_challenge_offer)
         self._remote.set_remote_takeback_callback(self._on_remote_takeback)
+        self._remote.set_history_catch_up_callback(catch_up_moves)
         self._remote.set_info_message_callback(self._on_info_message)
 
     def close(self) -> None:

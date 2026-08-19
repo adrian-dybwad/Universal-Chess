@@ -21,7 +21,7 @@ import time
 import chess
 import sys
 import inspect
-from typing import Optional
+from typing import Optional, Sequence
 
 from universalchess.board import board
 from universalchess.paths import FEN_LOG, TMP_DIR
@@ -162,6 +162,8 @@ class GameManager:
         self.move_callback = None
         self.key_callback = None
         self.takeback_callback = None
+        self.on_time_control = None
+        self.on_clock_started = None
         
         # Game metadata
         self.game_info = {
@@ -553,6 +555,58 @@ class GameManager:
         board.beep(board.SOUND_GENERAL, event_type='game_event')
         self._guide_physical_board_after_takeback()
         return popped
+
+    def apply_uci_history(self, ucis: Sequence[str]) -> int:
+        """Push already-played UCIs and guide the pieces to that position.
+
+        Joining a remote game in progress streams every ply at once. Those
+        plies are not a single forced move from the opening: they must land
+        on the logical board, then correction mode asks for the setup, the
+        same way resume does for a saved game. Returns how many plies were
+        applied. A later ply that is illegal against the position so far
+        stops the replay rather than pushing a fabricated continuation.
+
+        The clock counters are baselined after the pushes so the first turn
+        event does not credit an increment for every replayed ply.
+        """
+        applied = 0
+        for uci in ucis:
+            try:
+                self._game_state.push_uci(uci)
+            except ValueError as e:
+                log.warning(
+                    f"[GameManager] Catch-up stopped at {uci!r} after {applied} "
+                    f"half-move(s): {e}"
+                )
+                break
+            applied += 1
+        if applied == 0:
+            return 0
+
+        self._clock_service.sync_move_counters_to_position()
+        current = board.getChessState()
+        expected_state = self._chess_board_to_state(self.chess_board)
+        if expected_state is None:
+            return applied
+        if current is None:
+            log.warning(
+                "[GameManager] Physical board unread; entering correction for "
+                f"{self.chess_board.fen()}"
+            )
+            self._enter_correction_mode()
+            return applied
+        if ChessGameState.states_match(current, expected_state):
+            log.info("[GameManager] Physical board matches caught-up position")
+            self._switch_turn_with_event()
+            return applied
+        log.info(
+            "[GameManager] Physical board does not match caught-up position, "
+            "entering correction mode"
+        )
+        board.beep(board.SOUND_GENERAL, event_type="game_event")
+        self._enter_correction_mode()
+        self._provide_correction_guidance(current, expected_state)
+        return applied
 
     def takeback_to_ply(self, target_ply: int) -> int:
         """Undo every move after ``target_ply`` so that ply becomes the live tip.
@@ -1626,18 +1680,37 @@ class GameManager:
                 players_state.set_player_names(new_white, new_black)
     
     def set_clock(self, white_seconds: int, black_seconds: int):
-        """Set the clock times for both players.
-        
-        Used by Lichess to sync clock times from the server.
-        
+        """Set remaining times from a remote clock and start ticking.
+
+        Lichess ``wtime``/``btime`` are remaining at that instant, and White's
+        clock is already running on the server at game start. Applying the
+        snapshot without starting left the e-paper frozen while the browser
+        counted down.
+
         Args:
             white_seconds: White player's remaining time in seconds
             black_seconds: Black player's remaining time in seconds
         """
         try:
             self._clock_service.set_times(white_seconds, black_seconds)
+            if self._clock_service.timed_mode and not self._game_state.is_game_over:
+                self._clock_service.start()
+                if self.on_clock_started is not None:
+                    self.on_clock_started()
         except Exception as e:
             log.debug(f"[GameManager.set_clock] Error setting clock times: {e}")
+
+    def set_time_control(self, time_control) -> None:
+        """Replace the local Game-menu control with the remote game's control.
+
+        Lichess ``gameFull`` carries the real Fischer pair (or untimed
+        correspondence). Configuring here updates the clock service; the app
+        wires ``on_time_control`` so the e-paper spec matches before widgets
+        are built.
+        """
+        self._clock_service.configure(time_control)
+        if self.on_time_control is not None:
+            self.on_time_control(time_control)
     
     def computer_move(self, uci_move: str, forced: bool = True):
         """Set the computer move that the player is expected to make.

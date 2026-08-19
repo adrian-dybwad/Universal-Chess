@@ -183,6 +183,10 @@ class LichessPlayer(Player):
     3. on_piece_event() forms move from lift/place
     4. If move matches pending_move - submits via move_callback
     5. If move doesn't match - board needs correction, no submission
+
+    Joining a game that already has several plies is not that flow: the first
+    snapshot catches up the logical board and asks for a physical setup.
+
     
     Thread Model:
     - start() authenticates and begins seek/stream
@@ -229,10 +233,15 @@ class LichessPlayer(Player):
         # Clock state (in seconds)
         self._white_time: int = 0
         self._black_time: int = 0
+        self._time_control_callback = None
         
         # Move tracking for remote move detection
         self._remote_moves: str = ''
         self._last_processed_moves: str = ''
+        # Distinguishes "no snapshot yet" from "opening snapshot, moves still
+        # empty". A first snapshot with our own last ply must catch up; a live
+        # first ply after an empty gameFull must stay on the pending path.
+        self._move_snapshot_seen: bool = False
         
         # Pending move from server (for validation)
         self._pending_move: Optional[chess.Move] = None
@@ -256,6 +265,7 @@ class LichessPlayer(Player):
         self._challenge_prompt_lock = threading.Lock()
         self._challenge_prompt_open = False
         self._remote_takeback_callback = None
+        self._history_catch_up_callback = None
         self._info_message_callback: Optional[Callable[[str], None]] = None
     
     @property
@@ -315,12 +325,15 @@ class LichessPlayer(Player):
         *,
         clock_callback: Optional[Callable[[int, int], None]] = None,
         game_info_callback: Optional[Callable[[str, str, str, str], None]] = None,
+        time_control_callback=None,
     ) -> None:
-        """Wire ProtocolManager clock and name updates from the Lichess stream."""
+        """Wire ProtocolManager time-control, remaining, and name updates."""
         if clock_callback is not None:
             self.set_clock_callback(clock_callback)
         if game_info_callback is not None:
             self.set_game_info_callback(game_info_callback)
+        if time_control_callback is not None:
+            self._time_control_callback = time_control_callback
     
     def set_game_over_callback(self, callback: Callable[[str, str, Optional[str]], None]) -> None:
         """Set callback for game over (result, termination_type, winner).
@@ -367,6 +380,17 @@ class LichessPlayer(Player):
         string. The game must pop to that count; this player cannot.
         """
         self._remote_takeback_callback = callback
+
+    def set_history_catch_up_callback(self, callback) -> None:
+        """Called with the new UCIs when the first snapshot, or a later gap,
+        is more than a single live ply.
+
+        Joining an ongoing game streams the moves already played. Those are
+        not a single forced move from the opening, including the case where
+        the only ply is ours (an echo would drop it and leave the opening).
+        The game must replay them and ask for a physical setup.
+        """
+        self._history_catch_up_callback = callback
     
     def set_info_message_callback(self, callback: Callable[[str], None]) -> None:
         """Set callback for informational messages to display.
@@ -1175,6 +1199,7 @@ class LichessPlayer(Player):
         
         # Extract player info from initial state
         if 'white' in state and 'black' in state:
+            self._apply_lichess_time_control(state)
             self._extract_player_info(state)
         
         # Extract moves and status from the payload that actually carries them.
@@ -1182,15 +1207,14 @@ class LichessPlayer(Player):
         if 'state' in state:
             inner_state = state['state']
             moves = inner_state.get('moves', '')
-            self._process_time_update(inner_state)
             # Check for takeback/draw offers in nested state
             if 'wtakeback' in inner_state or 'btakeback' in inner_state:
                 self._handle_takeback_state(inner_state)
             if 'wdraw' in inner_state or 'bdraw' in inner_state:
                 self._handle_draw_state(inner_state)
         else:
+            inner_state = state
             moves = state.get('moves', '')
-            self._process_time_update(state)
             # Check for takeback/draw offers
             if 'wtakeback' in state or 'btakeback' in state:
                 self._handle_takeback_state(state)
@@ -1201,6 +1225,9 @@ class LichessPlayer(Player):
         
         if moves != self._remote_moves:
             self._sync_server_moves(moves)
+
+        # Remaining after catch-up so the side to move is the one that ticks.
+        self._process_time_update(inner_state)
         
         status, winner = lichess_event_status_and_winner(state)
         self._check_game_status(status, winner)
@@ -1317,21 +1344,26 @@ class LichessPlayer(Player):
 
         self._set_state(PlayerState.READY)
     
+    def _apply_lichess_time_control(self, event: dict) -> None:
+        """Install the Lichess Fischer (or untimed) control from ``gameFull``."""
+        from .clock import time_control_from_lichess_event
+
+        spec = time_control_from_lichess_event(event)
+        if spec is None or self._time_control_callback is None:
+            return
+        self._time_control_callback(spec)
+
     def _process_time_update(self, state: dict):
-        """Process clock time update."""
+        """Apply Lichess remaining times (milliseconds or timedelta)."""
         try:
-            wtime = state.get('wtime')
-            btime = state.get('btime')
-            
-            if wtime is not None and isinstance(wtime, int):
-                self._white_time = wtime // 1000
-            
-            if btime is not None and isinstance(btime, int):
-                self._black_time = btime // 1000
-            
+            from .clock import remaining_from_lichess_state
+
+            remaining = remaining_from_lichess_state(state)
+            if remaining is None:
+                return
+            self._white_time, self._black_time = remaining
             if self._clock_callback:
                 self._clock_callback(self._white_time, self._black_time)
-                
         except Exception as e:
             log.warning(f"[LichessPlayer] Error processing time: {e}")
     
@@ -1341,6 +1373,10 @@ class LichessPlayer(Player):
         The stream used to treat any change as a new last move. A takeback is
         a shorter prefix; without popping, Lichess and the board diverge.
         """
+        first_snapshot = (
+            not self._move_snapshot_seen and not self._last_processed_moves
+        )
+        self._move_snapshot_seen = True
         removed, added = server_move_list_delta(self._last_processed_moves, moves)
         self._remote_moves = moves
         if removed:
@@ -1352,6 +1388,20 @@ class LichessPlayer(Player):
             kept = (self._last_processed_moves.split() if self._last_processed_moves else [])
             self._last_processed_moves = " ".join(kept[: len(kept) - removed])
         if not added:
+            self._last_processed_moves = moves
+            return
+        if first_snapshot or len(added) > 1:
+            # First snapshot, or several plies at once (joining mid-game / a
+            # gap). A single own ply on rejoin used to be ignored as an echo,
+            # which left the logical board at the opening so later opponent
+            # moves were applied from the wrong position. Live one-ply
+            # replication still uses the pending path below.
+            log.info(
+                f"[LichessPlayer] Catching up {len(added)} half-move(s)"
+            )
+            self._pending_move = None
+            if self._history_catch_up_callback:
+                self._history_catch_up_callback(added)
             self._last_processed_moves = moves
             return
         self._check_for_remote_move()

@@ -261,16 +261,18 @@ class PlayerManager:
         *,
         clock_callback=None,
         game_info_callback=None,
+        time_control_callback=None,
     ) -> None:
         """Offer clock and game-info callbacks to both slots.
 
-        Local players no-op. A remote player forwards the server clock and
-        names. Callers must not inspect player classes.
+        Local players no-op. A remote player forwards the server time control,
+        remaining clock, and names. Callers must not inspect player classes.
         """
         for player in (self._white_player, self._black_player):
             player.bind_remote_session(
                 clock_callback=clock_callback,
                 game_info_callback=game_info_callback,
+                time_control_callback=time_control_callback,
             )
 
     def abort_remote_games(self) -> None:

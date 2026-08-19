@@ -80,7 +80,11 @@ def test_human_remote_session_hooks_are_noops():
     or do not exist on Human.
     """
     human = HumanPlayer()
-    human.bind_remote_session(clock_callback=lambda *_: None, game_info_callback=lambda *_: None)
+    human.bind_remote_session(
+        clock_callback=lambda *_: None,
+        game_info_callback=lambda *_: None,
+        time_control_callback=lambda *_: None,
+    )
     human.abort_remote_game()
     human.leave_remote_game()
     human.bind_board_cues(
@@ -99,17 +103,24 @@ def test_lichess_bind_remote_session_wires_clock_and_game_info():
 
     Failure: callbacks are not stored, so GameManager never receives clock/info.
     """
+    from universalchess.state.time_control import TimeControl
+
     player = LichessPlayer()
     clocks = []
     infos = []
+    specs = []
     player.bind_remote_session(
         clock_callback=lambda w, b: clocks.append((w, b)),
         game_info_callback=lambda *args: infos.append(args),
+        time_control_callback=lambda spec: specs.append(spec),
     )
     player._clock_callback(60, 45)
     player._game_info_callback("a", "1", "b", "2")
+    spec = TimeControl.fischer_minutes(3, 2)
+    player._time_control_callback(spec)
     assert clocks == [(60, 45)]
     assert infos == [("a", "1", "b", "2")]
+    assert specs == [spec]
 
 
 def test_player_manager_abort_and_leave_reach_only_remote_slot():

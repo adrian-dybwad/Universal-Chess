@@ -110,6 +110,7 @@ class ProtocolManager:
         player_manager.bind_remote_sessions(
             clock_callback=self._on_remote_clock_update,
             game_info_callback=self._on_remote_game_info,
+            time_control_callback=self._on_remote_time_control,
         )
         
         log.info(f"[ProtocolManager] PlayerManager set: White={player_manager.white_player.name}, Black={player_manager.black_player.name}")
@@ -212,6 +213,11 @@ class ProtocolManager:
         """
         if self.game_manager:
             self.game_manager.set_clock(white_time, black_time)
+
+    def _on_remote_time_control(self, time_control) -> None:
+        """Install the remote game's time control, replacing the Game menu spec."""
+        if self.game_manager:
+            self.game_manager.set_time_control(time_control)
     
     def _on_remote_game_info(self, white_player: str, white_rating: str,
                                black_player: str, black_rating: str):

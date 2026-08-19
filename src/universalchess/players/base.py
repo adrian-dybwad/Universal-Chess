@@ -214,12 +214,14 @@ class Player(ABC):
         *,
         clock_callback: Optional[Callable[[int, int], None]] = None,
         game_info_callback: Optional[Callable[[str, str, str, str], None]] = None,
+        time_control_callback=None,
     ) -> None:
         """Wire clock and game-info updates from an attached remote session.
 
         No-op on local players. Remote players (Lichess, later Chess.com)
-        forward server clock and names through these callbacks. ProtocolManager
-        calls this on both slots so it does not need to name a provider.
+        forward server time control, remaining clock, and names through these
+        callbacks. ProtocolManager calls this on both slots so it does not
+        need to name a provider.
         """
 
     def abort_remote_game(self) -> None:

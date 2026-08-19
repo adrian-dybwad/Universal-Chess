@@ -474,14 +474,12 @@ class DisplayManager:
         # flip matches board orientation so clock top matches board top
         # Hand-brain hints are shown in the clock widget via set_brain_hint()
         timed_mode = self._time_control_spec.is_timed
-        
-        # Set initial times only if clock hasn't been started yet
-        # This preserves times when recreating widgets (e.g., after menu exit).
-        # Uses per-side initial seconds so asymmetric (time-odds) controls seed
-        # each side correctly.
-        if timed_mode and not self._clock.is_running:
-            self._clock.set_times(self._time_control_spec.initial_seconds("white"),
-                                  self._time_control_spec.initial_seconds("black"))
+
+        # Remaining (Lichess snapshot, resume) is already on the clock.
+        # Reseeding from the spec while the countdown was still stopped
+        # restored initial time over that snapshot, so the e-paper sat ahead
+        # of the Lichess browser until a later gameState. configure() seeds
+        # a new local game; do not overwrite remaining here.
         
         # The clock's tick drives the display heartbeat (flush_now) so the panel
         # refreshes on a steady once-per-second cadence while a timed game runs;

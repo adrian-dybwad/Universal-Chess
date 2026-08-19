@@ -491,9 +491,11 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   the side the Players color control did not give the human -- White stays on
   player 1's physical side, Black on player 2, and the e-paper rotates rather
   than the pieces when the match assigns a color other than the one chosen.
-  The clock comes from the Game time control (whole minutes plus
+  The seek offers the Game time control (whole minutes plus
   Fischer increment), rated from the Rated toggle, and the rating range from the
-  bound account on the active host. A second launcher had forced Human White and
+  bound account on the active host. Once the Board API stream starts, the
+  e-paper clock follows Lichess remaining time and increment (untimed for
+  unlimited correspondence). A second launcher had forced Human White and
   minutes+0, skipped PLAY's game widgets, and froze the board when its imports
   were stale. That launcher is gone. Ongoing and Challenges still join by id, then
   sit in the same game. A Lichess player chooses a credential listed as
@@ -742,6 +744,22 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   and piece lifts to a game that is not showing. Named once in `app/session.py`,
   with a test that fails if a screen is left unclassified.
 
+- **The main loop decides what to do next, and the decision is tested**: twelve
+  conditions are consulted on every pass -- five kinds of deferred repair while a
+  game runs, seven things to settle before the menu is drawn -- and they were two
+  `if`/`continue` ladders inside the loop. Their priority was whatever order the
+  branches happened to be in, and nothing established that a condition losing a
+  pass was still waiting on the next one, which is the half that fails quietly: a
+  claim that discards what it did not act on loses a web settings change made in
+  the same moment as a game rebuild, and draining the queued piece events without
+  entering the game throws away the lift half of the user's first move. Both
+  choices are now functions of the pending state (`app/game_step.py`,
+  `app/menu_step.py`) that claim exactly one condition, with every pairing of the
+  twelve asserted in both directions. Turning the path saved at shutdown into the
+  screen to reopen had drifted into two copies of the same classification, one of
+  which handled an empty saved path and one of which would have raised on it
+  during startup, before the display exists to report it; they are now one.
+
 ### Removed
 
 - **Dead `GET /api/engines`**: superseded by `/api/engines/all`, which the web app
@@ -774,6 +792,33 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   square, so occupancy no longer matches and destination-only recovery still
   runs; putting a lifted piece back still reaches the player so the lift buffer
   is cleared.
+
+- **A chess app connected over classic Bluetooth behaved differently from the
+  same app over BLE**: what the board does when a phone app connects was written
+  twice -- once for BLE, once as a copy for RFCOMM nested inside startup -- and the
+  two had drifted in four places, each of which only ever broke on one transport.
+  Over RFCOMM the menu position was not snapshotted before the game started, so
+  suspending that game reopened the top of the main menu instead of the submenu the
+  user had been in; the board was never handed over when the app arrived while a
+  game was still being built, so it went on playing locally and ignoring the app;
+  and the controller was never told when the app disconnected, so it kept routing
+  moves to a link that was gone and pieces moved on the board did nothing. Over
+  BLE the link was never recorded in the live Bluetooth status, so a connected BLE
+  app read as "not connected" on the board and the web, with no emulator or
+  connected-since time, and the advertising indicator could not report that
+  advertising had paused because a client was connected. Both transports now share
+  one pair of handlers, and every routing test runs against both, so a difference
+  between them fails instead of waiting to be noticed.
+
+- **Turning off classic Bluetooth said nothing about it**: starting the board with
+  `--no-rfcomm` skipped the RFCOMM server through a branch with no log at all, so
+  its absence was indistinguishable from a server that had failed to start. BLE
+  reported both of its reasons; RFCOMM reported only the missing-controller one.
+  The decision of what to bring up is now made in one place from the hardware and
+  the flags together, always with the reason it was skipped, and a test covers
+  every combination of the two flags and the controller -- including the invariant
+  the branch existed for, that a board with no Bluetooth controller attempts none
+  of it and so cannot burn its only core retrying against a missing adapter.
 
 - **A request made from the board's serial, Bluetooth or web thread could be
   silently dropped**: eleven kinds of work are deferred from those threads to the
@@ -857,6 +902,36 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   did nothing. The move list is now its own widget, always built for a game,
   and UP/DOWN always pages it. Wrapping home restores the board; the eval
   panel only comes back when Show Analysis is on.
+
+- **Lichess clock sat ahead of the browser**: Remaining from the Board API
+  is a snapshot at that instant, and Lichess starts White's clock when the
+  game starts. The board applied that snapshot then left the countdown
+  stopped until the first turn, and painting the deferred game widgets
+  reseeding the spec's initial time over it. The e-paper froze at 30:00
+  (or jumped back to it) while the browser counted down. Remaining now
+  starts the timed clock, and widget paint keeps the snapshot.
+
+- **Lichess games used the Game-menu clock**: Start configured the e-paper
+  from the local 30 min / 1 min / … control even when a Lichess player was in
+  a slot, and remaining updates were applied only when ``wtime``/``btime``
+  were millisecond ints, so berserk's ``timedelta`` on later ``gameState``
+  events never snapped the widget. Correspondence unlimited
+  (``2147483647`` ms) then ran that local clock to flag. ``gameFull.clock``
+  now installs the Lichess Fischer pair (or untimed correspondence) before
+  the widgets are built, and remaining is applied from both encodings.
+
+- **Joining a Lichess game in progress left the pieces at the opening**:
+  The first Board API snapshot for an ongoing game carries every move already
+  played. The board treated that as one new remote ply to copy from the
+  start position, so the logical game stayed in the opening, the last move
+  was either ignored (if it was ours) or lit as a forced move that is not
+  legal from there, and correction never asked for a setup. Correspondence
+  rejoin after our own last move is the one-ply form of the same hole: that
+  UCI was classified as an echo and dropped, so the e-paper stayed at the
+  opening and later opponent plies were applied from there. The first
+  snapshot now replays the whole list onto the live game and enters
+  correction, the same guidance resume uses for a saved position. A single
+  new opponent ply during a live game is still one forced move.
 
 - **BACK on Waiting for game left the Lichess seek listed**: The splash
   called stop, but ``board.seek`` is a streamed POST that Lichess treats as

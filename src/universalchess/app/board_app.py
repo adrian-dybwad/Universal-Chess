@@ -97,7 +97,20 @@ from universalchess.players.settings import (
 )
 
 from universalchess.app import startup_splash
+from universalchess.app.bluetooth_plan import plan_bluetooth
+from universalchess.managers.bluetooth_status_state import (
+    TRANSPORT_BLE,
+    TRANSPORT_RFCOMM,
+)
 from universalchess.app.game_runtime import GameRuntime
+from universalchess.app.game_step import GameAction, claim_game_step
+from universalchess.app.menu_step import (
+    POSITIONS_MENU_TOKEN,
+    MenuAction,
+    StartupRestore,
+    claim_menu_step,
+    plan_startup_restore,
+)
 from universalchess.app.key_recovery import KeyRecovery
 from universalchess.app.lifecycle import Lifecycle
 from universalchess.app.modals import Modals
@@ -1967,9 +1980,16 @@ def _start_game_mode(
 
     # Resolve the full time control (preset / custom / legacy minutes) from
     # settings so the clock supports increment, delay, stages, and asymmetric
-    # times -- not just the legacy symmetric minutes.
-    from universalchess.state.time_control import build_time_control
-    time_control_spec = build_time_control(game)
+    # times -- not just the legacy symmetric minutes. A Lichess game's control
+    # arrives on ``gameFull``, not the Game menu: start untimed so deferred
+    # widget paint does not show a local 30-minute clock, then replace the spec
+    # when the stream delivers it.
+    from universalchess.state.time_control import TimeControl, build_time_control
+    time_control_spec = (
+        TimeControl.sudden_death_minutes(0)
+        if lichess_session is not None
+        else build_time_control(game)
+    )
 
     # Create DisplayManager - handles all game widgets (chess board, analysis, clock)
     # Analysis runs in a background thread so it doesn't block move processing
@@ -2111,6 +2131,8 @@ def _start_game_mode(
     # Create GameManager and set LED callbacks
     from universalchess.managers.game import GameManager
     game_manager = GameManager(save_to_database=save_to_database)
+    game_manager.on_time_control = _game.display.set_time_control_spec
+    game_manager.on_clock_started = _game.display.start_clock
     # Apply the Chess960 start now that the GameManager constructor has reset the
     # shared game state. configure_start sets the chess960 flag before the FEN so
     # castling rights parse correctly, and notifies the board widget (subscribed
@@ -2232,6 +2254,7 @@ def _start_game_mode(
             set_game_result=_set_lichess_result,
             splash_seconds=START_PLAYING_SPLASH_SECONDS,
             rewind_to_move_count=game_manager.sync_move_count,
+            catch_up_moves=game_manager.apply_uci_history,
             player1_color=p1.color,
             on_unfinished_game=_schedule_lichess_after_unfinished,
         )
@@ -2378,12 +2401,15 @@ def _start_game_mode(
             # menu) takes effect for this fresh game, matching the full
             # _start_game_mode start path. build_time_control only reads in-memory
             # settings, so this is safe on the controller event thread (as is the
-            # existing reset_clock below).
-            from universalchess.state.time_control import build_time_control
-            _game.display.set_time_control_spec(
-                build_time_control(_get_settings().game)
-            )
-            _game.display.reset_clock()
+            # existing reset_clock below). A Lichess game rebuilds the remote
+            # player instead of starting a local-clock game; applying the Game
+            # menu here would replace the server clock for a frame.
+            if lichess_session is None:
+                from universalchess.state.time_control import build_time_control
+                _game.display.set_time_control_spec(
+                    build_time_control(_get_settings().game)
+                )
+                _game.display.reset_clock()
             # Clear brain hints for both players on new game
             _game.display.clear_brain_hint('white')
             _game.display.clear_brain_hint('black')
@@ -2441,8 +2467,10 @@ def _start_game_mode(
             # stage time) for any move just completed. Driven by the game's ply
             # count, so calling it on every turn event is safe and idempotent:
             # the initial turn (no move yet) and repeated/resume events add
-            # nothing.
-            _game.display.apply_clock_move()
+            # nothing. Lichess remaining already includes increment; crediting
+            # it locally as well would add it twice until the next gameState.
+            if lichess_session is None:
+                _game.display.apply_clock_move()
         elif isinstance(event, str) and event.startswith("Termination."):
             # Game ended (checkmate, stalemate, resign, draw, etc.)
             # GameOverWidget already showed itself via ChessGameState observer
@@ -3083,6 +3111,110 @@ def _process_pending_board_command() -> None:
         log.warning(f"[App] Unknown board command: {command}")
 
 
+def _rebuild_players_for_new_game(lichess_reason: Optional[str]) -> None:
+    """Restart play with players re-read from settings, asking first when remote.
+
+    A board-reset new game was detected while player-defining settings had changed
+    (e.g. the engine was changed from the web), so the stale players must be torn
+    down and rebuilt. Runs on the main loop because it rebuilds the display.
+
+    Args:
+        lichess_reason: Why a remote game ended, which makes the prompt report the
+            termination instead of offering a new seek. None for a local rebuild.
+    """
+    from universalchess.players.lichess.lobby import board_reset_rebuild_action
+
+    # The live players decide, not the saved slots: a game started from the lobby
+    # runs with a Lichess pairing the slots do not name, and rebuilding it without
+    # asking would drop a game in progress for a local one.
+    action = board_reset_rebuild_action(
+        _menu_manager,
+        is_lichess=_lichess_is_a_player() or _live_game_is_remote(),
+        reason=lichess_reason,
+    )
+
+    if action == "menu":
+        log.info(f"[App] Lichess next-game prompt declined (reason={lichess_reason})")
+        _return_to_menu("Lichess seek declined")
+        return
+
+    if action == "lobby":
+        # The pieces are back at the start (or the remote game already ended) and
+        # the lobby was asked for, so leave before the lobby is drawn, then start
+        # whatever the lobby stashes (ongoing game, challenge, or seek).
+        log.info(
+            f"[App] Lichess lobby opened after next-game prompt (reason={lichess_reason})"
+        )
+        _return_to_menu("Lichess lobby")
+        lobby_result = _handle_lichess_menu()
+        if is_break_result(lobby_result):
+            _enter_game(explicit_lichess_seek=_is_play_start(lobby_result))
+        elif signal_from(lobby_result) == "START_GAME":
+            _start_game_mode()
+        return
+
+    if action == "seek":
+        # Unconditional: the prompt above already decided, and the slots that gate
+        # _stash_explicit_lichess_seek may not name Lichess for a lobby-started game.
+        _stash_lichess_seek()
+
+    log.info("[App] Rebuilding game with updated player settings (new engine/players)")
+    _cleanup_game()
+    _start_game_mode()
+
+
+def _apply_web_settings_to_live_game() -> None:
+    """Apply a settings change pushed from the web to the running game.
+
+    Keeps display/sprite toggles taking effect live, matching the on-board display
+    menu. Called from the main loop, never from the subscriber thread that raised
+    the flag, because it rebuilds widgets.
+
+    A Chess960 toggle changes the starting layout and cannot be applied to a game
+    already in progress: with no moves played the game is restarted through the
+    normal start path so the e-paper and web board reflect the switch immediately,
+    and otherwise the change is deferred to the next new game. The time control
+    follows the same policy, so a running clock is never reset mid-game.
+    """
+    from universalchess.state import get_chess_game
+    from universalchess.state.chess960 import variant_change_requires_restart
+    from universalchess.state.time_control import (
+        build_time_control,
+        time_control_change_requires_reconfigure,
+    )
+
+    game_state = get_chess_game()
+    desired_chess960 = bool(_get_settings().game.chess960)
+
+    if not _game.is_position_game and variant_change_requires_restart(
+        game_state.chess960, desired_chess960, game_state.is_game_in_progress
+    ):
+        log.info(
+            f"[App] Chess960 toggled to {desired_chess960} on an unstarted "
+            "game - restarting to apply the new start position"
+        )
+        _cleanup_game()
+        _start_game_mode()
+        return
+
+    log.info("[App] Applying web settings change to live display")
+    if not _game.display:
+        return
+
+    # Re-resolve the time control so a timer/delay-mode change reaches the live
+    # e-paper clock and turn indicator, matching the web (which re-fetches settings
+    # on change). Applied before _init_widgets so the rebuilt clock widget adopts
+    # the new spec (times + timed layout). A Lichess game's clock is the
+    # server's, not the Game menu.
+    if _game.lichess_session is None:
+        desired_tc = build_time_control(_get_settings().game)
+        if time_control_change_requires_reconfigure(
+            _game.display.time_control_spec, desired_tc, game_state.is_game_in_progress
+        ):
+            _game.display.set_time_control_spec(desired_tc)
+    _game.display._init_widgets()
+
+
 # Maps a recorded level-1 menu token (what is saved directly under "Settings" in
 # the navigation path) back to the Settings list entry key that reopens it, so
 # full-depth restore can re-enter the correct branch and let the engine auto-
@@ -3098,12 +3230,6 @@ _SETTINGS_ENTRY_BY_CONTAINER = {
     "connectivity": "Connectivity",
     "system": "System",
 }
-
-# The level-0 navigation token the Positions menu records. Positions is
-# imperative rather than engine-backed, so it saves its own display name where
-# the catalog-driven menus save a container id.
-POSITIONS_MENU_TOKEN = "Positions"  # noqa: S105  # nosec B105 - a menu path segment, not a credential
-
 
 def _settings_entry_for_token(token: Optional[str]) -> Optional[str]:
     """Return the Settings entry key that reopens a saved level-1 menu token."""
@@ -6065,45 +6191,94 @@ def _on_ble_data_received(data: bytes, client_type: str):
     _connection_manager.receive_data(data, client_type)
 
 
-def _on_ble_connected(client_type: str):
-    """Handle BLE client connection.
-    
-    Always transitions to game mode when a BLE client connects:
-    - If in menu/settings mode: cancels menu and starts game
-    - If between menus: starts game directly via flag
-    - If in game mode: shows confirmation dialog to abandon current game or cancel
-    
+def _record_client_link(transport: str, emulator: Optional[str]) -> None:
+    """Record a connected chess app in the live Bluetooth status, or clear it.
+
+    Best-effort: the status only feeds the board and web indicators, so a fault
+    here must not cost the user their connection. Unguarded, the exception would
+    propagate into the transport's callback thread and kill it.
+
     Args:
-        client_type: Type of client ('millennium', 'pegasus', 'chessnut')
+        transport: TRANSPORT_BLE or TRANSPORT_RFCOMM, or None to clear the link.
+        emulator: The emulated board a BLE link is speaking as; None for RFCOMM.
+    """
+    try:
+        from universalchess.managers import bluetooth_status_state
+        state = bluetooth_status_state.get_bluetooth_status_state()
+        if transport is None:
+            state.client_disconnected()
+        else:
+            state.client_connected(transport, emulator=emulator)
+    except Exception as e:  # noqa: BLE001 - status is for display only
+        log.debug(f"[Client] Failed to record link in Bluetooth status: {e}")
+
+
+def _on_client_connected(transport: str, *, emulator: Optional[str] = None) -> None:
+    """Route a chess app connecting over BLE or classic RFCOMM into a game.
+
+    One handler for both transports. It was two -- this one for BLE, a copy nested
+    in main() for RFCOMM -- which drifted: RFCOMM lost the menu snapshot and the
+    controller handover, and BLE never recorded the link in the live status. Each
+    difference was a bug on one transport only, which is why they went unnoticed.
+
+    Args:
+        transport: TRANSPORT_BLE or TRANSPORT_RFCOMM.
+        emulator: For BLE, the board being emulated ('millennium' / 'pegasus' /
+            'chessnut'), which is also how the client is named on screen and in the
+            log. None for RFCOMM, which is named by its transport.
     """
     global _menu_manager
-    
-    log.info(f"[BLE] Client connected: {client_type}")
-    
-    # Case 1: Already in game mode - show confirmation dialog
+
+    # What to call this client in dialogs, the log, and the queued request.
+    label = emulator or transport
+
+    log.info(f"[Client] Connected over {transport} ({label})")
+    _record_client_link(transport, emulator)
+
+    # Case 1: a game is already running - ask before abandoning it. The controller
+    # handover waits for the answer, so it is not done here.
     if _session.in_game and _game.protocol is not None:
-        log.info("[BLE] Client connected while in game - showing confirmation dialog")
-        _show_ble_connection_confirm(client_type)
+        log.info("[Client] Connected while in game - showing confirmation dialog")
+        _show_ble_connection_confirm(label)
         return
-    
-    # Case 2: In menu or settings mode with active menu widget - cancel menu to trigger game start
-    if (_session.showing_menu) and _menu_manager.active_widget is not None:
-        log.info(f"[BLE] Client connected while in {_session.state.name} - cancelling menu to start game")
+
+    # Case 2: a menu is on screen - cancel its selection, which the main loop reads
+    # as "enter the game". The navigation is snapshotted first: cancelling unwinds
+    # the menu stack and clears the live path, so a later suspend would have
+    # nothing to reopen and would land at the top of the main menu.
+    if _session.showing_menu and _menu_manager.active_widget is not None:
+        log.info(f"[Client] Connected in {_session.state.name} - cancelling menu to start game")
         _capture_menu_for_resume()
         _menu_manager.cancel_selection("CLIENT_CONNECTED")
-        return  # ProtocolManager will be notified after game mode starts
-    
-    # Case 3: In menu/settings mode but between menus (no active widget) - set flag for main loop
+        return  # ProtocolManager is notified once game mode has started
+
+    # Case 3: between menus, with no widget to cancel - leave it for the main loop.
     if _session.showing_menu:
-        log.info(f"[BLE] Client connected between menus ({_session.state.name}) - setting flag for game start")
-        _pending.ble_client.request(client_type)
+        log.info(f"[Client] Connected between menus ({_session.state.name}) - queuing game start")
+        _pending.ble_client.request(label)
         return
-    
-    # Case 4: Other states - switch to remote controller and notify protocol manager
+
+    # Case 4: the game screen is up but its protocol does not exist yet. Hand the
+    # board over now, or it goes on driving itself and ignores the connected app.
     if _game.controller:
         _game.controller.activate_remote()
     if _game.protocol:
         _game.protocol.on_app_connected()
+
+
+def _on_client_disconnected() -> None:
+    """Return the board to local play when the chess app disconnects.
+
+    Telling the controller is what ends remote mode. Without it the board keeps
+    routing moves to a link that is gone, so pieces moved on the board do nothing
+    -- which is what happened on RFCOMM, whose copy of this handler omitted it.
+    """
+    log.info("[Client] Disconnected")
+    _record_client_link(None, None)
+    if _game.controller:
+        _game.controller.on_bluetooth_disconnected()
+    if _game.protocol:
+        _game.protocol.on_app_disconnected()
 
 
 def _show_ble_connection_confirm(client_type: str):
@@ -6169,18 +6344,6 @@ def _show_ble_connection_confirm(client_type: str):
         wait_thread = threading.Thread(target=_wait_for_selection, daemon=True)
         wait_thread.start()
 
-
-def _on_ble_disconnected():
-    """Handle BLE client disconnection.
-    
-    Switches back to local controller and notifies ProtocolManager.
-    """
-    
-    log.info("[BLE] Client disconnected")
-    if _game.controller:
-        _game.controller.on_bluetooth_disconnected()
-    if _game.protocol:
-        _game.protocol.on_app_disconnected()
 
 # ============================================================================
 # sendMessage callback for ProtocolManager
@@ -7120,25 +7283,23 @@ def main():
         log.error(f"[Main] Failed to start services: {e}", exc_info=True)
         # Continue anyway - services are not critical for basic operation
     
-    # Some supported boards have no Bluetooth controller at all (a plain Pi Zero
-    # has no wireless die). Bringing the stack up there is not merely useless: the
-    # RFCOMM pairing loop retries continuously against a missing adapter and
-    # BleManager's adapter calls fail, burning a single ARMv6 core and filling the
-    # log. Skip both, exactly as --no-ble/--no-rfcomm would.
-    _bluetooth_capable = get_wireless_capability().has_bluetooth
-    if not _bluetooth_capable:
-        log.info("[Main] No Bluetooth controller on this board; skipping BLE and RFCOMM")
+    # What to bring up, decided once from the hardware and the flags. See
+    # app/bluetooth_plan.py for why a board with no controller must not be asked
+    # to start any of it.
+    bluetooth = plan_bluetooth(
+        has_controller=get_wireless_capability().has_bluetooth,
+        ble_requested=not args.no_ble,
+        rfcomm_requested=not args.no_rfcomm,
+    )
 
     # Resolve the branded adapter alias (Universal Chess <mac tail>) once from the adapter's
     # own MAC and share it with BLE and RFCOMM so both set the same friendly
     # name. Falls back to the device name when the MAC cannot be read, so alias
     # branding never blocks Bluetooth bring-up. The alias is only the friendly
     # name a phone shows; the per-advertisement LocalNames apps discover by
-    # (MILLENNIUM CHESS / DGT PEGASUS / Chessnut Air) are unaffected. Skipped
-    # entirely without a controller: it reads the adapter MAC, and its only
-    # consumers (BLE, RFCOMM) do not start.
+    # (MILLENNIUM CHESS / DGT PEGASUS / Chessnut Air) are unaffected.
     adapter_alias = args.device_name
-    if _bluetooth_capable:
+    if bluetooth.resolve_adapter_alias:
         from universalchess.managers.adapter_alias import resolve_adapter_alias
         resolved_alias = resolve_adapter_alias(log=log)
         adapter_alias = resolved_alias or args.device_name
@@ -7151,15 +7312,18 @@ def main():
 
     # Setup BLE if enabled
     global ble_manager
-    if not args.no_ble and _bluetooth_capable:
+    if bluetooth.start_ble:
         try:
             startup_splash.note("splash.ble")
             log.info("[Main] Initializing BLE manager...")
             ble_manager = BleManager(
                 device_name=args.device_name,
                 on_data_received=_on_ble_data_received,
-                on_connected=_on_ble_connected,
-                on_disconnected=_on_ble_disconnected,
+                # BLE reports which board it is emulating; that is the client's name.
+                on_connected=lambda client_type: _on_client_connected(
+                    TRANSPORT_BLE, emulator=client_type
+                ),
+                on_disconnected=_on_client_disconnected,
                 relay_mode=relay_mode,
                 on_display_passkey=_on_display_passkey,
                 on_confirm_pairing=_confirm_pairing_on_board,
@@ -7185,55 +7349,16 @@ def main():
         except Exception as e:
             log.error(f"[Main] Failed to initialize BLE: {e}", exc_info=True)
             raise
-    elif not _bluetooth_capable:
-        log.info("[Main] BLE not started: no Bluetooth controller")
     else:
-        log.info("[Main] BLE disabled by command line argument")
-    
+        log.info(f"[Main] BLE not started: {bluetooth.ble_skipped_because}")
+
     # Setup RFCOMM if enabled
     global rfcomm_server
-    if not args.no_rfcomm and _bluetooth_capable:
-        def _on_rfcomm_connected():
-            """Handle RFCOMM client connection."""
-
-            # Record the live link (classic RFCOMM, no BLE emulator) so the
-            # board/web show the active connection and its transport.
-            try:
-                from universalchess.managers.bluetooth_status_state import (
-                    get_bluetooth_status_state, TRANSPORT_RFCOMM,
-                )
-                get_bluetooth_status_state().client_connected(TRANSPORT_RFCOMM)
-            except Exception as e:  # noqa: BLE001
-                log.debug(f"[RFCOMM] Failed to record connect in BT status: {e}")
-
-            if _session.in_game and _game.protocol is not None:
-                log.info("[RFCOMM] Client connected while in game - showing confirmation dialog")
-                _show_ble_connection_confirm("rfcomm")
-            elif (_session.showing_menu) and _menu_manager.active_widget is not None:
-                log.info(f"[RFCOMM] Client connected while in {_session.state.name} - transitioning to game")
-                _menu_manager.cancel_selection("CLIENT_CONNECTED")
-            elif _session.showing_menu:
-                log.info(f"[RFCOMM] Client connected between menus ({_session.state.name}) - setting flag")
-                _pending.ble_client.request("rfcomm")
-            elif _game.protocol:
-                _game.protocol.on_app_connected()
-        
-        def _on_rfcomm_disconnected():
-            """Handle RFCOMM client disconnection."""
-            try:
-                from universalchess.managers.bluetooth_status_state import (
-                    get_bluetooth_status_state,
-                )
-                get_bluetooth_status_state().client_disconnected()
-            except Exception as e:  # noqa: BLE001
-                log.debug(f"[RFCOMM] Failed to record disconnect in BT status: {e}")
-            if _game.protocol:
-                _game.protocol.on_app_disconnected()
-        
+    if bluetooth.start_rfcomm:
         def _on_rfcomm_data(data: bytes):
             """Handle data received from RFCOMM client."""
             _connection_manager.receive_data(data, "rfcomm")
-        
+
         # Create pairing manager. When BLE is enabled, our KeyboardDisplay
         # D-Bus agent (registered by BleManager) is the authoritative pairing
         # agent, so RFCOMM must not spawn bt-agent (which would register itself
@@ -7253,8 +7378,8 @@ def main():
         # Create and start RFCOMM server
         rfcomm_server = RfcommServer(
             device_name=args.device_name,
-            on_connected=_on_rfcomm_connected,
-            on_disconnected=_on_rfcomm_disconnected,
+            on_connected=lambda: _on_client_connected(TRANSPORT_RFCOMM),
+            on_disconnected=_on_client_disconnected,
             on_data_received=_on_rfcomm_data,
             port=args.port,
             rfcomm_manager=rfcomm_pairing_manager,
@@ -7262,8 +7387,8 @@ def main():
         )
         rfcomm_server.start(splash)
         log.info("[RFCOMM] Server started")
-    elif not _bluetooth_capable:
-        log.info("[RFCOMM] Not started: no Bluetooth controller")
+    else:
+        log.info(f"[RFCOMM] Not started: {bluetooth.rfcomm_skipped_because}")
     
     # Start Bluetooth HID keyboard input. Reads paired keyboards via evdev and
     # injects events through the same key_callback the physical buttons use, so
@@ -7411,30 +7536,25 @@ def main():
         _session.show_menu()
 
     # Set up menu restoration for the main loop.
-    restore_to_settings = False
-    restore_settings_submenu = None
-    restore_to_positions = False
+    startup_restore = StartupRestore()
     if _session.state == AppState.MENU and plan.restore_menu_path:
         if plan.suspend_after_resume:
             # A game was resumed then suspended: reopen the exact submenu via the
             # same one-shot path used by in-session suspend/resume. _start_game_mode
             # cleared the live MenuContext, so the pre-captured path is used.
             _session.capture_menu_path(saved_menu_path)
-        elif saved_menu_path and saved_menu_path[0][0] == "Settings":
-            restore_to_settings = True
-            if len(saved_menu_path) > 1:
-                # The saved level-1 token is a catalog container id (or Positions);
-                # map it to the Settings entry that opens it. The engine then auto-
-                # descends the deeper saved path (levels 2+) on its own.
-                restore_settings_submenu = _settings_entry_for_token(saved_menu_path[1][0])
-            log.info(f"[App] Will restore to Settings menu "
-                     f"(submenu={restore_settings_submenu}, full_path={ctx.path_str()})")
-        elif saved_menu_path and saved_menu_path[0][0] == POSITIONS_MENU_TOKEN:
-            # Positions is a main-menu entry, so it is saved at level 0 rather
-            # than under Settings, and reopens from the root loop.
-            restore_to_positions = True
-            log.info(f"[App] Will restore to Positions menu (full_path={ctx.path_str()})")
-    
+        else:
+            startup_restore = plan_startup_restore(
+                saved_menu_path, settings_entry_for_token=_settings_entry_for_token
+            )
+            log.info(
+                f"[App] Will restore menu position (settings={startup_restore.to_settings},"
+                f" submenu={startup_restore.settings_submenu},"
+                f" positions={startup_restore.to_positions},"
+                f" full_path={ctx.path_str()})"
+            )
+
+
     _startup_completed_at = time.monotonic()
 
     _uncaught_main_loop_error = False
@@ -7460,81 +7580,56 @@ def main():
                     _process_pending_display_profile()
 
                 if _session.state == AppState.MENU:
-                    # Apply a web board-control command (set up position / abort) that
-                    # arrived while the menu was showing. Runs here on the main thread.
-                    if _pending.board_command.requested():
+                    # One condition per pass, highest priority first, claimed so the
+                    # rest stay pending. See app/menu_step.py for the ranking.
+                    menu_step = claim_menu_step(
+                        _pending,
+                        _session,
+                        startup_restore,
+                        settings_entry_for_token=_settings_entry_for_token,
+                    )
+
+                    if menu_step.action is MenuAction.APPLY_BOARD_COMMAND:
+                        # Web set up a position / aborted while the menu was showing.
+                        # Runs here on the main thread.
                         _process_pending_board_command()
                         continue  # Re-check app_state (may now be GAME)
 
-                    # Check for pending BLE client connection (set when connection happens between menus)
-                    ble_client = _pending.ble_client.take()
-                    if ble_client is not None:
-                        log.info(f"[App] Pending BLE client connection detected ({ble_client.payload}) - entering game")
+                    if menu_step.action is MenuAction.ENTER_GAME:
+                        log.info(
+                            "[App] Entering game from the menu"
+                            f" (client={menu_step.client_transport},"
+                            f" queued piece events={len(_pending.piece_events)})"
+                        )
                         _enter_game()
                         continue  # Re-check app_state (now should be GAME)
 
-                    # Check for pending piece events before showing menu
-                    # These may have been queued while in a submenu
-                    if len(_pending.piece_events) > 0:
-                        log.info(f"[App] Pending piece events detected ({len(_pending.piece_events)}) - entering game")
-                        _enter_game()
-                        continue  # Re-check app_state (now should be GAME)
-
-                    # Check if we need to restore to Settings menu (on startup)
-                    if restore_to_settings:
-                        restore_to_settings = False
-                        log.info(f"[App] Restoring to Settings menu (submenu={restore_settings_submenu})")
-                        settings_result = _handle_settings(initial_selection=restore_settings_submenu)
-                        restore_settings_submenu = None  # Clear after use
+                    if menu_step.action is MenuAction.OPEN_SETTINGS:
+                        if menu_step.restore_path is not None:
+                            # Re-enter the saved navigation so the engine auto-descends
+                            # to where the suspended game was started.
+                            ctx.restore_from_path(menu_step.restore_path)
+                        log.info(
+                            f"[App] Opening Settings (submenu={menu_step.settings_submenu})"
+                        )
+                        settings_result = _handle_settings(
+                            initial_selection=menu_step.settings_submenu
+                        )
                         if is_break_result(settings_result):
                             _enter_game(explicit_lichess_seek=_is_play_start(settings_result))
                         continue  # After settings, loop back to check state
 
-                    # Check if we need to reopen the Positions menu (on startup)
-                    if restore_to_positions:
-                        restore_to_positions = False
-                        log.info("[App] Restoring to Positions menu")
-                        _handle_positions_menu()
+                    if menu_step.action is MenuAction.OPEN_POSITIONS:
+                        if menu_step.restore_path is not None:
+                            ctx.restore_from_path(menu_step.restore_path)
+                        log.info(
+                            "[App] Opening Positions"
+                            f" (at last position={menu_step.at_last_position})"
+                        )
+                        _handle_positions_menu(
+                            return_to_last_position=menu_step.at_last_position
+                        )
                         continue  # Loop back to check state
-
-                    # Restore the submenu the user was in when they suspended the
-                    # game (PLAY), so the full menu reopens at its last position.
-                    # One-shot: taking it consumes it, so a normal BACK out of the
-                    # submenu does not immediately re-enter it.
-                    resume_path = _session.take_menu_path()
-                    if resume_path is not None:
-                        if resume_path and resume_path[0][0] == "Settings":
-                            ctx.restore_from_path(resume_path)
-                            # Map the saved level-1 container id to its Settings
-                            # entry; the engine auto-descends the deeper path.
-                            resume_submenu = (
-                                _settings_entry_for_token(resume_path[1][0])
-                                if len(resume_path) > 1
-                                else None
-                            )
-                            log.info(f"[App] Restoring suspended menu position (submenu={resume_submenu})")
-                            settings_result = _handle_settings(initial_selection=resume_submenu)
-                            if is_break_result(settings_result):
-                                _enter_game(explicit_lichess_seek=_is_play_start(settings_result))
-                            continue
-                        if resume_path and resume_path[0][0] == POSITIONS_MENU_TOKEN:
-                            # PLAY was pressed inside Positions: reopen it, at the
-                            # position the suspended game was started from.
-                            ctx.restore_from_path(resume_path)
-                            log.info("[App] Restoring suspended menu position (Positions)")
-                            _handle_positions_menu(return_to_last_position=True)
-                            continue
-                        # A capture from elsewhere (e.g. the root) has nothing to
-                        # restore; fall through to show the main menu normally.
-
-                    # A position game has ended (BACK from the board, or the game
-                    # finished): reopen Positions at the position it was played
-                    # from, so leaving lands where the position was chosen instead
-                    # of at the top of the main menu. Backing out of it falls
-                    # through to the main menu on the next iteration.
-                    if _pending.positions_menu_return.take() is not None:
-                        _handle_positions_menu(return_to_last_position=True)
-                        continue
 
                     # Record that the main menu is on screen so a restart comes
                     # back here. Idempotent (only writes on a view change), so it
@@ -7604,132 +7699,37 @@ def main():
                         pass
 
                 elif _session.in_game:
-                    # Check if we need to switch from position game to normal game
-                    if _pending.switch_to_normal_game.take() is not None:
+                    # One deferred repair per pass, highest priority first, claimed
+                    # so the rest stay pending. See app/game_step.py for the ranking.
+                    step = claim_game_step(_pending)
+
+                    if step.action is GameAction.SWITCH_TO_NORMAL_GAME:
                         log.info("[App] Switching from position game to normal game")
                         _cleanup_game()
                         _start_game_mode(starting_fen=None, is_position_game=False)
-                    # A board-reset new game was detected while player-defining
-                    # settings had changed (e.g. engine changed from the web). Rebuild
-                    # the game so the new players/engine take effect. _start_game_mode
-                    # tears down the stale players and re-reads the current settings.
-                    elif _pending.player_rebuild.take() is not None:
-                        lichess_next = _pending.lichess_next.take()
-                        next_reason = lichess_next.payload if lichess_next else None
-                        from universalchess.players.lichess.lobby import (
-                            board_reset_rebuild_action,
-                        )
 
-                        # The live players decide, not the saved slots: a game
-                        # started from the lobby runs with a Lichess pairing the
-                        # slots do not name, and rebuilding it without asking
-                        # would drop a game in progress for a local one.
-                        action = board_reset_rebuild_action(
-                            _menu_manager,
-                            is_lichess=_lichess_is_a_player() or _live_game_is_remote(),
-                            reason=next_reason,
-                        )
-                        if action == "menu":
-                            log.info(
-                                "[App] Lichess next-game prompt declined"
-                                f" (reason={next_reason})"
-                            )
-                            _return_to_menu("Lichess seek declined")
-                            continue
-                        if action == "lobby":
-                            # The pieces are back at the start (or the remote game
-                            # already ended) and the lobby was asked for, so leave
-                            # before the lobby is drawn, then start whatever the
-                            # lobby stashes (ongoing game, challenge, or seek).
-                            log.info(
-                                "[App] Lichess lobby opened after next-game prompt"
-                                f" (reason={next_reason})"
-                            )
-                            _return_to_menu("Lichess lobby")
-                            lobby_result = _handle_lichess_menu()
-                            if is_break_result(lobby_result):
-                                _enter_game(
-                                    explicit_lichess_seek=_is_play_start(lobby_result)
-                                )
-                            elif signal_from(lobby_result) == "START_GAME":
-                                _start_game_mode()
-                            continue
-                        if action == "seek":
-                            # Unconditional: the prompt above already decided,
-                            # and the slots that gate _stash_explicit_lichess_seek
-                            # may not name Lichess for a lobby-started game.
-                            _stash_lichess_seek()
-                        log.info("[App] Rebuilding game with updated player settings (new engine/players)")
-                        _cleanup_game()
-                        _start_game_mode()
-                    # A board-reset / setup-mode new game reused widgets that no
-                    # longer match a layout-affecting setting changed since they
-                    # were built (e.g. a deferred time-control change that flipped
-                    # timed<->untimed). Rebuild only the layout here on the main
-                    # thread -- lighter than a full game rebuild, and enough since
-                    # the players/engine are unchanged.
-                    elif _pending.layout_rebuild.take() is not None:
+                    elif step.action is GameAction.REBUILD_PLAYERS:
+                        _rebuild_players_for_new_game(step.lichess_reason)
+
+                    elif step.action is GameAction.REBUILD_LAYOUT:
+                        # A board-reset / setup-mode new game reused widgets that no
+                        # longer match a layout-affecting setting changed since they
+                        # were built (e.g. a deferred time-control change that
+                        # flipped timed<->untimed). Rebuild only the layout --
+                        # lighter than a full game rebuild, and enough since the
+                        # players/engine are unchanged.
                         log.info("[App] Rebuilding display layout for new game (layout-affecting setting changed)")
                         if _game.display:
                             _game.display._init_widgets()
-                    # Apply a settings change pushed from the web app during a game so
-                    # display/sprite toggles take effect live, matching the on-board
-                    # display menu. Rebuilt here (main thread) - never from the
-                    # subscriber thread that set the flag.
-                    elif _pending.settings_reload.take() is not None:
-                        # A Chess960 toggle changes the starting layout, which cannot be
-                        # applied to a game already in progress. When the live game has no
-                        # moves yet, restart it via the normal start path (which reads the
-                        # 960 setting and regenerates the start position) so the e-paper and
-                        # web board reflect the switch immediately. When moves have been
-                        # played, or it is a loaded position game, the change is deferred to
-                        # the next new game and only the display is refreshed.
-                        from universalchess.state import get_chess_game
-                        from universalchess.state.chess960 import (
-                            variant_change_requires_restart,
-                        )
-                        from universalchess.state.time_control import (
-                            build_time_control,
-                            time_control_change_requires_reconfigure,
-                        )
-                        game_state = get_chess_game()
-                        desired_chess960 = bool(_get_settings().game.chess960)
-                        if not _game.is_position_game and variant_change_requires_restart(
-                            game_state.chess960,
-                            desired_chess960,
-                            game_state.is_game_in_progress,
-                        ):
-                            log.info(
-                                f"[App] Chess960 toggled to {desired_chess960} on an unstarted "
-                                "game - restarting to apply the new start position"
-                            )
-                            _cleanup_game()
-                            _start_game_mode()
-                        else:
-                            log.info("[App] Applying web settings change to live display")
-                            if _game.display:
-                                # Re-resolve the time control so a timer/delay-mode
-                                # change reaches the live e-paper clock and turn
-                                # indicator, matching the web (which re-fetches
-                                # settings on change). Reconfigure the clock only
-                                # when the control changed and no moves have been
-                                # played; a mid-game change is deferred to the next
-                                # new game so a running clock is never reset (same
-                                # policy as the Chess960 start parameter above).
-                                # Applied before _init_widgets so the rebuilt clock
-                                # widget adopts the new spec (times + timed layout).
-                                desired_tc = build_time_control(_get_settings().game)
-                                if time_control_change_requires_reconfigure(
-                                    _game.display.time_control_spec,
-                                    desired_tc,
-                                    game_state.is_game_in_progress,
-                                ):
-                                    _game.display.set_time_control_spec(desired_tc)
-                                _game.display._init_widgets()
-                    elif _pending.board_command.requested():
+
+                    elif step.action is GameAction.RELOAD_SETTINGS:
+                        _apply_web_settings_to_live_game()
+
+                    elif step.action is GameAction.APPLY_BOARD_COMMAND:
                         # Web set up a position / aborted while a game was running.
                         # Applied here on the main thread (rebuilds the game display).
                         _process_pending_board_command()
+
                     else:
                         # Stay in game mode - key_callback handles exit via _return_to_menu
                         time.sleep(0.5)

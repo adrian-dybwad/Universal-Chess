@@ -40,6 +40,9 @@ could be tested.
 | `board/display_settings.py` | The `[display]` settings, read the same way by both apps |
 | `app/startup_splash.py` | The startup splash, shared with the slow imports |
 | `app/pending_work.py` | Work requested off the main loop and performed on it |
+| `app/game_step.py` | Which deferred repair the loop performs while a game runs |
+| `app/menu_step.py` | What to settle before the main menu is drawn |
+| `app/bluetooth_plan.py` | Which Bluetooth subsystems to start, and why not |
 | `app/game_runtime.py` | The running game's handles, and the order they close in |
 | `app/session.py` | Which screen is showing, and where the menu resumes |
 | `app/shutdown.py` | Releasing the subsystems, and quiescing the controller |
@@ -515,6 +518,7 @@ in `tests/`.
 | File | Purpose |
 |------|---------|
 | `player.py` | `LichessPlayer` (`PlayerType.REMOTE`, rebuilds on new game); `lichess_player_from_seek` |
+| `clock.py` | Board API ``clock`` / ``wtime`` / ``btime`` to ``TimeControl`` and remaining |
 | `hosts.py` | `org` / `dev` API servers and `host:user` credential ids |
 | `accounts.py` | Plugin credential rows on the generic account store |
 | `match.py` | Seek params, berserk client |
@@ -648,6 +652,8 @@ main.py (Entry Point)
     |     +-- bootstrap.py (boot sequence)
     |     +-- display_boot.py (panel bring-up)
     |     +-- pending_work.py (cross-thread work handoff)
+    |     +-- game_step.py, menu_step.py (what the loop does next)
+    |     +-- bluetooth_plan.py (which radios to bring up)
     |     +-- game_runtime.py (the running game's handles)
     |     +-- session.py (which screen is showing)
     |     +-- shutdown.py (releasing the subsystems)

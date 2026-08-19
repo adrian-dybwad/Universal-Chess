@@ -44,6 +44,8 @@ def test_set_player_manager_binds_remote_clock_and_game_info():
     Failure: bind_remote_session is skipped, so set_clock / set_game_info
     are never called when the stream updates.
     """
+    from universalchess.state.time_control import TimeControl
+
     game_manager = MagicMock()
     protocol = ProtocolManager(game_manager=game_manager)
     remote = LichessPlayer()
@@ -56,6 +58,10 @@ def test_set_player_manager_binds_remote_clock_and_game_info():
     game_manager.set_game_info.assert_called_once_with(
         "", "", "", "alice(1500)", "bob(1400)"
     )
+
+    spec = TimeControl.fischer_minutes(5, 3)
+    remote._time_control_callback(spec)
+    game_manager.set_time_control.assert_called_once_with(spec)
 
 
 def test_is_app_connected_is_only_board_protocols():
