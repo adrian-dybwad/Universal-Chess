@@ -32,6 +32,11 @@ from universalchess.board.sync_centaur import (
     INJECTABLE_KEY_NAMES,
     DISCOVERY_RETRY_SECONDS,
     derived_long_press_key,
+    is_key_down_event,
+    wait_for_matching_release,
+    dispatchable_after_poll,
+    WAIT_ABORTED,
+    RELEASE_ALREADY_CONSUMED,
 )
 import sys
 import os
@@ -926,13 +931,15 @@ def eventsThread(keycallback, fieldcallback, tout):
     adjustments (e.g., NTP sync on Raspberry Pi startup that can jump the clock
     forward and trigger premature shutdown).
     
-    Key handling (every key acts on release):
+    Key handling (every key acts on release, except a hold that already fired):
     - Short press: the key-up event is passed to the callback.
     - PLAY_DOWN held 1+ second: starts the shutdown countdown (releasing during
       the countdown cancels it).
-    - TICK_DOWN held 1+ second: emits LONG_TICK (move-list takeback/new-game
-      overlay while a ply is highlighted; a no-op otherwise). The matching
-      key-up is consumed so a short OK is not also dispatched.
+    - TICK_DOWN held 1+ second: emits LONG_TICK at that 1s boundary (beep, then
+      the move-list overlay) while the button is still down, so the hold is
+      audible and visible. The matching key-up is ignored because the event
+      already fired. An unpaired leftover key-up (bounce) is not dispatched
+      as a tap; the next complete down-up is.
     - Any other key held 1+ second: an "abort" gesture - a beep fires at the
       threshold to signal the press was cancelled, and on release the key is
       consumed (no callback). This lets the user back out of a press they
@@ -953,7 +960,6 @@ def eventsThread(keycallback, fieldcallback, tout):
     inactivity_countdown_shown = False  # Track if we're showing the countdown
     inactivity_countdown_splash = None
     inactivity_last_displayed_seconds = None  # Track last displayed value to avoid redundant updates
-    suppress_key_up = None  # After a long press, suppress the matching key-up value
     
     def get_current_timeout():
         """Get the effective power-off timeout for the current power source.
@@ -1030,6 +1036,7 @@ def eventsThread(keycallback, fieldcallback, tout):
                     inactivity_last_displayed_seconds = None
 
             key_pressed = None
+            completed_down_wait = False
             
             # Register piece listener if not already registered
             if fieldcallback is not None:
@@ -1069,133 +1076,93 @@ def eventsThread(keycallback, fieldcallback, tout):
             
             try:
                 key_pressed = controller.get_next_key(timeout=0.0)
+                completed_down_wait = False
 
-                # All key-down events: every key acts on RELEASE. PLAY held 1s
-                # runs the shutdown countdown; TICK held 1s emits LONG_TICK;
-                # any other key held 1s is an "abort" gesture (beep at
-                # threshold, consumed on release) so the user can back out of a
-                # press they changed their mind about.
-                if key_pressed is not None and key_pressed.value >= 0x80:
-                    # This is a _DOWN event
-                    long_press_key = key_pressed
-                    long_press_start = time.monotonic()
-                    is_play = (long_press_key == Key.PLAY_DOWN)
-                    long_triggered = False  # crossed the 1s threshold
-                    
-                    # Wait for key-up while watching the 1s long-press threshold
-                    while True:
-                        time.sleep(0.05)
-                        
-                        # Held past the threshold
-                        if not long_triggered and (time.monotonic() - long_press_start) >= 1.0:
-                            beep(SOUND_GENERAL, event_type='key_press')
-                            long_triggered = True
-                            # Mark the matching key-up for suppression so it can
-                            # never be dispatched as a short press, regardless of
-                            # where it gets dequeued.
-                            suppress_key_up = long_press_key.value - 0x80
-                            if is_play:
-                                # PLAY long-press: run the shutdown countdown
-                                log.info('[board.events] Long press PLAY detected, starting shutdown countdown')
-                                if shutdown_countdown():
-                                    # Send LONG_PLAY to callback - main.py handles cleanup_and_exit
-                                    log.info('[board.events] Countdown complete, sending LONG_PLAY to callback')
-                                    keycallback(Key.LONG_PLAY)
-                                    # Exit the events thread immediately to prevent
-                                    # the queued PLAY key-up from being dispatched as
-                                    # a normal short-press (which would trigger
-                                    # _suspend_game and overwrite the shutdown splash).
-                                    return
-                                else:
-                                    log.info('[board.events] Shutdown cancelled (button released)')
-                                key_pressed = None
-                                break  # Exit the detection loop
-                            else:
-                                derived = derived_long_press_key(long_press_key)
-                                if derived is not None:
-                                    # TICK long-press: dispatch LONG_TICK now, then
-                                    # keep waiting for key-up so it is consumed and
-                                    # never delivered as a short OK.
-                                    log.info(f'[board.events] Long press detected, sending {derived.name}')
-                                    try:
-                                        keycallback(derived)
-                                    except Exception as e:
-                                        log.error(f"[board.events] LONG_TICK keycallback error: {e}")
-                                        import traceback
-                                        traceback.print_exc()
-                                else:
-                                    # Abort gesture armed: the beep tells the user
-                                    # that releasing now cancels the press. Keep
-                                    # waiting for key-up, which will be consumed
-                                    # below.
-                                    log.info('[board.events] Long press detected, key-press cancelled (release to no-op)')
-                        
-                        # Check for key-up
-                        next_key = controller.get_next_key(timeout=0.0)
-                        if next_key is not None:
-                            # Get the base key code (without DOWN offset)
-                            base_code = long_press_key.value - 0x80
-                            if next_key.value == base_code:
-                                # Matching key-up received
-                                if long_triggered:
-                                    # Long press: PLAY already handled above; TICK
-                                    # already dispatched LONG_TICK; any other key
-                                    # is an aborted press - consume the key-up.
-                                    key_pressed = None
-                                else:
-                                    # Short press: deliver the key-up to callback.
-                                    key_pressed = next_key
-                                    # Central key-press feedback: a single click on
-                                    # every delivered button press, emitted on
-                                    # key-up and gated by the 'key_press' sound
-                                    # setting. This is the single source of truth
-                                    # for short-press audio feedback - individual
-                                    # menu handlers must NOT beep on selection or
-                                    # they would double-click.
-                                    beep(SOUND_GENERAL, event_type='key_press')
-                                break
-                    
+                # All key-down events: every key acts on RELEASE, except a hold
+                # that already fired at the 1s boundary. PLAY held 1s runs the
+                # shutdown countdown; TICK held 1s emits LONG_TICK then; any
+                # other key held 1s is an abort (beep at threshold, release
+                # consumed). An unpaired key-up (bounce / leftover release) is
+                # not a tap.
+                if is_key_down_event(key_pressed):
+                    key_down = key_pressed
+                    is_play = (key_down == Key.PLAY_DOWN)
+
+                    def on_threshold():
+                        beep(SOUND_GENERAL, event_type='key_press')
+                        if is_play:
+                            log.info('[board.events] Long press PLAY detected, starting shutdown countdown')
+                            if shutdown_countdown():
+                                log.info('[board.events] Countdown complete, sending LONG_PLAY to callback')
+                                keycallback(Key.LONG_PLAY)
+                                return WAIT_ABORTED
+                            log.info('[board.events] Shutdown cancelled (button released)')
+                            return RELEASE_ALREADY_CONSUMED
+                        derived = derived_long_press_key(key_down)
+                        if derived is not None:
+                            log.info(f'[board.events] Long press detected, sending {derived.name}')
+                            try:
+                                keycallback(derived)
+                            except Exception as e:
+                                log.error(f"[board.events] LONG_TICK keycallback error: {e}")
+                                import traceback
+                                traceback.print_exc()
+                        else:
+                            log.info('[board.events] Long press detected, key-press cancelled (release to no-op)')
+                        return None
+
+                    key_pressed = wait_for_matching_release(
+                        key_down,
+                        controller.get_next_key,
+                        monotonic=time.monotonic,
+                        sleep=time.sleep,
+                        on_threshold=on_threshold,
+                    )
+                    if key_pressed is WAIT_ABORTED:
+                        return
+                    completed_down_wait = True
+                    if key_pressed is not None:
+                        # Short press: click on release. Long-press already
+                        # beeped at the 1s boundary.
+                        beep(SOUND_GENERAL, event_type='key_press')
+
             except Exception as e:
                 log.error(f"[board.events] error: {e}")
                 import traceback
                 traceback.print_exc()
-            
+                completed_down_wait = False
+
             time.sleep(0.05)
-            
+
+            key_pressed = dispatchable_after_poll(
+                key_pressed, completed_down_wait=completed_down_wait
+            )
             if key_pressed is not None:
-                # Suppress stale key-up events from a completed long press.
-                # This prevents the physical release after any long-press
-                # gesture from being dispatched as a short press.
-                if suppress_key_up is not None and key_pressed.value == suppress_key_up:
-                    log.debug(f"[board.events] Suppressed stale key-up after long press: {key_pressed}")
-                    suppress_key_up = None
+                # Re-read timeout from settings in case it changed
+                tout, timeout_disabled = get_current_timeout()
+                to = time.monotonic() + tout
+                # Cancel inactivity countdown if shown - consume the key (don't pass to callback)
+                if inactivity_countdown_shown and inactivity_countdown_splash is not None:
+                    log.info('[board.events] Inactivity countdown cancelled by key press (key consumed)')
+                    try:
+                        future = display_manager.remove_widget(inactivity_countdown_splash)
+                        if future:
+                            future.result(timeout=5.0)
+                            log.info('[board.events] Inactivity countdown removed and display updated')
+                    except Exception as e:
+                        log.error(f'[board.events] Error removing inactivity countdown: {e}')
+                    inactivity_countdown_shown = False
+                    inactivity_countdown_splash = None
+                    inactivity_last_displayed_seconds = None
                 else:
-                    suppress_key_up = None
-                    # Re-read timeout from settings in case it changed
-                    tout, timeout_disabled = get_current_timeout()
-                    to = time.monotonic() + tout
-                    # Cancel inactivity countdown if shown - consume the key (don't pass to callback)
-                    if inactivity_countdown_shown and inactivity_countdown_splash is not None:
-                        log.info('[board.events] Inactivity countdown cancelled by key press (key consumed)')
-                        try:
-                            future = display_manager.remove_widget(inactivity_countdown_splash)
-                            if future:
-                                future.result(timeout=5.0)
-                                log.info('[board.events] Inactivity countdown removed and display updated')
-                        except Exception as e:
-                            log.error(f'[board.events] Error removing inactivity countdown: {e}')
-                        inactivity_countdown_shown = False
-                        inactivity_countdown_splash = None
-                        inactivity_last_displayed_seconds = None
-                    else:
-                        # Only forward key to callback if it wasn't used to cancel countdown
-                        log.info(f"[board.events] btn{key_pressed} pressed, sending to keycallback")
-                        try:
-                            keycallback(key_pressed)
-                        except Exception as e:
-                            log.error(f"[board.events] keycallback error: {sys.exc_info()[1]}")
-                            import traceback
-                            traceback.print_exc()
+                    # Only forward key to callback if it wasn't used to cancel countdown
+                    log.info(f"[board.events] btn{key_pressed} pressed, sending to keycallback")
+                    try:
+                        keycallback(key_pressed)
+                    except Exception as e:
+                        log.error(f"[board.events] keycallback error: {sys.exc_info()[1]}")
+                        import traceback
+                        traceback.print_exc()
             
             # Check if we should show/update inactivity countdown (skip if timeout disabled)
             time_remaining = to - time.monotonic()

@@ -1339,6 +1339,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   `'bool' object is not callable` and swallowed the key. The overlay now
   reads the property.
 
+- Confirming Take back required pressing OK twice. A held OK still fires
+  LONG_TICK at the 1s beep (the overlay appears while the button is down, so
+  the hold is audible and visible). A latch meant to ignore that hold's
+  release was never cleared when the wait loop consumed it, so the next
+  short OK -- selecting the highlighted Take back row -- was discarded as a
+  stale key-up. The matching release is ignored because the long-press
+  already fired; unpaired leftover key-ups (bounce) are not taps; the next
+  complete press is.
+
 - New game from a highlighted move started from that ply's FEN with an empty
   history, and wrote no database row until a later move was played. It now
   copies the moves through that ply into a fresh recorded game (the same path

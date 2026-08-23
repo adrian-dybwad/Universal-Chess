@@ -185,6 +185,16 @@ _key_members.update({f"{name}_DOWN": code + KEY_DOWN_OFFSET for name, code in KE
 Key = IntEnum('Key', _key_members)
 
 
+def is_key_down_event(key) -> bool:
+    """True for a physical key-down; False for a key-up, a derived event, or None.
+
+    eventsThread starts a long-press wait only on a down. A key-up that arrives
+    with no matching wait is bounce or a leftover long-press release and must
+    not be dispatched as a tap.
+    """
+    return key is not None and key.value >= KEY_DOWN_OFFSET
+
+
 def derived_long_press_key(key_down: Key):
     """The synthetic key to emit when this down is held past 1s, or None to abort.
 
@@ -199,7 +209,85 @@ def derived_long_press_key(key_down: Key):
     return None
 
 
-__all__ = ['SyncCentaur', 'DGT_BUS_SEND_CHANGES', 'DGT_SEND_BATTERY_INFO', 'DGT_BUTTON_CODES', 'command', 'DGT_BUS_SEND_STATE_RESP', 'DGT_BUS_SEND_CHANGES_RESP', 'DGT_BUS_POLL_KEYS_RESP', 'derived_long_press_key']
+# wait_for_matching_release: PLAY's shutdown countdown already consumed the
+# release, so the wait must not sit for a second up (WAIT_ABORTED = power off
+# is proceeding; RELEASE_ALREADY_CONSUMED = the hold was cancelled).
+WAIT_ABORTED = object()
+RELEASE_ALREADY_CONSUMED = object()
+
+_LONG_PRESS_SECONDS = 1.0
+_KEY_POLL_SECONDS = 0.05
+
+
+def wait_for_matching_release(
+    key_down,
+    get_next_key,
+    *,
+    monotonic,
+    sleep,
+    on_threshold,
+    long_press_seconds: float = _LONG_PRESS_SECONDS,
+    poll_seconds: float = _KEY_POLL_SECONDS,
+):
+    """Wait until the matching key-up. Call on_threshold once at the 1s boundary.
+
+    The long-press action (beep, LONG_TICK, shutdown countdown) fires at that
+    boundary while the button is still down, so the user hears it and does not
+    guess when to let go. The later matching release is ignored (returns None)
+    because the event already fired. A release before the boundary is a short
+    press and is returned as the key-up.
+
+    ``on_threshold`` may return WAIT_ABORTED (PLAY countdown completed: the
+    events thread should exit) or RELEASE_ALREADY_CONSUMED (PLAY countdown
+    cancelled: it already ate the key-up). Either stops the wait immediately.
+    """
+    start = monotonic()
+    long_triggered = False
+    up_code = key_down.value - KEY_DOWN_OFFSET
+    while True:
+        sleep(poll_seconds)
+        if not long_triggered and monotonic() - start >= long_press_seconds:
+            long_triggered = True
+            action = on_threshold()
+            if action is WAIT_ABORTED:
+                return WAIT_ABORTED
+            if action is RELEASE_ALREADY_CONSUMED:
+                return None
+        next_key = get_next_key(timeout=0.0)
+        if next_key is not None and next_key.value == up_code:
+            return None if long_triggered else next_key
+
+
+def dispatchable_after_poll(key, *, completed_down_wait: bool):
+    """Keys that complete a down-wait are delivered; unpaired key-ups are not.
+
+    A leftover long-press release or contact bounce arrives as a key-up with
+    no wait in this iteration and must not count as a tap. A new down that
+    was released as a short press is ``completed_down_wait=True`` and is
+    delivered even if a previous hold also produced that key-up code -- that
+    leftover latch is what made takeback require two OK presses.
+    """
+    if key is None or not completed_down_wait:
+        return None
+    return key
+
+
+__all__ = [
+    'SyncCentaur',
+    'DGT_BUS_SEND_CHANGES',
+    'DGT_SEND_BATTERY_INFO',
+    'DGT_BUTTON_CODES',
+    'command',
+    'DGT_BUS_SEND_STATE_RESP',
+    'DGT_BUS_SEND_CHANGES_RESP',
+    'DGT_BUS_POLL_KEYS_RESP',
+    'derived_long_press_key',
+    'is_key_down_event',
+    'wait_for_matching_release',
+    'dispatchable_after_poll',
+    'WAIT_ABORTED',
+    'RELEASE_ALREADY_CONSUMED',
+]
 
 
 class SyncCentaur:
