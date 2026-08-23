@@ -13,6 +13,11 @@ Design constraints (see the plan's risk section):
   - The forward path is a dumb, verbatim byte pump; the decoder is a passive
     observer on a copy. Framing is never allowed to gate the live board bytes, so
     a decode bug can never corrupt or stall the board link.
+  - Translate mode may hold board->app bytes until the display gateway has
+    rendered one frame (or a timeout). That hold is optional, time-bounded, and
+    independent of decoding: Centaur's T5D driver crashes if a battery event
+    reaches ``update()`` while the framebuffer is still ``None``, and the shim
+    makes the first paint slower than native serial. Direct mode does not hold.
   - Port restoration is guaranteed on stop, and a stale ``.real`` from a crashed
     prior run is healed on start; a botched restore would leave both Centaur and
     UC unable to use the board.
@@ -45,6 +50,10 @@ log = logging.getLogger(__name__)
 
 DEFAULT_DEVICE = "/dev/ttyS0"
 DEFAULT_BAUD = 1000000
+# How long translate mode may hold board->Centaur bytes waiting for the first
+# painted frame. Long enough for shimmed GPIO/SPI init; short enough that a
+# silent gateway cannot deadlock the board link.
+SERIAL_HOLD_TIMEOUT_SECONDS = 10.0
 # Env flag that turns on passive logging of the LED commands Centaur issues, for
 # calibrating UC's own LED intensity against the stock software. Off by default
 # so normal translate-mode play is not made noisy; set to "1" to capture.
@@ -116,6 +125,25 @@ def pump_commands(
             sleep_fn(_IDLE_SLEEP_SECONDS)
 
 
+def _wait_for_release(
+    release_event: threading.Event,
+    timeout_seconds: float,
+    should_stop: Callable[[], bool],
+    clock_fn: Callable[[], float],
+) -> None:
+    """Block until ``release_event`` is set, ``should_stop``, or ``timeout_seconds``.
+
+    Wait is sliced so a stop during the hold still unwinds the pump instead of
+    sitting until the full timeout. ``timeout_seconds <= 0`` returns immediately.
+    """
+    deadline = clock_fn() + max(0.0, timeout_seconds)
+    while not release_event.is_set() and not should_stop():
+        remaining = deadline - clock_fn()
+        if remaining <= 0:
+            return
+        release_event.wait(timeout=min(0.1, remaining))
+
+
 def pump_events(
     read_fn: Callable[[], bytes],
     write_fn: Callable[[bytes], None],
@@ -127,22 +155,35 @@ def pump_events(
     on_event: Optional[EventCallback] = None,
     on_exit: Optional[Callable[[], None]] = None,
     sleep_fn: Callable[[float], None] = time.sleep,
+    release_event: Optional[threading.Event] = None,
+    release_timeout_seconds: float = SERIAL_HOLD_TIMEOUT_SECONDS,
 ) -> None:
     """Forward the board -> app direction verbatim, decoding events on the side.
 
-    Every byte is forwarded to Centaur first and unchanged (the board link is
-    never gated on decoding). A copy is fed to ``decoder``; each decoded event is
-    passed to ``on_event`` (for web feedback) and to ``detector`` (for the exit
-    gesture). ``on_exit`` is invoked at most once, when the exit button has been
-    held past its threshold -- checked every iteration (even on an idle read) so a
-    hold with no further traffic still triggers.
+    Every byte is forwarded to Centaur unchanged (the board link is never gated
+    on decoding). A copy is fed to ``decoder``; each decoded event is passed to
+    ``on_event`` (for web feedback) and to ``detector`` (for the exit gesture).
+    ``on_exit`` is invoked at most once, when the exit button has been held past
+    its threshold -- checked every iteration (even on an idle read) so a hold
+    with no further traffic still triggers.
+
+    When ``release_event`` is supplied, the first board chunk is held until that
+    event is set or ``release_timeout_seconds`` elapses. Later chunks pass
+    immediately. The hold is the translate-mode first-frame gate, not a decode
+    gate: a decode bug still cannot stall the link.
     """
+    released = release_event is None
     while not should_stop():
         try:
             data = read_fn()
         except OSError:
             break
         if data:
+            if not released:
+                _wait_for_release(
+                    release_event, release_timeout_seconds, should_stop, clock_fn
+                )
+                released = True
             try:
                 write_fn(data)
             except OSError:
@@ -434,6 +475,8 @@ class ThreadedSerialTap:
             teardown). None disables the exit gesture.
         exit_button / hold_seconds: Configure the exit gesture (default: hold BACK
             for 1s).
+        release_event / release_timeout_seconds: Optional first-frame hold for
+            translate mode (see :func:`pump_events`). None means no hold.
     """
 
     def __init__(
@@ -446,6 +489,8 @@ class ThreadedSerialTap:
         exit_button: str = "BACK",
         hold_seconds: float = 1.0,
         clock_fn: Callable[[], float] = time.monotonic,
+        release_event: Optional[threading.Event] = None,
+        release_timeout_seconds: float = SERIAL_HOLD_TIMEOUT_SECONDS,
     ) -> None:
         self._tap = tap
         self._on_event = on_event
@@ -454,6 +499,8 @@ class ThreadedSerialTap:
         self._exit_button = exit_button
         self._hold_seconds = hold_seconds
         self._clock_fn = clock_fn
+        self._release_event = release_event
+        self._release_timeout_seconds = release_timeout_seconds
         self._stop = threading.Event()
         self._threads: List[threading.Thread] = []
 
@@ -522,6 +569,8 @@ class ThreadedSerialTap:
                 "clock_fn": self._clock_fn,
                 "on_event": self._on_event,
                 "on_exit": self._stop_centaur_fn,
+                "release_event": self._release_event,
+                "release_timeout_seconds": self._release_timeout_seconds,
             },
             name="centaur-serial-events",
             daemon=True,

@@ -25,6 +25,22 @@ log = logging.getLogger(__name__)
 
 RenderFn = Callable[[Image.Image], object]
 
+
+def render_and_signal(render_fn: RenderFn, event: threading.Event) -> RenderFn:
+    """Wrap ``render_fn`` so ``event`` is set after each successful frame.
+
+    Translate mode holds board->Centaur serial until the first painted frame
+    (Centaur's T5D driver crashes if a battery event reaches ``update()`` while
+    the framebuffer is still ``None``). The wrapper is the signal that a frame
+    made it through the gateway; a raising ``render_fn`` must not set the event,
+    because that frame did not reach the panel.
+    """
+    def wrapped(frame: Image.Image):
+        result = render_fn(frame)
+        event.set()
+        return result
+    return wrapped
+
 # Default socket path. Lives under the runtime dir; the shim is told the same
 # path via an environment variable at launch.
 DEFAULT_SOCKET_PATH = "/run/universalchess/centaur-display.sock"

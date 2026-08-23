@@ -447,6 +447,98 @@ def test_pump_events_forwards_unknown_bytes_without_events_or_exit():
     assert exits["n"] == 0
 
 
+def test_pump_events_holds_board_bytes_until_release_event():
+    """Board->Centaur bytes must not flow until the first-frame event is set.
+
+    Why this test exists: in translate mode the shimmed first paint is slower
+    than native serial, so a battery frame can reach Centaur's T5D update()
+    while the framebuffer is still None (AttributeError tobytes, traceback on
+    the panel). The hold is the gate. How the regression manifests: bytes are
+    forwarded before release.set(), so the race is open again.
+
+    should_stop is a separate Event, not "the reader is empty": the production
+    stop flag is independent of whether a chunk is in flight, and the hold must
+    still block after that chunk has been read.
+    """
+    release = threading.Event()
+    stop = threading.Event()
+    written = bytearray()
+    state = {"i": 0}
+    chunks = [BACK_DOWN_FRAME]
+
+    def read_fn():
+        if state["i"] < len(chunks):
+            chunk = chunks[state["i"]]
+            state["i"] += 1
+            return chunk
+        return b""
+
+    def delayed_release():
+        time.sleep(0.15)
+        assert bytes(written) == b""
+        release.set()
+        time.sleep(0.05)
+        stop.set()
+
+    waiter = threading.Thread(target=delayed_release)
+    waiter.start()
+    pump_events(
+        read_fn,
+        written.extend,
+        stop.is_set,
+        decoder=EventDecoder(),
+        sleep_fn=lambda s: None,
+        release_event=release,
+        release_timeout_seconds=2.0,
+    )
+    waiter.join(timeout=2.0)
+    assert bytes(written) == BACK_DOWN_FRAME
+
+
+def test_pump_events_releases_hold_when_timeout_elapses():
+    """A silent gateway must not deadlock the board link.
+
+    Why this test exists: if Centaur never paints (shim/gateway failure), holding
+    forever leaves the board mute. The timeout forwards anyway. How the
+    regression manifests: the pump hangs past the timeout, or never forwards.
+    """
+    release = threading.Event()
+    stop = threading.Event()
+    written = bytearray()
+    state = {"i": 0}
+    chunks = [BACK_DOWN_FRAME]
+
+    def read_fn():
+        if state["i"] < len(chunks):
+            chunk = chunks[state["i"]]
+            state["i"] += 1
+            return chunk
+        return b""
+
+    def stop_after_write():
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline:
+            if bytes(written) == BACK_DOWN_FRAME:
+                stop.set()
+                return
+            time.sleep(0.01)
+        stop.set()
+
+    waiter = threading.Thread(target=stop_after_write)
+    waiter.start()
+    pump_events(
+        read_fn,
+        written.extend,
+        stop.is_set,
+        decoder=EventDecoder(),
+        sleep_fn=lambda s: None,
+        release_event=release,
+        release_timeout_seconds=0.05,
+    )
+    waiter.join(timeout=2.0)
+    assert bytes(written) == BACK_DOWN_FRAME
+
+
 # ---------------------------------------------------------------------------
 # Threaded lifecycle (real PTY, no hardware/root)
 # ---------------------------------------------------------------------------

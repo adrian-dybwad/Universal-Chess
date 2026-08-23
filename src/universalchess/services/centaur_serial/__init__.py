@@ -19,6 +19,7 @@ from universalchess.services.centaur_serial.decoder import (
 )
 from universalchess.services.centaur_serial.relay import (
     DEFAULT_DEVICE,
+    SERIAL_HOLD_TIMEOUT_SECONDS,
     SerialTap,
     ThreadedSerialTap,
     heal_swapped_serial_node,
@@ -37,6 +38,7 @@ __all__ = [
     "LedCommandDecoder",
     "rotate_field",
     "DEFAULT_DEVICE",
+    "SERIAL_HOLD_TIMEOUT_SECONDS",
     "SerialTap",
     "ThreadedSerialTap",
     "heal_swapped_serial_node",

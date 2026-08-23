@@ -6015,16 +6015,25 @@ def _run_centaur_translate():
         CentaurDisplayGateway,
         ThreadedGatewayServer,
         DEFAULT_SOCKET_PATH,
+        render_and_signal,
     )
     from universalchess.services.centaur_serial import (
         SerialTap,
         ThreadedSerialTap,
         PieceInHandTracker,
         resolve_tap_device,
+        SERIAL_HOLD_TIMEOUT_SECONDS,
     )
 
     centaur_dir = os.path.dirname(CENTAUR_SOFTWARE)
-    gateway = CentaurDisplayGateway(render_fn=board.display_manager.display_frame)
+    # Hold board->Centaur serial until the first translated frame. The T5D
+    # driver calls image.tobytes() on a None framebuffer if a battery event
+    # arrives before the first paint; the shim makes that paint slower than
+    # native serial, so the race wins intermittently in translate mode.
+    first_frame = threading.Event()
+    gateway = CentaurDisplayGateway(
+        render_fn=render_and_signal(board.display_manager.display_frame, first_frame)
+    )
     server = ThreadedGatewayServer(gateway, socket_path=DEFAULT_SOCKET_PATH)
 
     # Serial tap: a transparent PTY man-in-the-middle on the board port so UC can
@@ -6081,6 +6090,8 @@ def _run_centaur_translate():
         SerialTap(device=serial_device),
         on_event=_on_serial_event if piece_tracker is not None else None,
         stop_centaur_fn=_stop_centaur,
+        release_event=first_frame,
+        release_timeout_seconds=SERIAL_HOLD_TIMEOUT_SECONDS,
     )
 
     def _start_serial() -> None:

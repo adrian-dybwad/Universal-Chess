@@ -18,7 +18,10 @@ import threading
 from typing import Callable, Iterable, Optional
 
 from universalchess.services.centaur_engine_proxy.options import (
+    allows_setoption,
     build_config_setoptions,
+    is_uci_engine_output_line,
+    parse_advertised_option_name,
     rewrite_setoption_line,
 )
 from universalchess.services.centaur_engine_proxy.tracker import (
@@ -57,7 +60,10 @@ def run_proxy(
       broadcast); a recording or publish failure is logged and swallowed so it
       never breaks play;
     - Centaur's ``setoption`` lines are rewritten to the memory floor before
-      forwarding; everything else passes through verbatim.
+      forwarding; names the engine did not advertise in its ``uci`` handshake
+      are dropped (Centaur always sends Stockfish's options; other engines exit
+      on them). Engine stdout that is not UCI (banners, "No such option") is
+      not forwarded to Centaur. Everything else passes through verbatim.
 
     The engine's ``bestmove`` is also watched: when it ends the game (the player
     is about to make the mating/stalemating move and Centaur will send no further
@@ -80,6 +86,9 @@ def run_proxy(
     """
     inject_options = list(inject_options)
     state_lock = threading.Lock()
+    advertised_names: set = set()
+    advertised_lock = threading.Lock()
+    uciok_seen = threading.Event()
 
     def commit_update(update, source_desc: str) -> None:
         """Fan one tracker update out to the recorder, publisher, and debug log.
@@ -109,6 +118,14 @@ def run_proxy(
     def pump_engine() -> None:
         for line in engine_out:
             text = line.rstrip("\n")
+            option_name = parse_advertised_option_name(text)
+            if option_name is not None:
+                with advertised_lock:
+                    advertised_names.add(option_name.lower())
+            if text.strip().lower() == "uciok":
+                uciok_seen.set()
+            if not is_uci_engine_output_line(text):
+                continue
             _write_line(centaur_out, text)
             if tracker is None:
                 continue
@@ -132,8 +149,12 @@ def run_proxy(
         lowered = stripped.lower()
 
         if not injected and lowered.startswith("go"):
+            uciok_seen.wait(timeout=5.0)
+            with advertised_lock:
+                names = set(advertised_names)
             for option_line in inject_options:
-                _write_line(engine_in, option_line)
+                if allows_setoption(names, option_line):
+                    _write_line(engine_in, option_line)
             injected = True
 
         if lowered.startswith("ucinewgame") and tracker is not None:
@@ -155,7 +176,15 @@ def run_proxy(
                     if update is not None:
                         commit_update(update, stripped)
 
-        out_line = rewrite_setoption_line(line) if lowered.startswith("setoption") else line
+        if lowered.startswith("setoption"):
+            uciok_seen.wait(timeout=5.0)
+            with advertised_lock:
+                names = set(advertised_names)
+            if not allows_setoption(names, line):
+                continue
+            out_line = rewrite_setoption_line(line)
+        else:
+            out_line = line
         _write_line(engine_in, out_line)
 
     try:
@@ -219,9 +248,20 @@ def main(argv: Optional[list] = None) -> int:
         engine_cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         bufsize=1,
     )
+
+    def _drain_engine_stderr() -> None:
+        if proc.stderr is None:
+            return
+        for err_line in proc.stderr:
+            log_fn(f"centaur-proxy[engine]: {err_line.rstrip()}")
+
+    threading.Thread(
+        target=_drain_engine_stderr, name="centaur-proxy-engine-stderr", daemon=True
+    ).start()
 
     tracker = PositionTracker()
     recorder = _build_recorder(log_fn)

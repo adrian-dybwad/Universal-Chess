@@ -17,6 +17,7 @@ import threading
 import time
 from io import BytesIO
 
+import pytest
 from PIL import Image, ImageChops
 
 from universalchess.epaper.framework.waveshare.epd2in9d import pack_image_to_buffer
@@ -25,6 +26,7 @@ from universalchess.services.centaur_display.protocol import encode_record, read
 from universalchess.services.centaur_display.gateway import (
     CentaurDisplayGateway,
     ThreadedGatewayServer,
+    render_and_signal,
 )
 
 DC_COMMAND = 0
@@ -158,6 +160,43 @@ def test_gateway_stops_cleanly_on_eof_without_rendering_partial():
     gateway.run_stream(_reader(partial))
 
     assert rendered == []
+
+
+def test_render_and_signal_sets_event_after_successful_render():
+    """The first-frame Event must fire only after render_fn returns.
+
+    Why this test exists: translate mode releases the serial hold on this event.
+    If the wrapper set the event before render_fn, a raising display_frame would
+    still unblock battery traffic and Centaur would crash on None.tobytes().
+    How the regression manifests: the event is set when render_fn raises, or is
+    never set when it succeeds.
+    """
+    rendered = []
+    event = threading.Event()
+    wrapped = render_and_signal(rendered.append, event)
+
+    assert not event.is_set()
+    wrapped(_pattern_image())
+    assert event.is_set()
+    assert len(rendered) == 1
+
+
+def test_render_and_signal_does_not_set_event_when_render_raises():
+    """A failing paint must not release the serial hold.
+
+    Why this test exists: same race as test_render_and_signal_sets_event_after
+    successful_render, the failure direction. How the regression manifests: the
+    event is set even though render_fn raised.
+    """
+    event = threading.Event()
+
+    def boom(_image):
+        raise RuntimeError("panel busy")
+
+    wrapped = render_and_signal(boom, event)
+    with pytest.raises(RuntimeError):
+        wrapped(_pattern_image())
+    assert not event.is_set()
 
 
 # ---------------------------------------------------------------------------

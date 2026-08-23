@@ -33,6 +33,9 @@ from universalchess.services.centaur_engine_proxy.hook import render_launcher
 from universalchess.services.centaur_engine_proxy.options import (
     MEMORY_SAFE_HASH_MAX_MB,
     MEMORY_SAFE_MULTIPV_MAX,
+    allows_setoption,
+    is_uci_engine_output_line,
+    parse_advertised_option_name,
 )
 from universalchess.services.centaur_engine_proxy.tracker import START_FEN
 
@@ -598,6 +601,107 @@ def test_run_proxy_forwards_rewrites_injects_and_records(db):
     # The move was recorded.
     moves = session.query(models.GameMove).order_by(models.GameMove.id).all()
     assert [m.move for m in moves] == ["", "e2e4"]
+
+
+@pytest.mark.parametrize(
+    "line,expected",
+    [
+        ("id name ct800", True),
+        ("option name Hash type spin default 16", True),
+        ("uciok", True),
+        ("info depth 1 score cp 12", True),
+        ("bestmove e7e5", True),
+        ("Starting engine...", False),
+        ("No such option: MultiPV", False),
+        ("optionally logging", False),
+        ("", False),
+    ],
+)
+def test_is_uci_engine_output_line(line, expected):
+    """Only UCI tokens may be forwarded to Centaur.
+
+    Why this test exists: non-Stockfish engines print banners and "No such
+    option" on stdout; Centaur was written against Stockfish and dies on those
+    lines. How the regression manifests: a banner is classified True (forwarded)
+    or a real ``info``/``uciok`` is classified False (Centaur never handshakes).
+    """
+    assert is_uci_engine_output_line(line) is expected
+
+
+def test_parse_advertised_option_name_handles_spaces():
+    """UCI option names may contain spaces; the name stops at `` type ``.
+
+    Why this test exists: ``Skill Level`` must be recorded as that name, not
+    ``Skill``. How the regression manifests: the parsed name is truncated or
+    a non-option line returns a string instead of None.
+    """
+    assert parse_advertised_option_name(
+        "option name Skill Level type spin default 20"
+    ) == "Skill Level"
+    assert parse_advertised_option_name("uciok") is None
+
+
+def test_allows_setoption_drops_unknown_names_once_engine_advertised():
+    """Centaur's Stockfish setoptions must not reach an engine that lacks them.
+
+    Why this test exists: Original Centaur always sends Hash/MultiPV/Skill;
+    engines that do not implement those options have been observed to exit,
+    taking the session down. An empty advertised set must still forward (the
+    handshake was not observed -- existing stream tests send only uciok).
+    How the regression manifests: MultiPV is allowed for an engine that only
+    advertised Hash, or Hash is dropped when nothing was advertised.
+    """
+    advertised = {"hash"}
+    assert allows_setoption(advertised, "setoption name Hash value 16") is True
+    assert allows_setoption(advertised, "setoption name MultiPV value 1") is False
+    assert allows_setoption(set(), "setoption name MultiPV value 1") is True
+
+
+def test_run_proxy_drops_unknown_setoptions_and_engine_banners():
+    """A non-Stockfish engine must not see Stockfish-only setoptions or banners.
+
+    Why this test exists: this is the Original Centaur "any engine other than
+    Stockfish crashes" failure. The engine advertises only Hash; Centaur still
+    sends MultiPV. The banner must not reach Centaur; MultiPV must not reach
+    the engine; Hash still must (clamped). How the regression manifests: MultiPV
+    appears in engine_in, or the banner appears in centaur_out.
+    """
+    centaur_in = [
+        "uci\n",
+        "setoption name Hash value 128\n",
+        "setoption name MultiPV value 10\n",
+        "isready\n",
+        "go movetime 100\n",
+    ]
+    engine_out = [
+        "Starting up...\n",
+        "id name ct800\n",
+        "option name Hash type spin default 16 min 1 max 128\n",
+        "uciok\n",
+        "readyok\n",
+        "bestmove e7e5\n",
+    ]
+    engine_in = _Capture()
+    centaur_out = _Capture()
+
+    run_proxy(
+        centaur_in,
+        centaur_out,
+        engine_in,
+        engine_out,
+        inject_options=["setoption name UCI_Elo value 1500"],
+    )
+
+    forwarded = engine_in.text()
+    assert f"setoption name Hash value {MEMORY_SAFE_HASH_MAX_MB}" in forwarded
+    assert "MultiPV" not in forwarded
+    assert "UCI_Elo" not in forwarded
+
+    to_centaur = centaur_out.text()
+    assert "Starting up" not in to_centaur
+    assert "id name ct800" in to_centaur
+    assert "uciok" in to_centaur
+    assert "bestmove e7e5" in to_centaur
 
 
 # ---------------------------------------------------------------------------

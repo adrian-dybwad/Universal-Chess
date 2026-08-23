@@ -786,6 +786,24 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   band. Timed games now always show the clock. Show Clock still hides the turn
   indicator in untimed games, and its help names the exception.
 
+- **Original Centaur in translate mode crashed on a battery poll**: the T5D
+  driver calls ``image.tobytes()`` in ``update()`` without checking that the
+  framebuffer exists. Translate mode's GPIO shim makes the first paint slower
+  than native serial, so a battery event from the board could reach
+  ``event_battery_`` before that paint and dump a Python traceback onto the
+  panel -- not every launch, only when the race lost. The serial tap now holds
+  board-to-Centaur bytes until the display gateway has rendered one frame (or
+  ten seconds, so a silent gateway cannot deadlock the link). Direct mode is
+  unchanged.
+
+- **Original Centaur crashed with any engine other than Stockfish**: Centaur
+  always sends Stockfish ``setoption`` lines (Hash, MultiPV, Skill Level) and
+  was written against Stockfish's stdout. Other engines print a banner or reject
+  unknown options and the session died. The UCI proxy now forwards only lines
+  that are UCI, and drops ``setoption`` names the engine did not advertise in
+  its ``uci`` handshake. Stockfish still receives Hash (memory-capped) as
+  before.
+
 - **A PLACE with no lift put the board into correction mode**: the Centaur
   sometimes reports a PLACE with no preceding LIFT -- a reed bounce after the
   piece is already seated, a trailing duplicate after occupancy already accepted

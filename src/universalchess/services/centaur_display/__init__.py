@@ -26,6 +26,7 @@ from .gateway import (
     CentaurDisplayGateway,
     ThreadedGatewayServer,
     DEFAULT_SOCKET_PATH,
+    render_and_signal,
 )
 
 # NOTE: ``shim_builder`` is intentionally NOT re-exported here. It is a
@@ -44,4 +45,5 @@ __all__ = [
     "CentaurDisplayGateway",
     "ThreadedGatewayServer",
     "DEFAULT_SOCKET_PATH",
+    "render_and_signal",
 ]
