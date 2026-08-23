@@ -31,6 +31,23 @@ function prettify(name: string): string {
     .join(' ');
 }
 
+function categoryLabel(
+  t: (key: string, options?: { defaultValue: string }) => string,
+  id: string,
+): string {
+  return t(`positions.category.${id}`, { defaultValue: prettify(id) });
+}
+
+function positionLabel(
+  t: (key: string, options?: { defaultValue: string }) => string,
+  name: string,
+  category: string,
+): string {
+  // Overlay names are the user's; a packaged translation must not claim them.
+  if (category === 'custom') return prettify(name);
+  return t(`positions.item.${name}`, { defaultValue: prettify(name) });
+}
+
 /**
  * Parse a UCI hint (e.g. "e2e4" or "a7a8q") into from/to squares for a board
  * arrow. Returns null when there is no hint or it is too short to be a move, so
@@ -181,7 +198,11 @@ export function Positions() {
         const response = await apiFetch('/api/board/setup-position', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fen: entry.fen, name: prettify(entry.name), hint: entry.hint ?? undefined }),
+          body: JSON.stringify({
+            fen: entry.fen,
+            name: positionLabel(t, entry.name, activeCategory?.name ?? ''),
+            hint: entry.hint ?? undefined,
+          }),
           requiresAuth: true,
         });
 
@@ -189,7 +210,12 @@ export function Positions() {
 
         const data = await response.json().catch(() => ({}));
         if (response.ok && data.success) {
-          setStatus({ kind: 'success', text: t('positions.setupSuccess', { name: prettify(entry.name) }) });
+          setStatus({
+            kind: 'success',
+            text: t('positions.setupSuccess', {
+              name: positionLabel(t, entry.name, activeCategory?.name ?? ''),
+            }),
+          });
         } else {
           setStatus({ kind: 'error', text: data.error || t('positions.setupFailed') });
         }
@@ -199,7 +225,7 @@ export function Positions() {
       }
     };
     await submit();
-  }, [requireLogin, t]);
+  }, [requireLogin, t, activeCategory?.name]);
 
   const submitAdd = useCallback(async (payload: { name: string; fen: string; hint: string }): Promise<void> => {
     setAddError(null);
@@ -272,10 +298,14 @@ export function Positions() {
         }
       }}
       title={entry.fen}
-      aria-label={t('positions.setupAria', { name: prettify(entry.name) })}
+      aria-label={t('positions.setupAria', {
+        name: positionLabel(t, entry.name, activeCategory?.name ?? ''),
+      })}
     >
       <PositionPreview fen={entry.fen} hint={entry.hint} />
-      <span className="position-name">{prettify(entry.name)}</span>
+      <span className="position-name">
+        {positionLabel(t, entry.name, activeCategory?.name ?? '')}
+      </span>
     </div>
   );
 
@@ -300,7 +330,9 @@ export function Positions() {
             </div>
             <div className="dialog-body">
               <p className="dialog-description">
-                {t('positions.confirmBodyPre')}<strong>{prettify(pending.name)}</strong>{t('positions.confirmBodyPost')}
+                {t('positions.confirmBodyPre')}
+                <strong>{positionLabel(t, pending.name, activeCategory?.name ?? '')}</strong>
+                {t('positions.confirmBodyPost')}
               </p>
             </div>
             <div className="dialog-footer">
@@ -335,9 +367,9 @@ export function Positions() {
                   type="button"
                   className={`subnav-item ${activeCategory?.name === category.name ? 'active' : ''}`}
                   onClick={() => navigate(`/positions/${category.name}`)}
-                  title={prettify(category.name)}
+                  title={categoryLabel(t, category.name)}
                 >
-                  <span className="subnav-label">{prettify(category.name)}</span>
+                  <span className="subnav-label">{categoryLabel(t, category.name)}</span>
                 </button>
               ))}
             </aside>
@@ -345,7 +377,7 @@ export function Positions() {
             <main className="subnav-content">
               <h2 className="page-title">
                 <MenuIcon name="positions" size={24} style={{ verticalAlign: 'text-bottom', marginRight: 8 }} />
-                {activeCategory ? prettify(activeCategory.name) : t('positions.title')}
+                {activeCategory ? categoryLabel(t, activeCategory.name) : t('positions.title')}
               </h2>
               <p className="text-muted mb-6">{t('positions.descCategory')}</p>
 

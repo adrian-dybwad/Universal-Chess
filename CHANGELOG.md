@@ -1158,6 +1158,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   screens in Spanish and checks the substitutions still land, since a scan can
   see that a string is looked up but not that it is the right one.
 
+- **The Positions menu was English in every language**: opening Positions
+  built every category and packaged position row by title-casing the INI
+  key (Pawn Endgames, Mate In 1 Back Rank), so a Spanish or Dutch board
+  showed an English menu. The chrome around it (End Game?, Cancel) already
+  came from the string bundle. Categories and packaged names now come from
+  that bundle on the board and the web; a custom overlay entry still
+  title-cases because that name is the user's.
+
 - **The board's Lichess screens were English in every language**: Players and
   its menus translate, but the lobby they open was built from English literals
   rather than from the catalog the web card reads, so choosing Español or

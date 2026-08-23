@@ -6,6 +6,10 @@ from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.i18n import t
 from universalchess.managers.menu import MenuSelection, is_break_result
 
+# Overlay / user-authored positions live in this INI section. Their names are
+# the user's, so they are never looked up in the bundle.
+CUSTOM_CATEGORY = "custom"
+
 # Maps a positions.ini section name to the icon shown for that category.
 # The themed endgame sections all reuse the endgame icon; any section not listed
 # here falls back to the generic "positions" icon.
@@ -21,6 +25,48 @@ CATEGORY_ICONS = {
     "endgame_studies": "positions_endgames",
     "custom": "positions_custom",
 }
+
+
+def prettify_ini_id(ident: str) -> str:
+    """Turn an INI section or entry key into the English title-case it used to show.
+
+    Packaged ids are translated instead; this is the fallback for a custom
+    overlay entry or any id the bundle has not seen, so the panel never shows
+    the raw lookup key.
+    """
+    return ident.replace("_", " ").title()
+
+
+def _localized_or_prettify(prefix: str, ident: str) -> str:
+    """Translate ``prefix.ident`` when the bundle has it, else title-case ``ident``.
+
+    ``t()`` returns the key itself when nothing is in the bundle, which would
+    draw ``positions.item.my_trap`` on a custom row. Title-case is the previous
+    rendering and is what the user typed, once normalised to an INI key.
+    """
+    key = f"{prefix}.{ident}"
+    translated = t(key)
+    if translated == key:
+        return prettify_ini_id(ident)
+    return translated
+
+
+def localized_category_label(category: str) -> str:
+    """Category name for the Positions menu, in the device language."""
+    return _localized_or_prettify("positions.category", category)
+
+
+def localized_position_label(name: str, *, category: str = "") -> str:
+    """Position name for a Positions row, in the device language.
+
+    Custom overlay names are the user's and are title-cased rather than looked
+    up, so a saved "My trap" cannot pick up a packaged translation that happens
+    to share the key.
+    """
+    if category == CUSTOM_CATEGORY:
+        return prettify_ini_id(name)
+    return _localized_or_prettify("positions.item", name)
+
 
 def position_unavailable_message() -> str:
     """Why a stored position cannot be started, in the device language."""
@@ -42,7 +88,7 @@ def build_category_entries(positions: Dict[str, Dict[str, Tuple[str, str]]]) -> 
     category_icons = CATEGORY_ICONS
     category_entries: List[IconMenuEntry] = []
     for category in positions.keys():
-        display_name = category.replace("_", " ").title()
+        display_name = localized_category_label(category)
         count = len(positions[category])
         icon_name = category_icons.get(category, "positions")
         category_entries.append(
@@ -96,7 +142,7 @@ def build_position_entries(
     """Build position entries for a category."""
     entries: List[IconMenuEntry] = []
     for name, fen in positions.items():
-        display_name = name.replace("_", " ").title()
+        display_name = localized_position_label(name, category=category)
         wrapped_text, _, height_ratio = _wrap_display_name(display_name)
 
         if category == "test":
@@ -216,7 +262,7 @@ def handle_positions_menu(
 
         if position_result in positions[category]:
             fen, hint_move = positions[category][position_result]
-            display_name = position_result.replace("_", " ").title()
+            display_name = localized_position_label(position_result, category=category)
             last_position_category_ref[0] = category
             last_position_index_ref[0] = find_entry_index(position_entries, position_result)
 
