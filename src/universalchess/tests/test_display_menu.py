@@ -159,6 +159,20 @@ def test_board_labels_use_abbreviations_and_led_shows_value():
     assert by_key["field.display.pegasus_override_brightness"].label == "Pegasus LED"
 
 
+def test_show_clock_help_says_timed_games_always_show_the_clock():
+    """Show Clock help must name that timed games always show the clock.
+
+    Why: the setting no longer hides remaining time; the help is the only
+    place Settings (board HELP and the web Display row) says so. How a
+    regression manifests: the old one-liner returns, so a user who turns Show
+    Clock off still expects a timed game to hide the countdown.
+    """
+    by_key = {r.key: r for r in _display_rows(_state())}
+    help_text = (by_key["field.display.show_clock"].help or "").lower()
+    assert "timed" in help_text, f"help does not mention timed games: {help_text}"
+    assert "always" in help_text, f"help does not say the clock always shows: {help_text}"
+
+
 def test_graph_row_disabled_when_analysis_widget_off():
     """Show Graph is selectable only while Show Analysis is on (enabledWhen).
 

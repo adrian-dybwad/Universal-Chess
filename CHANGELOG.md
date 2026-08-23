@@ -780,6 +780,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Timed games hid the clock when Show Clock was off**: Show Clock is the
+  untimed turn-indicator toggle. The same flag also hid the e-paper clock in a
+  timed game, so remaining time vanished and the layout still reserved a blank
+  band. Timed games now always show the clock. Show Clock still hides the turn
+  indicator in untimed games, and its help names the exception.
+
 - **A PLACE with no lift put the board into correction mode**: the Centaur
   sometimes reports a PLACE with no preceding LIFT -- a reed bounce after the
   piece is already seated, a trailing duplicate after occupancy already accepted

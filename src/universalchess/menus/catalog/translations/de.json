@@ -693,7 +693,7 @@
     "field.display.show_clock": {
       "label": "Uhr anzeigen",
       "boardLabel": "Uhr",
-      "help": "Zeigt die Partieuhr und die Zuganzeige"
+      "help": "Zeigt die Partieuhr und die Zuganzeige. Bei Zeitpartien wird die Uhr immer angezeigt, damit die Restzeit sichtbar bleibt."
     },
     "field.display.show_analysis": {
       "label": "Analyse anzeigen",

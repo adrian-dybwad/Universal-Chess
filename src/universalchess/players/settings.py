@@ -318,7 +318,8 @@ class GameSettings:
             an unanswered check makes every other move illegal, so hiding it would
             let the player build an impossible position on the physical board.
         show_board: Show chess board widget
-        show_clock: Show clock/turn indicator widget
+        show_clock: Show the untimed turn-indicator widget. Timed games always
+            show the clock so remaining time is visible.
         show_analysis: Show analysis widget
         show_graph: Show history graph in analysis widget
         led_brightness: LED brightness level (1-10, default 5)

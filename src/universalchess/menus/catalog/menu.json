@@ -1667,7 +1667,7 @@
       "type": "toggle",
       "label": "Show Clock",
       "boardLabel": "Clock",
-      "help": "Display game clock and turn indicator",
+      "help": "Display the game clock and turn indicator. Timed games always show the clock so remaining time is visible.",
       "section": "display",
       "bind": { "store": "game", "key": "show_clock" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" }

@@ -679,7 +679,7 @@
     "field.display.show_clock": {
       "label": "Mostrar reloj",
       "boardLabel": "Reloj",
-      "help": "Muestra el reloj de la partida y el indicador de turno"
+      "help": "Muestra el reloj de la partida y el indicador de turno. Las partidas con tiempo siempre muestran el reloj para que el tiempo restante sea visible."
     },
     "field.display.show_analysis": {
       "label": "Mostrar análisis",

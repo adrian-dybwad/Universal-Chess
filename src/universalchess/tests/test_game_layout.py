@@ -11,7 +11,12 @@ clock grow in "compact" mode) would otherwise only show as a gap, overlap, or
 shrunken move list on the physical board.
 """
 
-from universalchess.managers.game_layout import compute_clock_analysis_layout
+import pytest
+
+from universalchess.managers.game_layout import (
+    clock_widget_visible,
+    compute_clock_analysis_layout,
+)
 
 
 def test_normal_layout_uses_full_clock_height():
@@ -53,3 +58,26 @@ def test_compact_never_grows_a_short_clock():
     assert layout.clock_height == 40
     assert layout.analysis_y == 184
     assert layout.analysis_height == 112
+
+
+@pytest.mark.parametrize(
+    "timed_mode, show_clock, expected",
+    [
+        (True, True, True),
+        (True, False, True),
+        (False, True, True),
+        (False, False, False),
+    ],
+)
+def test_clock_widget_visible_shows_timed_clocks_regardless_of_show_clock(
+    timed_mode, show_clock, expected,
+):
+    """A timed game must show the clock even when Show Clock is off.
+
+    Why: Show Clock is the untimed turn-indicator toggle. Applying it to a
+    timed game hid remaining time on the e-paper (layout still reserved the
+    clock band, so the panel showed a blank strip). How a regression manifests:
+    ``(timed_mode=True, show_clock=False)`` returns False and DisplayManager
+    hides the widget for a countdown game.
+    """
+    assert clock_widget_visible(timed_mode=timed_mode, show_clock=show_clock) is expected

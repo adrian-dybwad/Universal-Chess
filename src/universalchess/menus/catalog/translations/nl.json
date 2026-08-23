@@ -693,7 +693,7 @@
     "field.display.show_clock": {
       "label": "Klok tonen",
       "boardLabel": "Klok",
-      "help": "Toont de partijklok en wie aan zet is"
+      "help": "Toont de partijklok en wie aan zet is. Bij partijen op tijd wordt de klok altijd getoond, zodat de resterende tijd zichtbaar blijft."
     },
     "field.display.show_analysis": {
       "label": "Analyse tonen",

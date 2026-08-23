@@ -193,3 +193,43 @@ def test_layout_needs_rebuild_false_for_timed_to_timed_change(display_manager_wi
     dm.set_time_control_spec(TimeControl.fischer_minutes(10, 5))  # still timed
 
     assert dm.layout_needs_rebuild() is False
+
+
+def test_layout_needs_rebuild_false_when_show_clock_toggles_on_a_timed_game(
+    display_manager_with_real_clock,
+):
+    """Toggling Show Clock during a timed game must not rebuild the layout.
+
+    Timed games always show the clock, so the setting does not change which
+    widgets exist or how they are sized. If the signature still keyed on the
+    raw show_clock flag, turning it off mid-game would flash a full rebuild
+    that hid remaining time -- the original bug -- and turning it back on
+    would flash another.
+    """
+    dm, _service = display_manager_with_real_clock
+    dm._show_clock = True
+    dm._layout_signature = dm._compute_layout_signature()
+
+    dm._show_clock = False
+
+    assert dm.layout_needs_rebuild() is False
+
+
+def test_layout_needs_rebuild_true_when_show_clock_toggles_on_an_untimed_game(
+    display_manager_with_real_clock,
+):
+    """Toggling Show Clock on an untimed game must rebuild: the turn indicator
+    appears or disappears.
+
+    Why: untimed Show Clock is the only gate for that widget. If the signature
+    treated timed and untimed the same (always ignoring show_clock), turning
+    the indicator off would leave a stale turn widget until a full game start.
+    """
+    dm, _service = display_manager_with_real_clock
+    dm.set_time_control_spec(TimeControl.sudden_death_minutes(0))
+    dm._show_clock = True
+    dm._layout_signature = dm._compute_layout_signature()
+
+    dm._show_clock = False
+
+    assert dm.layout_needs_rebuild() is True

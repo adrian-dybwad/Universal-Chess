@@ -30,7 +30,10 @@ from universalchess.services.engine_registry import get_engine_registry, EngineH
 from universalchess.state import get_chess_clock as get_clock_state
 from universalchess.state import get_chess_game
 from universalchess.state.time_control import TimeControl
-from universalchess.managers.game_layout import compute_clock_analysis_layout
+from universalchess.managers.game_layout import (
+    clock_widget_visible,
+    compute_clock_analysis_layout,
+)
 from universalchess.utils.chess_notation import format_move
 from universalchess.epaper.text_scale import DEFAULT_TEXT_SIZE, read_text_size
 
@@ -138,7 +141,8 @@ class DisplayManager:
             initial_fen: FEN string for initial position. If None, uses starting position.
             time_control: Time per player in minutes (0 = disabled/untimed, shows turn only)
             show_board: If True, show the chess board widget
-            show_clock: If True, show the clock/turn indicator widget
+            show_clock: If True, show the untimed turn-indicator widget.
+                Timed games always show the clock so remaining time is visible.
             show_graph: If True, show the history graph in analysis widget
             analysis_mode: If True, create the analysis engine and eval widget
                 (may be hidden by show_analysis). The move-list widget is always
@@ -395,7 +399,8 @@ class DisplayManager:
         - Analysis widget: y=216, height=80 (eval bar and history)
         
         Widget creation rules:
-        - Clock widget: Always created if time_control > 0, hidden if show_clock=False
+        - Clock widget: Always shown for a timed game; otherwise shown only if
+          show_clock=True (untimed turn indicator)
         - Analysis widget: Created if analysis mode enabled, hidden if show_analysis=False
         - Move-list widget: Always created (hidden until UP/DOWN selects a ply)
         - Coach-text widget: Always created (hidden until a ply is selected)
@@ -491,18 +496,15 @@ class DisplayManager:
             on_tick_refresh=board.display_manager.flush_now,
             text_size=self._text_size,
         )
-        # Always add clock widget if timed mode, hidden if show_clock=False
-        # For untimed mode, only add if show_clock=True
-        if timed_mode:
+        # Timed games always show the clock (remaining time). show_clock only
+        # gates the untimed turn indicator; hiding a running clock left a blank
+        # reserved band and no visible time.
+        if clock_widget_visible(timed_mode=timed_mode, show_clock=self._show_clock):
             board.display_manager.add_widget(self.clock_widget)
-            if self._show_clock:
+            if timed_mode:
                 log.info(f"[DisplayManager] Clock widget initialized (visible, y={clock_y}, height={clock_height}, time_control={self._time_control} min)")
             else:
-                self.clock_widget.hide()
-                log.info(f"[DisplayManager] Clock widget initialized (hidden, y={clock_y}, height={clock_height}, time_control={self._time_control} min)")
-        elif self._show_clock:
-            board.display_manager.add_widget(self.clock_widget)
-            log.info(f"[DisplayManager] Clock widget initialized (visible, turn indicator only, y={clock_y}, height={clock_height})")
+                log.info(f"[DisplayManager] Clock widget initialized (visible, turn indicator only, y={clock_y}, height={clock_height})")
         else:
             log.info("[DisplayManager] Clock widget disabled (untimed mode)")
         
@@ -612,7 +614,12 @@ class DisplayManager:
         """
         return (
             self._show_board,
-            self._show_clock,
+            # Timed games always show the clock, so toggling Show Clock mid-game
+            # must not rebuild a timed layout. Untimed still keys on the setting.
+            clock_widget_visible(
+                timed_mode=self._time_control_spec.is_timed,
+                show_clock=self._show_clock,
+            ),
             self._show_analysis,
             self._show_graph,
             self._notation,

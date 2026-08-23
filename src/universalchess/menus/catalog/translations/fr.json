@@ -679,7 +679,7 @@
     "field.display.show_clock": {
       "label": "Afficher la pendule",
       "boardLabel": "Pendule",
-      "help": "Affiche la pendule de la partie et l'indicateur de trait"
+      "help": "Affiche la pendule de la partie et l'indicateur de trait. Les parties chronométrées affichent toujours la pendule afin que le temps restant reste visible."
     },
     "field.display.show_analysis": {
       "label": "Afficher l'analyse",

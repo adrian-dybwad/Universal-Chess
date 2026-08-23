@@ -3,7 +3,9 @@
 Kept free of board/epaper imports so DisplayManager can compute the clock and
 analysis geometry -- including the compact move-history layout where the clock
 shrinks and the analysis widget grows into the reclaimed space -- and so the
-arithmetic is unit-testable in isolation.
+arithmetic is unit-testable in isolation. Clock *visibility* lives here too:
+whether the widget is shown is a setting/time-control policy, not a paint
+detail, and must stay independent of the e-paper manager.
 """
 
 from dataclasses import dataclass
@@ -59,3 +61,21 @@ def compute_clock_analysis_layout(
         analysis_y=analysis_y,
         analysis_height=analysis_height,
     )
+
+
+def clock_widget_visible(*, timed_mode: bool, show_clock: bool) -> bool:
+    """Whether the e-paper clock widget is shown.
+
+    Timed games always show the clock so remaining time is on the board.
+    ``show_clock`` only gates the untimed turn indicator: hiding that indicator
+    can free the band, but hiding a running clock left a blank reserved region
+    and no visible time.
+
+    Args:
+        timed_mode: True when the active time control has a countdown.
+        show_clock: The Show Clock display setting.
+
+    Returns:
+        True when the clock widget should be added visible.
+    """
+    return timed_mode or show_clock
