@@ -18,11 +18,16 @@ import threading
 from typing import Callable, Iterable, Optional
 
 from universalchess.services.centaur_engine_proxy.options import (
+    CENTAUR_FACE_OPTION_LINES,
     allows_setoption,
     build_config_setoptions,
+    ensure_info_multipv,
+    info_line_has_pv,
     is_uci_engine_output_line,
     parse_advertised_option_name,
+    parse_bestmove,
     rewrite_setoption_line,
+    synthetic_info_for_move,
 )
 from universalchess.services.centaur_engine_proxy.tracker import (
     PositionTracker,
@@ -63,7 +68,12 @@ def run_proxy(
       forwarding; names the engine did not advertise in its ``uci`` handshake
       are dropped (Centaur always sends Stockfish's options; other engines exit
       on them). Engine stdout that is not UCI (banners, "No such option") is
-      not forwarded to Centaur. Everything else passes through verbatim.
+      not forwarded to Centaur. The real engine's ``option`` advertisements are
+      replaced with a Stockfish-shaped Hash/MultiPV/Skill Level list so
+      Centaur's python-chess 0.x handshake succeeds; ``info`` lines without
+      ``multipv`` get it inserted, and a bare ``bestmove`` is preceded by a
+      dummy MultiPV ``info`` so ``magic_choose`` has a candidate. Everything
+      else passes through verbatim.
 
     The engine's ``bestmove`` is also watched: when it ends the game (the player
     is about to make the mating/stalemating move and Centaur will send no further
@@ -89,6 +99,12 @@ def run_proxy(
     advertised_names: set = set()
     advertised_lock = threading.Lock()
     uciok_seen = threading.Event()
+    # Search-info tracking: Centaur's magic_choose needs at least one MultiPV
+    # candidate. Set when a PV info line is forwarded; if still false at
+    # bestmove, a dummy info line is synthesized. Cleared after each bestmove
+    # so the next search starts clean (not on ``go``, which races the pump).
+    search_lock = threading.Lock()
+    saw_pv_info = False
 
     def commit_update(update, source_desc: str) -> None:
         """Fan one tracker update out to the recorder, publisher, and debug log.
@@ -116,28 +132,50 @@ def run_proxy(
                 log_fn(f"centaur-proxy: recording error: {exc}")
 
     def pump_engine() -> None:
+        nonlocal saw_pv_info
         for line in engine_out:
             text = line.rstrip("\n")
             option_name = parse_advertised_option_name(text)
             if option_name is not None:
                 with advertised_lock:
                     advertised_names.add(option_name.lower())
+                # Do not forward foreign option lists: Centaur's python-chess
+                # 0.x handshake was written against Stockfish and aborts or
+                # never starts search on combo/string/button names.
+                continue
             if text.strip().lower() == "uciok":
                 uciok_seen.set()
+                for face_line in CENTAUR_FACE_OPTION_LINES:
+                    _write_line(centaur_out, face_line)
+                _write_line(centaur_out, text)
+                continue
             if not is_uci_engine_output_line(text):
                 continue
+            lowered_out = text.strip().lower()
+            if lowered_out.startswith("info"):
+                text = ensure_info_multipv(text)
+                if info_line_has_pv(text):
+                    with search_lock:
+                        saw_pv_info = True
+            elif lowered_out.startswith("bestmove"):
+                with search_lock:
+                    need_synthetic = not saw_pv_info
+                    saw_pv_info = False
+                if need_synthetic:
+                    move = parse_bestmove(text)
+                    if move is not None:
+                        _write_line(centaur_out, synthetic_info_for_move(move))
             _write_line(centaur_out, text)
             if tracker is None:
                 continue
-            lowered_out = text.strip().lower()
             if lowered_out.startswith("bestmove"):
-                parts = text.split()
+                move = parse_bestmove(text)
                 # "bestmove <uci> [ponder <uci>]"; "(none)"/"0000" mean no move.
-                if len(parts) >= 2 and parts[1] not in ("(none)", "0000"):
+                if move is not None:
                     with state_lock:
-                        update = tracker.apply_terminal_engine_move(parts[1])
+                        update = tracker.apply_terminal_engine_move(move)
                         if update is not None:
-                            commit_update(update, f"bestmove {parts[1]} (terminal)")
+                            commit_update(update, f"bestmove {move} (terminal)")
 
     pump = threading.Thread(target=pump_engine, name="centaur-proxy-engine-pump", daemon=True)
     pump.start()

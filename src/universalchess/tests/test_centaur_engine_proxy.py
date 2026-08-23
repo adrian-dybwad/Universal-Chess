@@ -31,11 +31,16 @@ from universalchess.services.centaur_engine_proxy import (
 )
 from universalchess.services.centaur_engine_proxy.hook import render_launcher
 from universalchess.services.centaur_engine_proxy.options import (
+    CENTAUR_FACE_OPTION_LINES,
     MEMORY_SAFE_HASH_MAX_MB,
     MEMORY_SAFE_MULTIPV_MAX,
     allows_setoption,
+    ensure_info_multipv,
+    info_line_has_pv,
     is_uci_engine_output_line,
     parse_advertised_option_name,
+    parse_bestmove,
+    synthetic_info_for_move,
 )
 from universalchess.services.centaur_engine_proxy.tracker import START_FEN
 
@@ -702,6 +707,113 @@ def test_run_proxy_drops_unknown_setoptions_and_engine_banners():
     assert "id name ct800" in to_centaur
     assert "uciok" in to_centaur
     assert "bestmove e7e5" in to_centaur
+    # Centaur sees the Stockfish-shaped option list, not the engine's Hash line
+    # as the only advertisement -- Skill Level is required for its setoption.
+    for face_line in CENTAUR_FACE_OPTION_LINES:
+        assert face_line in to_centaur
+
+
+def test_ensure_info_multipv_inserts_only_when_pv_is_missing_the_index():
+    """PV info without ``multipv`` must gain ``multipv 1``; other info is untouched.
+
+    Why this test exists: Centaur's magic_choose reads python-chess's MultiPV
+    map. Stockfish always emits ``multipv``; CT800 often does not, and a PV
+    stored under no index is treated as no candidate so the computer never
+    moves. How the regression manifests: a PV line is returned unchanged, or
+    ``info string`` / a currmove line is rewritten.
+    """
+    pv = "info depth 8 score cp 25 nodes 100 pv e2e4 e7e5"
+    assert ensure_info_multipv(pv) == (
+        "info depth 8 score cp 25 nodes 100 multipv 1 pv e2e4 e7e5"
+    )
+    already = "info depth 8 multipv 2 score cp 10 pv d2d4"
+    assert ensure_info_multipv(already) == already
+    assert ensure_info_multipv("info string hashing") == "info string hashing"
+    assert ensure_info_multipv("info currmove e2e4") == "info currmove e2e4"
+    assert info_line_has_pv(pv) is True
+    assert info_line_has_pv("info currmove e2e4") is False
+    assert parse_bestmove("bestmove e7e5 ponder e2e4") == "e7e5"
+    assert parse_bestmove("bestmove (none)") is None
+    assert "multipv 1 pv e7e5" in synthetic_info_for_move("e7e5")
+
+
+def test_run_proxy_presents_stockfish_options_and_not_foreign_ones():
+    """Centaur must see Hash/MultiPV/Skill Level, never the real engine's extras.
+
+    Why this test exists: Original Centaur's python-chess 0.x ``Engine.uci()``
+    parses option advertisements. CT800 advertises ``type combo`` / ``type
+    string`` / bracketed names; that handshake does not start a search, so the
+    computer never moves. The proxy swallows those lines and injects a
+    Stockfish-shaped list before ``uciok``. How the regression manifests: a
+    combo option reaches Centaur, or Skill Level is missing so setoption fails.
+    """
+    centaur_in = ["uci\n", "isready\n"]
+    engine_out = [
+        "id name CT800 V1.40 32 bit\n",
+        "option name Hash type spin default 8 min 1 max 1024\n",
+        "option name Show Current Move type combo default Every Second var Every Second var Continuously\n",
+        "option name UCI_EngineAbout type string default The CT800 is free software\n",
+        "option name Clear Hash type button\n",
+        "uciok\n",
+        "readyok\n",
+    ]
+    centaur_out = _Capture()
+    run_proxy(centaur_in, centaur_out, _Capture(), engine_out)
+
+    to_centaur = centaur_out.text()
+    assert "Show Current Move" not in to_centaur
+    assert "UCI_EngineAbout" not in to_centaur
+    assert "Clear Hash" not in to_centaur
+    for face_line in CENTAUR_FACE_OPTION_LINES:
+        assert face_line in to_centaur
+    # Face options must appear before uciok so python-chess records them during
+    # the handshake, not as late advertisements.
+    skill_at = to_centaur.find("option name Skill Level")
+    uciok_at = to_centaur.find("uciok")
+    assert skill_at != -1 and uciok_at != -1 and skill_at < uciok_at
+    assert "id name CT800 V1.40 32 bit" in to_centaur
+
+
+def test_run_proxy_synthesizes_multipv_info_for_bare_bestmove():
+    """A bestmove with no preceding PV info must be preceded by a dummy MultiPV info.
+
+    Why this test exists: Drawfish/Worstfish print only ``bestmove``. Centaur
+    still runs magic_choose over the info map and will not play if that map is
+    empty. How the regression manifests: centaur_out has bestmove with no
+    ``multipv 1 pv`` line in front of it.
+    """
+    centaur_in = ["position startpos moves e2e4\n", "go movetime 100\n"]
+    engine_out = ["uciok\n", "bestmove e7e5\n"]
+    centaur_out = _Capture()
+    run_proxy(centaur_in, centaur_out, _Capture(), engine_out)
+
+    to_centaur = centaur_out.text()
+    info = synthetic_info_for_move("e7e5")
+    assert info in to_centaur
+    assert to_centaur.index(info) < to_centaur.index("bestmove e7e5")
+
+
+def test_run_proxy_does_not_synthesize_info_when_engine_already_sent_a_pv():
+    """An engine that already emitted a PV info line must not get a dummy one.
+
+    Why this test exists: synthesizing on top of a real PV would duplicate
+    candidates and could make magic_choose pick the dummy 0-cp line. How the
+    regression manifests: the dummy ``score cp 0 multipv 1 pv e7e5`` appears
+    even though the engine sent a real PV.
+    """
+    centaur_in = ["go movetime 100\n"]
+    engine_out = [
+        "uciok\n",
+        "info depth 4 score cp 30 pv e7e5\n",
+        "bestmove e7e5\n",
+    ]
+    centaur_out = _Capture()
+    run_proxy(centaur_in, centaur_out, _Capture(), engine_out)
+
+    to_centaur = centaur_out.text()
+    assert "multipv 1 pv e7e5" in to_centaur  # inserted on the real info line
+    assert synthetic_info_for_move("e7e5") not in to_centaur
+    assert "score cp 30" in to_centaur
 
 
 # ---------------------------------------------------------------------------

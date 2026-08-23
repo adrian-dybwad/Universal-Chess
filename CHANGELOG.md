@@ -804,6 +804,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   its ``uci`` handshake. Stockfish still receives Hash (memory-capped) as
   before.
 
+- **Original Centaur never moved when the engine was not Stockfish**: dropping
+  banners stopped the crash, but Centaur's bundled python-chess 0.x still saw
+  the real engine's option list (CT800 advertises combo/string/button names)
+  and ``magic_choose`` still needed a MultiPV ``info`` line before it would
+  play. The proxy now presents a Stockfish-shaped Hash/MultiPV/Skill Level
+  handshake, inserts ``multipv 1`` on PV info that omitted it, and synthesizes
+  a dummy scored PV in front of a bare ``bestmove`` (Drawfish/Worstfish print
+  only that). Centaur's Skill Level setoption is still dropped on the way to
+  engines that do not advertise it.
+
 - **A PLACE with no lift put the board into correction mode**: the Centaur
   sometimes reports a PLACE with no preceding LIFT -- a reed bounce after the
   piece is already seated, a trailing duplicate after occupancy already accepted
