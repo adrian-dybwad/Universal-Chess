@@ -183,6 +183,32 @@ def test_depends_provides_ensurepip_for_the_application_venv():
     )
 
 
+def test_depends_provides_an_mdns_responder_for_the_local_hostname():
+    """``Depends`` must guarantee an mDNS responder is present.
+
+    Why this test exists: ``<hostname>.local`` is not a convenience here, it is
+    the name the product is built around. ``tls.current_mdns_name`` derives the
+    server certificate's SANs from it, the boot oneshot and /etc/hostname path
+    unit regenerate the cert whenever it changes, and the install guide sends
+    users to ``http://<hostname>.local/`` for the web UI. Nothing on the device
+    answers to that name without a responder. Raspberry Pi OS ships
+    ``avahi-daemon`` in the base image, which is exactly why relying on it
+    silently is a trap: Armbian Minimal -- the image the Orange Pi install
+    procedure specifies -- carries only essential packages and does not include
+    it.
+
+    How a regression manifests: the install reports success and the board is
+    reachable by IP, but the documented URL does not resolve at all and the
+    certificate is issued for a name no client can look up, so there is no way
+    to reach the web UI over HTTPS under the name the cert covers.
+    """
+    assert "avahi-daemon" in _declared_depends(), (
+        "Depends must include avahi-daemon; without a responder nothing answers "
+        "to the <hostname>.local name the TLS certificate is issued for and the "
+        "install guide points users at"
+    )
+
+
 def test_depends_omits_the_incompatible_debian_pam_binding():
     """``Depends`` must not pull in ``python3-pam``.
 

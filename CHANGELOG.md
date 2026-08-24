@@ -875,6 +875,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   half-built venv is completed on the next install instead of being mistaken
   for a working one.
 
+- **`<hostname>.local` did not resolve on Armbian, so the web UI was
+  unreachable under the name its certificate covers**: nothing declared an mDNS
+  responder. Raspberry Pi OS ships `avahi-daemon` in its base image, so the
+  omission was invisible there; Armbian Minimal carries only essential packages
+  and does not include it, leaving a board that answers on its address but to no
+  name. The consequences reach past convenience: the server certificate's
+  Subject Alternative Names are derived from `<hostname>.local`, so it was
+  issued for a name no client could look up, and the install procedure directs
+  users to `http://<hostname>.local/` for the web interface. `avahi-daemon` is
+  now a declared dependency, which apt installs on Armbian and which is already
+  satisfied on a Raspberry Pi.
+
 - **Orange Pi Wi-Fi status and Scan used Raspberry Pi OS tools Armbian
   does not ship**: the web UI and e-paper reported disconnected (and Scan
   returned nothing) while wlan0 was associated, because status called
