@@ -137,9 +137,12 @@ def ensure_armhf_support(runner: Callable = subprocess.run) -> None:
     installed, and its display "translate" shim cannot be built until the armhf
     cross toolchain (``gcc-arm-linux-gnueabihf`` + ``libc6-dev-armhf-cross``) is
     present -- the native aarch64 ``gcc`` physically cannot emit centaur's armhf
-    ABI. This invokes the pinned ``centaur-armhf-setup`` helper via ``sudo -n``;
-    the helper is arch-guarded and installs only what is missing, so it is a fast
-    no-op (exit 0) on a native armhf host or an already-provisioned board.
+    ABI. Kernels without ``CONFIG_COMPAT=y`` also need ``qemu-user-static``
+    (binfmt) or the ELF fails with Exec format error; the helper installs that
+    package only when the running kernel config lacks the compat line. This
+    invokes the pinned ``centaur-armhf-setup`` helper via ``sudo -n``; the helper
+    is arch-guarded and installs only what is missing, so it is a fast no-op
+    (exit 0) on a native armhf host or an already-provisioned board.
 
     This is a required step, not best-effort: Centaur will neither run nor build
     its shim without these, so a failure raises CentaurImportError to fail the

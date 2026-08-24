@@ -7,6 +7,19 @@
 #     so the display "translate" shim (spishim.so) can be built for centaur's
 #     armhf ABI on this aarch64 host.
 #
+# Raspberry Pi OS 64-bit kernels set CONFIG_COMPAT=y, so the kernel can exec
+# AArch32 userland once libc6:armhf is present. Some arm64 kernels (measured:
+# Armbian 6.18.45-current-sunxi64 on the Orange Pi Zero 2W) leave
+# `# CONFIG_COMPAT is not set`. On those hosts libc6:armhf is not enough -- the
+# ELF fails with Exec format error -- so this helper also installs
+# qemu-user-static (binfmt) on a host that cannot exec AArch32.
+#
+# Which host that is, is decided by running an AArch32 binary, not by reading
+# the kernel's build config. /proc/config.gz requires CONFIG_IKCONFIG_PROC,
+# which Raspberry Pi OS does not enable, so a config-file check answers "no
+# COMPAT" on every Pi and pulls qemu-user-static onto boards that execute
+# armhf natively. See can_exec_armhf below.
+#
 # Invoked by the Centaur SD import through a single pinned, passwordless sudo
 # grant the package postinst installs:
 #
@@ -16,15 +29,18 @@
 # a general primitive (any package) and granting it would be equivalent to
 # unrestricted root. This helper narrows the grant to exactly: enable the armhf
 # foreign architecture (only when the armhf runtime is missing) and install the
-# fixed package set below -- nothing the caller can influence. The hard-coded
-# architecture + package list are the security boundary; do NOT add a package
-# argument or a passthrough branch.
+# fixed package set below -- nothing the caller can influence. qemu-user-static
+# is in that closed set only when the kernel needs it; callers cannot pass
+# packages. The hard-coded architecture + package list are the security
+# boundary; do NOT add a package argument or a passthrough branch.
 #
 # This is done here, at import time, rather than as package Depends because
 # libc6:armhf is not installable until `dpkg --add-architecture armhf` has been
 # run and the armhf index fetched -- a system reconfiguration apt cannot perform
-# while resolving its own dependencies. Import time is also when the apt lock is
-# free (no dpkg transaction in flight) and the network is typically up.
+# while resolving its own dependencies. qemu-user-static is also import-time
+# because it is only required on a host that cannot exec AArch32, not on Pi OS
+# 64-bit. Import time is also when the apt lock is free (no dpkg transaction in
+# flight) and the network is typically up.
 #
 # Callers use `sudo -n` so a missing grant fails fast rather than hanging on a
 # password prompt. Idempotent (installs only what is missing) and a no-op on a
@@ -35,10 +51,23 @@ set -u
 # binary and shim need at run time; gcc-arm-linux-gnueabihf + libc6-dev-armhf-cross
 # are the cross toolchain the shim build invokes on this host. Only libc6:armhf is
 # a foreign-arch (armhf) package; the two cross packages are native (arm64) and
-# need no foreign architecture. Additional armhf libraries Centaur may need surface
-# later as a clear "cannot open shared object" and can be appended here.
+# need no foreign architecture. qemu-user-static is installed only when the
+# host is measured unable to exec AArch32. Additional armhf libraries
+# Centaur may need surface later as a clear "cannot open shared object" and can
+# be appended here.
 ARMHF_RUNTIME_PKG="libc6:armhf"
+QEMU_PKG="qemu-user-static"
 REQUIRED_PACKAGES="$ARMHF_RUNTIME_PKG gcc-arm-linux-gnueabihf libc6-dev-armhf-cross"
+
+# Where libc6:armhf installs the AArch32 dynamic loader. /lib is a symlink to
+# /usr/lib on a merged-/usr image, but both are listed so an unmerged one still
+# resolves. UC_ARMHF_LOADER replaces the search for tests.
+ARMHF_LOADER_PATHS="/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3 /usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3"
+
+# Exit status a POSIX shell reports when a file exists but execve refused it.
+# On arm64 without CONFIG_COMPAT that refusal is ENOEXEC ("Exec format error"),
+# which is precisely the condition qemu-user-static's binfmt handler fixes.
+EXEC_FORMAT_ERROR_STATUS=126
 
 log() { echo "centaur-armhf: $*"; }
 
@@ -48,6 +77,69 @@ log() { echo "centaur-armhf: $*"; }
 # still gets the toolchain (a loader-presence check alone would wrongly skip it).
 pkg_installed() {
 	dpkg-query -W -f='${Status}' "$1" 2>/dev/null | grep -q "install ok installed"
+}
+
+# Echo an executable AArch32 loader path, or nothing when none is on disk.
+find_armhf_loader() {
+	if [ -n "${UC_ARMHF_LOADER:-}" ]; then
+		[ -x "$UC_ARMHF_LOADER" ] && echo "$UC_ARMHF_LOADER"
+		return 0
+	fi
+	for candidate in $ARMHF_LOADER_PATHS; do
+		if [ -x "$candidate" ]; then
+			echo "$candidate"
+			return 0
+		fi
+	done
+	return 0
+}
+
+# True when this host can execute an AArch32 ELF right now.
+#
+# Asks the kernel by running one, rather than inferring from CONFIG_COMPAT in a
+# kernel config file that Raspberry Pi OS does not publish. The armhf loader is
+# the one AArch32 binary this helper can rely on (libc6:armhf ships it), so the
+# probe runs only after that package is installed.
+#
+# Only status 126 means "cannot exec": the loader's own exit code is irrelevant
+# here, because any code it returns proves it ran -- natively on a CONFIG_COMPAT
+# kernel, or through a binfmt handler that is already registered. Treating a
+# non-zero loader status as failure would install qemu on a working host.
+can_exec_armhf() {
+	loader="$(find_armhf_loader)"
+	[ -n "$loader" ] || return 1
+	"$loader" --verify "$loader" >/dev/null 2>&1
+	[ "$?" -ne "$EXEC_FORMAT_ERROR_STATUS" ]
+}
+
+# Bring apt to a state where an install can run: non-interactive, no other dpkg
+# transaction in flight, indexes refreshed. Runs at most once per invocation so
+# the two install phases below share one update.
+apt_prepared=0
+prepare_apt() {
+	[ "$apt_prepared" -eq 0 ] || return 0
+	# sudoers env_reset strips caller env, so set the frontend here to keep apt
+	# fully non-interactive under the grant.
+	export DEBIAN_FRONTEND=noninteractive
+	# Wait (bounded) for any in-flight dpkg/apt transaction to release the
+	# frontend lock, so this cannot collide with a concurrent package operation.
+	i=0
+	while command -v fuser >/dev/null 2>&1 && \
+	      fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
+	      [ "$i" -lt 60 ]; do
+		sleep 2
+		i=$((i + 1))
+	done
+	log "updating package lists"
+	apt-get update || log "apt-get update failed (continuing; a cached index may suffice)"
+	apt_prepared=1
+}
+
+install_packages() {
+	prepare_apt
+	log "installing:$1"
+	# shellcheck disable=SC2086 - $1 is a fixed subset of the literal set above
+	apt-get install -y --no-install-recommends $1 || { log "install failed"; exit 1; }
 }
 
 # Only 64-bit (arm64) hosts need any of this. On a native armhf host the runtime
@@ -62,49 +154,52 @@ missing=""
 for p in $REQUIRED_PACKAGES; do
 	pkg_installed "$p" || missing="$missing $p"
 done
-if [ -z "$missing" ]; then
-	log "armhf runtime and shim toolchain already present; nothing to do"
+
+if [ -n "$missing" ]; then
+	log "missing armhf packages:$missing"
+	# Enable the armhf foreign architecture only when the runtime itself is
+	# missing; the cross packages are arm64 and do not require it.
+	case " $missing " in
+		*" $ARMHF_RUNTIME_PKG "*)
+			if ! dpkg --print-foreign-architectures 2>/dev/null | grep -qx armhf; then
+				log "enabling armhf foreign architecture"
+				dpkg --add-architecture armhf || { log "add-architecture failed"; exit 1; }
+			fi
+			;;
+	esac
+	install_packages "$missing"
+	# Verify every required package is now installed; a partial provision would
+	# let a later shim build or launch fail with a less obvious error.
+	for p in $REQUIRED_PACKAGES; do
+		pkg_installed "$p" || { log "install reported success but $p is still missing"; exit 1; }
+	done
+fi
+
+# The loader is present now, so the exec probe is meaningful. A host that runs
+# AArch32 -- natively, or through a binfmt handler already registered -- needs
+# nothing further, which is the common Raspberry Pi OS 64-bit case.
+if can_exec_armhf; then
+	log "host executes AArch32; $QEMU_PKG not required"
+	log "armhf runtime and shim toolchain ready"
 	exit 0
 fi
-log "missing armhf packages:$missing"
 
-# sudoers env_reset strips caller env, so set the frontend here to keep apt fully
-# non-interactive under the grant.
-export DEBIAN_FRONTEND=noninteractive
+if pkg_installed "$QEMU_PKG"; then
+	# qemu is installed and the host still cannot exec AArch32, so its binfmt
+	# handler is not registered. Failing here is the point: reporting success
+	# would hand back a board whose Centaur binary dies with Exec format error.
+	log "$QEMU_PKG is installed but AArch32 still will not execute; binfmt handler not registered"
+	exit 1
+fi
 
-# Wait (bounded) for any in-flight dpkg/apt transaction to release the frontend
-# lock, so this cannot collide with a concurrent package operation.
-i=0
-while command -v fuser >/dev/null 2>&1 && \
-      fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 && \
-      [ "$i" -lt 60 ]; do
-	sleep 2
-	i=$((i + 1))
-done
+log "host cannot exec AArch32 (no CONFIG_COMPAT); installing $QEMU_PKG for binfmt"
+install_packages "$QEMU_PKG"
+pkg_installed "$QEMU_PKG" || { log "install reported success but $QEMU_PKG is still missing"; exit 1; }
 
-# Enable the armhf foreign architecture only when the runtime itself is missing;
-# the cross packages are arm64 and do not require it.
-case " $missing " in
-	*" $ARMHF_RUNTIME_PKG "*)
-		if ! dpkg --print-foreign-architectures 2>/dev/null | grep -qx armhf; then
-			log "enabling armhf foreign architecture"
-			dpkg --add-architecture armhf || { log "add-architecture failed"; exit 1; }
-		fi
-		;;
-esac
-
-log "updating package lists"
-apt-get update || log "apt-get update failed (continuing; a cached index may suffice)"
-
-log "installing:$missing"
-# shellcheck disable=SC2086 - $missing is a fixed subset of the literal set above
-apt-get install -y --no-install-recommends $missing || { log "install failed"; exit 1; }
-
-# Verify every required package is now installed; a partial provision would let a
-# later shim build or launch fail with a less obvious error.
-for p in $REQUIRED_PACKAGES; do
-	pkg_installed "$p" || { log "install reported success but $p is still missing"; exit 1; }
-done
+if ! can_exec_armhf; then
+	log "$QEMU_PKG installed but AArch32 still will not execute"
+	exit 1
+fi
 
 log "armhf runtime and shim toolchain installed"
 exit 0

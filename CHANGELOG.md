@@ -55,6 +55,20 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   Pi-only: they need the vendor ICS switcher, NetworkManager, and dnsmasq,
   none of which this image has.
 
+- **Orange Pi can run the 32-bit Centaur binary**: Raspberry Pi OS 64-bit
+  kernels set `CONFIG_COMPAT=y`, so `libc6:armhf` is enough for the imported
+  armhf `centaur` ELF. The Armbian sunxi64 kernel was measured with
+  `# CONFIG_COMPAT is not set`, which leaves that binary as `Exec format
+  error`. Centaur import now installs `qemu-user-static` (binfmt) on a host
+  that cannot exec AArch32, and skips it on Pi OS 64-bit. Which host is which
+  is decided by running the armhf loader `libc6:armhf` has just installed and
+  looking for `ENOEXEC`, not by reading `CONFIG_COMPAT` out of
+  `/proc/config.gz`: that file needs `CONFIG_IKCONFIG_PROC`, which Raspberry Pi
+  OS does not enable, so a config-file check would answer "no COMPAT" on every
+  Pi and pull qemu plus its binfmt handlers onto boards that never needed them.
+  A host that still refuses AArch32 after the install now fails the import
+  rather than reporting success on a board whose `centaur` cannot launch.
+
 - **Lichess Lobby on the web**: Settings → Players showed a credentials card
   (add/delete logins) under the name Lichess Settings, while the board lobby
   was Account, Ongoing Games, Challenges, and New Game. The Players card is
