@@ -38,6 +38,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   do not load a spi-gpio overlay. SPI bus numbers stay un-hardcoded:
   userspace opens the master whose driver is spi-gpio.
 
+- **Orange Pi chess UART follows the board profile**: The chess MCU link was
+  hardcoded to `/dev/serial0`, a Raspberry Pi udev alias that Armbian does
+  not create. SyncCentaur now opens the profile UART (`/dev/ttyS0` on H616
+  Orange Pi, `/dev/ttyS3` on H3/H5 40-pin boards, `/dev/serial0` on a Pi)
+  and refuses to guess when the profile has no UART: an unrecognized board
+  fails with a named error rather than opening a device that is not the MCU.
+
 - **Lichess Lobby on the web**: Settings → Players showed a credentials card
   (add/delete logins) under the name Lichess Settings, while the board lobby
   was Account, Ongoing Games, Challenges, and New Game. The Players card is

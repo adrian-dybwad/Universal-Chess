@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 
 
 from universalchess.board import time_utils
+from universalchess.board.profile import require_uart_device
 from universalchess.services.centaur_serial.relay import (
     heal_swapped_serial_node,
     resolve_tap_device,
@@ -505,7 +506,7 @@ class SyncCentaur:
             self.ser = serial.Serial("/dev/pts/2", baudrate=1000000, timeout=5.0)
         else:
             heal_swapped_serial_node(resolve_tap_device())
-            self.ser = serial.Serial(self.SERIAL_DEVICE, baudrate=1000000, timeout=5.0)
+            self.ser = serial.Serial(require_uart_device(), baudrate=1000000, timeout=5.0)
         
     def _listener_thread(self):
         """Continuously listen for data on the serial port.
