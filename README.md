@@ -97,8 +97,12 @@ Universal-Chess can advertise as multiple e-board types and auto-detect which pr
 
 ## Install procedure
 
-Start clean on a new SD card using the Raspberry Pi Imager. Do not reuse the
-original card from the Centaur -- keep it safe, you may want it later.
+Start clean on a new SD card. Do not reuse the original card from the Centaur --
+keep it safe, you may want it later.
+
+### Raspberry Pi (Raspberry Pi OS)
+
+Image the card with the Raspberry Pi Imager.
 
 1. In the Pi Imager, choose Raspberry Pi OS (64-bit) **Trixie**, with no apps or
    desktop (Lite). The 32-bit image also works, but the 64-bit image supports
@@ -119,7 +123,7 @@ original card from the Centaur -- keep it safe, you may want it later.
 6. Wait for the install to complete, reboot, and the board should come up running
    Universal Chess.
 
-### No Wi-Fi? Set the board up over the USB cable
+#### No Wi-Fi? Set the board up over the USB cable
 
 The procedure above assumes the Pi can join your Wi-Fi. If it cannot — no
 network in reach, a password that turns out to be wrong, a 5 GHz-only access
@@ -256,6 +260,26 @@ that port.
 
 Full documentation, including troubleshooting for each stage, is in
 [`tools/sd-card-setup/README.md`](tools/sd-card-setup/README.md).
+
+### Orange Pi (Armbian)
+
+Orange Pi boards are imaged with the Armbian imager instead of the Raspberry Pi
+Imager, and the user from the imager profile is finished off on first login, so
+the first SSH session is as `root`.
+
+1. Get the Armbian imager: <https://imager.armbian.com/>
+2. Select your board and **Armbian 26.11.0 Minimal**.
+3. Configure a profile to set the Wi-Fi and user info. The user to create on
+   first login can be anything you like.
+4. Start the board with the newly flashed SD card. It should connect to the
+   Wi-Fi network you specified. If it does not, flash again, making sure the
+   profile with the right Wi-Fi credentials is selected.
+5. Log in over SSH -- initially as user `root` -- to set up the new user you
+   specified in the profile and to set the locale.
+6. Restart with `sudo reboot now`, then log in as the newly created user.
+7. Copy the install command from the latest nightly on the
+   [Releases page](https://github.com/adrian-dybwad/Universal-Chess/releases)
+   and run it.
 
 ## Local development setup (configs and database)
 
