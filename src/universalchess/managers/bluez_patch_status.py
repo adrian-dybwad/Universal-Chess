@@ -33,6 +33,7 @@ raise.
 """
 
 import json
+import os
 import time
 from datetime import datetime, timezone
 from typing import Optional
@@ -50,6 +51,17 @@ _VALID_ACTIVE = (STACK_STOCK, STACK_PATCHED, STACK_UNKNOWN)
 # Read-only here. Kept under /var/lib (FHS state) rather than the app dir so it
 # survives app reinstalls and is clearly system state, not app config.
 DEFAULT_MARKER_PATH = "/var/lib/universalchess/bluez-patch.json"
+
+# Where a distribution keeps the bluetoothd binary (same candidates the
+# self-heal's detect_bluetoothd falls back to), and the name the stock binary is
+# renamed to when it is diverted aside. The diversion is the physical evidence
+# that a substituted binary is in place, so these two facts decide the active
+# stack when no marker exists -- see read_status.
+BLUETOOTHD_PATHS = (
+    "/usr/libexec/bluetooth/bluetoothd",
+    "/usr/lib/bluetooth/bluetoothd",
+)
+DIVERTED_SUFFIX = ".stock"
 
 # Transient progress file written by the self-heal script WHILE it runs (the
 # marker above is only the final outcome). The board polls this so the status
@@ -154,21 +166,71 @@ def warning_label(status: Optional[dict]) -> Optional[str]:
     return "Patched BlueZ (pre-release fix) - not stock"
 
 
-def read_status(path: str = DEFAULT_MARKER_PATH) -> dict:
-    """Read the self-heal marker file; never raises.
+def derive_unmarked_status(bluetoothd_present: bool, diverted: bool) -> dict:
+    """Classify the active stack from disk, for when no marker exists.
 
-    A missing file means the self-heal installer has not run on this image, so
-    the active stack is reported as ``unknown`` (non-alarming). An unreadable or
-    malformed file is treated the same way rather than propagating an error into
-    the status snapshot.
+    Substituting a binary means diverting the stock one aside, so a bluetoothd
+    with no diversion beside it *is* the distribution's -- reporting that as
+    ``stock`` is a reading of the filesystem, not an assumption. A diversion
+    present without a marker still reports ``patched`` (without provenance,
+    which only the marker carries), because the warning about a binary that
+    receives no distribution security updates must not depend on a state file
+    that can be wiped.
+
+    ``unknown`` is reserved for a host where no bluetoothd was found at all:
+    there is then no stack to describe.
+    """
+    if not bluetoothd_present:
+        return unknown_status()
+    if diverted:
+        return make_status(STACK_PATCHED)
+    return stock_status()
+
+
+def probe_bluetoothd(paths=BLUETOOTHD_PATHS) -> tuple:
+    """Return ``(bluetoothd_present, diverted)`` from disk; never raises.
+
+    Two independent existence checks rather than one lookup of a single resolved
+    path: a diversion leaves both files in place, and which candidate directory
+    a distribution uses varies.
+
+    Nothing here is guarded because nothing here raises: ``os.path.exists``
+    answers ``False`` for a path it cannot stat, which is the same answer this
+    probe would give an unreadable directory anyway.
+    """
+    present = False
+    diverted = False
+    for candidate in paths:
+        if os.path.exists(candidate):
+            present = True
+        if os.path.exists(candidate + DIVERTED_SUFFIX):
+            diverted = True
+    return present, diverted
+
+
+def read_status(
+    path: str = DEFAULT_MARKER_PATH, bluetoothd_paths=BLUETOOTHD_PATHS
+) -> dict:
+    """Report the active bluetoothd stack; never raises.
+
+    The self-heal's marker is preferred because it is the only thing carrying
+    provenance (the base version, the fix, why it was applied). When there is no
+    marker the stack is read off the disk instead (see
+    :func:`derive_unmarked_status`): the self-heal declines to run on anything
+    other than a Raspberry Pi, so a non-Pi board has no marker while plainly
+    running the distribution binary, and reporting that as "not determined" told
+    the operator nothing about a stack that is right there to be looked at.
+
+    An unreadable or malformed marker falls through to the same disk reading
+    rather than propagating an error into the status snapshot.
     """
     try:
         with open(path, "r", encoding="utf-8") as handle:
             marker = json.load(handle)
     except FileNotFoundError:
-        return unknown_status()
+        return derive_unmarked_status(*probe_bluetoothd(bluetoothd_paths))
     except (OSError, ValueError):
-        return unknown_status()
+        return derive_unmarked_status(*probe_bluetoothd(bluetoothd_paths))
     return derive_status(marker)
 
 

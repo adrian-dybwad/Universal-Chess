@@ -1506,6 +1506,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   was observed on, so a board nobody has looked at still reports nothing rather
   than an inherited guess.
 
+- The System card reported "BlueZ stack not determined" on every board the
+  self-heal skips. Only the self-heal writes the marker the row reads, and it
+  now declines to run on anything other than a Raspberry Pi, so an Orange Pi had
+  no marker while plainly running the distribution's `bluetoothd`. The row now
+  falls back to reading the disk: substituting a binary means diverting the
+  stock one aside, so a `bluetoothd` with no diversion beside it is the stock
+  stack. A diversion found without a marker still reports the patched stack and
+  its warning, because the notice that a binary receives no distribution
+  security updates must not depend on a state file that can be wiped. "Not
+  determined" is now reserved for a host with no `bluetoothd` at all.
+
 - Top-of-page status banners (a pending update, a running install, background)
   activity) sat in normal document flow above a sticky navbar, so they
   scrolled off as soon as the page left the top. They now stick with the

@@ -141,11 +141,73 @@ def test_warning_label_without_base_version_still_warns():
     assert "stock" in label.lower()
 
 
-def test_read_status_missing_file_is_unknown(tmp_path):
-    # No marker => self-heal never ran on this image => unknown (non-alarming),
-    # never an exception. Guards stock images with no marker file.
+def test_read_status_missing_file_and_no_bluetoothd_is_unknown(tmp_path):
+    # No marker and no bluetoothd on disk => nothing to judge the active stack by
+    # => unknown (non-alarming), never an exception. Passing no candidate paths is
+    # what makes this the "nothing to look at" case rather than a reading of the
+    # test host's own /usr.
     missing = tmp_path / "nope.json"
-    assert read_status(str(missing)) == unknown_status()
+    assert read_status(str(missing), bluetoothd_paths=()) == unknown_status()
+
+
+def test_read_status_without_a_marker_reports_the_undiverted_binary_as_stock(tmp_path):
+    # Why: only the self-heal writes the marker, and it now declines to run
+    # anywhere other than a Raspberry Pi -- so an Orange Pi has no marker and the
+    # System card said "BlueZ stack not determined" about a board plainly running
+    # the distribution binary. Substituting a binary means diverting the stock one
+    # aside to <path>.stock, so an undiverted bluetoothd IS the stock stack, and
+    # that is determinable without any marker.
+    #
+    # How a regression manifests: the row returns to "not determined" on every
+    # board the self-heal skips, which is now every non-Pi board.
+    bluetoothd = tmp_path / "bluetoothd"
+    bluetoothd.write_text("elf", encoding="utf-8")
+    status = read_status(
+        str(tmp_path / "absent.json"), bluetoothd_paths=(str(bluetoothd),)
+    )
+    assert status["active"] == STACK_STOCK
+    assert status["patched"] is False
+    assert warning_label(status) is None
+
+
+def test_read_status_without_a_marker_reports_a_diverted_binary_as_patched(tmp_path):
+    # Why: the marker can be missing while a substituted binary is actually
+    # installed -- the state directory is wiped, or the file is unreadable. The
+    # diversion is the physical evidence, so the warning must still appear:
+    # reporting stock there would hide that the board runs a binary receiving no
+    # distribution security updates, the one thing this row exists to say.
+    #
+    # How a regression manifests: a patched board with no marker reports stock and
+    # the warning silently disappears.
+    bluetoothd = tmp_path / "bluetoothd"
+    bluetoothd.write_text("elf", encoding="utf-8")
+    (tmp_path / "bluetoothd.stock").write_text("elf", encoding="utf-8")
+    status = read_status(
+        str(tmp_path / "absent.json"), bluetoothd_paths=(str(bluetoothd),)
+    )
+    assert status["active"] == STACK_PATCHED
+    assert status["patched"] is True
+    assert warning_label(status) is not None
+
+
+def test_a_marker_outranks_what_is_on_disk(tmp_path):
+    # Why: the marker is the self-heal's own record and carries provenance the
+    # disk cannot (base version, the fix, why it was applied). The disk probe is
+    # strictly a fallback for when no marker exists, so a present marker must win
+    # even though the binary beside it is undiverted.
+    #
+    # How a regression manifests: the provenance fields vanish from the card
+    # because the probe overwrote a perfectly good marker reading.
+    bluetoothd = tmp_path / "bluetoothd"
+    bluetoothd.write_text("elf", encoding="utf-8")
+    marker = tmp_path / "bluez-patch.json"
+    marker.write_text(
+        json.dumps({"active": "patched", "base_version": "5.82-1.1+rpt1"}),
+        encoding="utf-8",
+    )
+    status = read_status(str(marker), bluetoothd_paths=(str(bluetoothd),))
+    assert status["active"] == STACK_PATCHED
+    assert status["base_version"] == "5.82-1.1+rpt1"
 
 
 def test_read_status_malformed_file_is_unknown(tmp_path):
