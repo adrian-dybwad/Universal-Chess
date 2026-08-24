@@ -97,6 +97,32 @@ class MockEngineHandle:
         return self.engine.analyse(board, limit)
 
 
+# Long enough that a loaded machine still reaches the condition, short enough
+# that a genuine regression fails the run rather than hanging it. The waits below
+# return as soon as the condition holds, so raising this costs a failing run only.
+_WAIT_TIMEOUT_SECONDS = 10.0
+_POLL_INTERVAL_SECONDS = 0.005
+
+
+def _wait_until(predicate, timeout: float = _WAIT_TIMEOUT_SECONDS) -> bool:
+    """Poll until predicate holds or the deadline passes; report whether it held.
+
+    The engine search runs on a daemon thread, so a test that instead slept for a
+    fixed interval passed only while the runner happened to schedule that thread
+    inside the chosen window. On a loaded CI runner the reverse-mode
+    recalculation landed 310 ms after a 300 ms sleep, and the test read the
+    pending move before the thread had set it and reported that no move existed.
+    Waiting on the condition removes the dependency on scheduling latency while
+    still failing when the condition never holds.
+    """
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(_POLL_INTERVAL_SECONDS)
+    return predicate()
+
+
 class TestReverseModeReselection(unittest.TestCase):
     """Test cases for piece type re-selection in reverse hand-brain mode."""
     
@@ -221,7 +247,7 @@ class TestReverseModeReselection(unittest.TestCase):
         player.on_piece_event("place", chess.E4, board)
         
         # Wait for engine computation to complete
-        time.sleep(0.3)
+        _wait_until(lambda: player._phase == HandBrainPhase.WAITING_EXECUTION)
         
         # Should be waiting for execution with knight move pending
         assert player._phase == HandBrainPhase.WAITING_EXECUTION, \
@@ -233,8 +259,9 @@ class TestReverseModeReselection(unittest.TestCase):
         player.on_piece_event("lift", chess.A1, board)
         player.on_piece_event("place", chess.A1, board)
         
-        # Wait for recalculation
-        time.sleep(0.3)
+        # Wait for the recalculation to replace the knight move
+        _wait_until(lambda: player._phase == HandBrainPhase.WAITING_EXECUTION
+                    and player._pending_move != first_pending_move)
         
         # The pending move should now be a rook move
         assert player._selected_piece_type == chess.ROOK, \
@@ -274,7 +301,7 @@ class TestReverseModeReselection(unittest.TestCase):
         player.on_piece_event("lift", chess.E4, board)
         player.on_piece_event("place", chess.E4, board)
         
-        time.sleep(0.3)
+        _wait_until(lambda: player._phase == HandBrainPhase.WAITING_EXECUTION)
         
         initial_call_count = player._engine_handle.engine.play_call_count
         initial_pending_move = player._pending_move
@@ -283,7 +310,8 @@ class TestReverseModeReselection(unittest.TestCase):
         player.on_piece_event("lift", chess.H1, board)
         player.on_piece_event("place", chess.H1, board)
         
-        time.sleep(0.3)
+        # Let any recalculation settle so its thread does not outlive the test
+        _wait_until(lambda: player._phase == HandBrainPhase.WAITING_EXECUTION)
         
         # Should NOT trigger recalculation since same piece type
         # (This is optional optimization - may or may not be implemented)
@@ -751,8 +779,7 @@ class TestHandBrainHint(unittest.TestCase):
         player._do_request_move(board)
         
         # Wait for computation to complete
-        import time
-        time.sleep(0.2)
+        _wait_until(lambda: player._suggested_best_move is not None)
         
         # Now get_hint should return the stored best move
         hint = player.get_hint(board)
