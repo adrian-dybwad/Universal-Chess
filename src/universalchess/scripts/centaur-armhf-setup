@@ -14,14 +14,16 @@
 # ELF fails with Exec format error -- so this helper also installs
 # qemu-user-static and registers the qemu-arm binfmt handler.
 #
-# Installing the package is not sufficient. Debian's qemu-user-static postinst
-# skips qemu-arm on arm64 because dpkg treats armhf as a native compatible
-# architecture. That skip is correct on Raspberry Pi OS 64-bit (native AArch32
-# must not be intercepted by qemu) and wrong here: only qemu-armeb (big-endian)
-# is registered, and little-endian centaur stays Exec format error. This helper
-# therefore calls update-binfmts for qemu-arm itself, but only after the exec
-# probe has already shown the kernel cannot run AArch32. A Pi never reaches
-# that path, so qemu-arm is never registered there.
+# Installing the package is not sufficient. qemu-user-static registers its
+# handlers through systemd-binfmt (/usr/lib/binfmt.d/qemu-*.conf) and ships a
+# .conf for every architecture EXCEPT qemu-arm and qemu-aarch64, the two it
+# treats as natively runnable on arm64. That is correct on Raspberry Pi OS
+# 64-bit (native AArch32 must not be routed through qemu) and wrong here: only
+# qemu-armeb (big-endian) is registered, so little-endian centaur stays Exec
+# format error. This helper therefore writes /etc/binfmt.d/qemu-arm.conf and
+# reloads systemd-binfmt itself, but only after the exec probe has already
+# shown the kernel cannot run AArch32. A Pi never reaches that path, so
+# qemu-arm is never registered there.
 #
 # Which host that is, is decided by running an AArch32 binary, not by reading
 # the kernel's build config. /proc/config.gz requires CONFIG_IKCONFIG_PROC,
@@ -73,16 +75,23 @@ REQUIRED_PACKAGES="$ARMHF_RUNTIME_PKG gcc-arm-linux-gnueabihf libc6-dev-armhf-cr
 # resolves. UC_ARMHF_LOADER replaces the search for tests.
 ARMHF_LOADER_PATHS="/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3 /usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3"
 
-# qemu-arm-static interpreter locations (Debian Trixie uses libexec; older
-# packages put it in /usr/bin). UC_QEMU_ARM_STATIC replaces the search for tests.
-QEMU_ARM_STATIC_PATHS="/usr/libexec/qemu-binfmt/qemu-arm-static /usr/bin/qemu-arm-static"
+# qemu interpreter for little-endian 32-bit ARM, most specific first. The
+# `-binfmt-P` symlink is the wrapper Debian's own qemu-*.conf point at; it makes
+# qemu preserve argv[0], which pairs with the P flag below. The plain binaries
+# are the fallback on packages that do not ship the wrapper directory.
+# UC_QEMU_ARM_INTERP replaces the search for tests.
+QEMU_ARM_INTERP_PATHS="/usr/libexec/qemu-binfmt/arm-binfmt-P /usr/bin/qemu-arm-static /usr/bin/qemu-arm"
 
-# Debian's packaged binfmt description. qemu-user-static's postinst will not
-# import this on arm64; this helper may, but only on the cannot-exec path.
-QEMU_ARM_BINFMT_DESC="/usr/share/binfmts/qemu-arm"
+# Where systemd-binfmt reads handler definitions. /etc is the sysadmin dir: it
+# takes precedence over the package's /usr/lib/binfmt.d, survives qemu upgrades,
+# and is re-read on every boot, so the registration is not lost on reboot.
+# UC_BINFMT_CONF_DIR replaces it for tests.
+BINFMT_CONF_DIR="/etc/binfmt.d"
 
-# ELF32 little-endian ARM magic/mask from Debian's qemu-arm binfmt. The 0xfe
-# mask on e_type matches both ET_EXEC and ET_DYN (the loader and centaur).
+# ELF32 little-endian ARM magic/mask, mirroring the shipped qemu-armeb.conf with
+# the byte order flipped (EI_DATA 0x01, e_machine 0x28 0x00 at offsets 18-19).
+# Byte 7 (EI_OSABI) is masked off, and the 0xfe mask on e_type matches both
+# ET_EXEC and ET_DYN so the loader and centaur itself both match.
 QEMU_ARM_MAGIC='\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00'
 QEMU_ARM_MASK='\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff'
 
@@ -134,19 +143,19 @@ can_exec_armhf() {
 	[ "$?" -ne "$EXEC_FORMAT_ERROR_STATUS" ]
 }
 
-# Echo the qemu-arm-static path, or nothing when it is not on disk.
-find_qemu_arm_static() {
-	if [ -n "${UC_QEMU_ARM_STATIC:-}" ]; then
-		[ -x "$UC_QEMU_ARM_STATIC" ] && echo "$UC_QEMU_ARM_STATIC"
+# Echo the qemu interpreter for 32-bit little-endian ARM, or nothing.
+find_qemu_arm_interpreter() {
+	if [ -n "${UC_QEMU_ARM_INTERP:-}" ]; then
+		[ -x "$UC_QEMU_ARM_INTERP" ] && echo "$UC_QEMU_ARM_INTERP"
 		return 0
 	fi
-	for candidate in $QEMU_ARM_STATIC_PATHS; do
+	for candidate in $QEMU_ARM_INTERP_PATHS; do
 		if [ -x "$candidate" ]; then
 			echo "$candidate"
 			return 0
 		fi
 	done
-	command -v qemu-arm-static 2>/dev/null || true
+	return 0
 }
 
 # True when the little-endian ARM qemu handler is registered in binfmt_misc.
@@ -157,42 +166,63 @@ qemu_arm_binfmt_registered() {
 	[ -e "$dir/qemu-arm" ]
 }
 
-# Register qemu-arm. Reached only after can_exec_armhf has failed, so a
-# Raspberry Pi OS 64-bit host (native AArch32) never gets here and never has
-# its armhf binaries intercepted by qemu.
+# Register the qemu-arm binfmt handler.
+#
+# qemu-user-static registers its handlers through systemd-binfmt, which reads
+# /usr/lib/binfmt.d/qemu-*.conf. Measured on the Orange Pi Zero 2W: every
+# architecture has a .conf there EXCEPT qemu-arm and qemu-aarch64 -- the two the
+# packaging considers natively runnable on arm64. binfmt-support (update-binfmts)
+# is not installed at all, so writing a .conf and reloading systemd-binfmt is the
+# mechanism that works here. /etc/binfmt.d overrides /usr/lib/binfmt.d and is
+# re-read at boot, so this survives both reboots and qemu package upgrades.
+#
+# Reached only after can_exec_armhf has failed, so a Raspberry Pi OS 64-bit host
+# (native AArch32) never gets here and never has its armhf binaries routed
+# through qemu.
 ensure_qemu_arm_binfmt() {
 	if qemu_arm_binfmt_registered; then
 		log "qemu-arm binfmt already registered"
 		return 0
 	fi
-	if ! command -v update-binfmts >/dev/null 2>&1; then
-		log "update-binfmts not found (binfmt-support)"
-		return 1
-	fi
-	desc="${UC_BINFMT_DESC:-$QEMU_ARM_BINFMT_DESC}"
-	if [ -f "$desc" ]; then
-		log "importing qemu-arm binfmt from $desc"
-		# --import is not subject to qemu-user-static's postinst skip.
-		if update-binfmts --import qemu-arm && qemu_arm_binfmt_registered; then
-			return 0
-		fi
-		log "update-binfmts --import qemu-arm did not register the handler"
-	fi
-	interp="$(find_qemu_arm_static)"
+	interp="$(find_qemu_arm_interpreter)"
 	if [ -z "$interp" ]; then
-		log "qemu-arm-static interpreter not found"
+		log "qemu-arm interpreter not found"
 		return 1
 	fi
-	log "registering qemu-arm binfmt with $interp"
-	# Hard-coded magic matches Debian's qemu-arm description so a host
-	# whose --import was skipped still gets the same handler. --fix-binary
-	# opens the interpreter at registration time (required for binfmt).
-	update-binfmts --install qemu-arm "$interp" \
-		--magic "$QEMU_ARM_MAGIC" \
-		--mask "$QEMU_ARM_MASK" \
-		--offset 0 \
-		--credential yes \
-		--fix-binary yes || return 1
+	# O opens the binary, C honours credentials, F opens the interpreter at
+	# registration time (so it still resolves inside a chroot). The -binfmt-P
+	# wrapper is what preserves argv[0]; pair it with P exactly as the shipped
+	# qemu-*.conf do. A plain interpreter has no wrapper, so it uses C instead.
+	flags="OCF"
+	case "$interp" in
+		*-binfmt-P) flags="OPF" ;;
+	esac
+	rule=":qemu-arm:M::${QEMU_ARM_MAGIC}:${QEMU_ARM_MASK}:${interp}:${flags}"
+
+	conf_dir="${UC_BINFMT_CONF_DIR:-$BINFMT_CONF_DIR}"
+	mkdir -p "$conf_dir" || { log "could not create $conf_dir"; return 1; }
+	log "writing $conf_dir/qemu-arm.conf ($interp)"
+	# printf %s does not interpret the backslash escapes in the magic/mask, so
+	# they reach the file literally the way binfmt_misc expects.
+	printf '%s\n' \
+		"# Little-endian 32-bit ARM. qemu-user-static omits this handler on" \
+		"# arm64 because armhf is treated as natively runnable, which is false" \
+		"# on a kernel built without CONFIG_COMPAT. Written by Universal Chess" \
+		"# so the imported DGT Centaur binary can execute." \
+		"$rule" > "$conf_dir/qemu-arm.conf" || return 1
+
+	if command -v systemctl >/dev/null 2>&1; then
+		systemctl restart systemd-binfmt.service >/dev/null 2>&1 || true
+		qemu_arm_binfmt_registered && return 0
+	fi
+
+	# No systemd-binfmt (or it declined): register directly so this run works.
+	# The .conf above still makes it persist across the next boot.
+	register="${UC_BINFMT_MISC_DIR:-/proc/sys/fs/binfmt_misc}/register"
+	if [ -w "$register" ]; then
+		log "registering qemu-arm directly via $register"
+		printf '%s\n' "$rule" > "$register" 2>/dev/null || true
+	fi
 	qemu_arm_binfmt_registered
 }
 
