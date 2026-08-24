@@ -168,6 +168,8 @@ kernel_release(){ uname -r; }
 # the menus, the web payload and the board's startup (a test asserts both carry
 # this literal). Overridable so the gate below is testable without a controller.
 SYSFS_BLUETOOTH="${UC_SYSFS_BLUETOOTH:-/sys/class/bluetooth}"
+# Device-tree model; overridable so the Raspberry Pi gate is testable off-device.
+DEVICE_TREE_MODEL="${UC_DEVICE_TREE_MODEL:-/proc/device-tree/model}"
 
 has_bluetooth_adapter() {
     # 0 when the kernel has registered at least one Bluetooth controller.
@@ -182,6 +184,22 @@ has_bluetooth_adapter() {
         [ -e "$hci" ] && return 0
     done
     return 1
+}
+
+is_raspberry_pi() {
+    # 0 when the device-tree model is a Raspberry Pi.
+    #
+    # The advertising-length bug this script patches is BCM43430B0 on Raspberry
+    # Pi OS kernels. Orange Pi Zero 2W has a live hci0 (uwe5622) so the adapter
+    # gate is not enough: running the heal there rebuilds bluetoothd for a
+    # Broadcom/Pi-only defect. Missing model file (dev hosts) is not a Pi.
+    local model
+    [ -r "$DEVICE_TREE_MODEL" ] || return 1
+    model=$(tr -d '\0' < "$DEVICE_TREE_MODEL" 2>/dev/null) || return 1
+    case "$model" in
+        [Rr]aspberry\ [Pp]i*) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
@@ -490,6 +508,12 @@ main() {
         exit 0
     fi
 
+    if ! is_raspberry_pi; then
+        clear_progress
+        log "BCM43430 self-heal does not apply (not a Raspberry Pi; this patch is the Pi BCM43430B0 advertising-length bug)"
+        exit 0
+    fi
+
     mkdir -p "$STATE_DIR"
     # Serialize against concurrent apt-triggered runs; wait up to 10 min.
     exec 9>"$LOCK"
@@ -618,9 +642,10 @@ case "${1:-run}" in
     boot)          boot ;;                                  # boot-time safety net (gated)
     probe-only)    probe ;;                                 # diagnostics
     probe-verdict) probe_verdict "${2:-}" ;;                # diagnostics: exit code -> decision
-    has-adapter)   has_bluetooth_adapter ;;                 # diagnostics: is a controller fitted
+    has-adapter)     has_bluetooth_adapter ;;                 # diagnostics: is a controller fitted
+    is-raspberry-pi) is_raspberry_pi ;;                      # diagnostics: Pi-only BCM43430 heal
     build-jobs)    build_jobs ;;                            # diagnostics: computed compile parallelism
     retire)        retire_patch "$(detect_bluetoothd)"; restart_bluetooth; restart_board; write_marker stock false ;;
     status)        cat "$MARKER" 2>/dev/null || echo "{}" ;;
-    *)             echo "usage: bluez-selfheal {run|boot|probe-only|probe-verdict <rc>|has-adapter|build-jobs|retire|status}" >&2; exit 2 ;;
+    *)             echo "usage: bluez-selfheal {run|boot|probe-only|probe-verdict <rc>|has-adapter|is-raspberry-pi|build-jobs|retire|status}" >&2; exit 2 ;;
 esac

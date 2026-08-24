@@ -41,11 +41,13 @@ _SKIP_LOG = "no Bluetooth controller"
 _EVALUATE_LOG = "evaluating bluez"
 
 
-def _run(*args, sysfs_bluetooth=None):
+def _run(*args, sysfs_bluetooth=None, device_tree_model=None):
     """Run the helper with the sysfs Bluetooth path pointed at a test tree."""
     env = dict(os.environ)
     if sysfs_bluetooth is not None:
         env["UC_SYSFS_BLUETOOTH"] = str(sysfs_bluetooth)
+    if device_tree_model is not None:
+        env["UC_DEVICE_TREE_MODEL"] = str(device_tree_model)
     return subprocess.run(  # noqa: S603 - test invokes the pinned helper with fixed args
         ["bash", str(_HELPER), *args],  # noqa: S607 - bash on PATH is fine in tests
         env=env, capture_output=True, text=True, timeout=60,
@@ -172,3 +174,43 @@ def test_only_a_failed_probe_triggers_a_build():
     content = _HELPER.read_text()
     assert 'verdict="$(probe_verdict' in content
     assert 'error)' in content
+
+_SKIP_NOT_PI_LOG = "BCM43430 self-heal does not apply"
+
+
+def _model_file(tmp_path, model: str) -> Path:
+    path = tmp_path / "device-tree-model"
+    path.write_bytes(model.encode("utf-8") + b"\x00")
+    return path
+
+
+def test_reports_raspberry_pi_for_a_pi_model_string(tmp_path):
+    # Why: the BCM43430 advertising-length bug is a Raspberry Pi OS kernel +
+    # Broadcom combo-die failure. The gate must still recognise a Pi so a
+    # Zero 2 W keeps the self-heal. Manifests as is-raspberry-pi failing on
+    # the live Pi device-tree string.
+    model = _model_file(tmp_path, "Raspberry Pi Zero 2 W Rev 1.0")
+    proc = _run("is-raspberry-pi", device_tree_model=model)
+    assert proc.returncode == 0, proc.stderr
+
+
+def test_reports_not_raspberry_pi_for_orangepi_zero2w(tmp_path):
+    # Why: Orange Pi Zero 2W has hci0 (uwe5622), so the controller gate
+    # alone would still run the heal and rebuild bluetoothd for a Pi-only
+    # BCM43430 bug. Manifests as is-raspberry-pi succeeding for this model.
+    model = _model_file(tmp_path, "OrangePi Zero 2W")
+    proc = _run("is-raspberry-pi", device_tree_model=model)
+    assert proc.returncode != 0, proc.stderr
+
+
+@pytest.mark.parametrize("mode", ["run", "boot"])
+def test_orangepi_with_adapter_skips_the_heal(mode, with_adapter, tmp_path):
+    # Why: the bring-up board has a live controller, which used to be the
+    # only gate. run/boot must still no-op so Armbian never compiles BlueZ.
+    # Manifests as the evaluate line (restart bluetoothd / probe / build).
+    model = _model_file(tmp_path, "OrangePi Zero 2W")
+    proc = _run(mode, sysfs_bluetooth=with_adapter, device_tree_model=model)
+    assert proc.returncode == 0, proc.stderr
+    assert _SKIP_NOT_PI_LOG in proc.stderr
+    assert _EVALUATE_LOG not in proc.stderr
+

@@ -69,6 +69,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   A host that still refuses AArch32 after the install now fails the import
   rather than reporting success on a board whose `centaur` cannot launch.
 
+- **The BlueZ self-heal runs only on a Raspberry Pi**: the workaround targets
+  a BCM43430 firmware fault and was gated on nothing more than the presence of
+  an hci device. Orange Pi carries a uwe5622, an unrelated part the workaround
+  cannot help, so installing rebuilt BlueZ against a chipset that never had
+  the bug. Boards other than a Raspberry Pi now skip it.
+
 - **Lichess Lobby on the web**: Settings → Players showed a credentials card
   (add/delete logins) under the name Lichess Settings, while the board lobby
   was Account, Ongoing Games, Challenges, and New Game. The Players card is
