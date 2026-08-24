@@ -863,6 +863,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   start from. `python3-venv` is now a declared dependency, unversioned so it
   tracks whichever interpreter the Debian release makes default.
 
+- **An install that failed once could not be repaired by installing what it
+  was missing**: the postinst skipped building `.venv` whenever
+  `.venv/bin/python` existed, but `python3 -m venv` links the interpreter
+  into place before it runs ensurepip. A create that aborted at ensurepip
+  therefore left a directory that satisfied that test permanently, and every
+  later install skipped creation and died one line further on with
+  `.venv/bin/pip: No such file or directory` -- with nothing to do but delete
+  the directory by hand. Creation is now decided by both tools the install
+  actually runs out of the environment, the interpreter and pip, so a
+  half-built venv is completed on the next install instead of being mistaken
+  for a working one.
+
 - **Orange Pi Wi-Fi status and Scan used Raspberry Pi OS tools Armbian
   does not ship**: the web UI and e-paper reported disconnected (and Scan
   returned nothing) while wlan0 was associated, because status called

@@ -1053,8 +1053,19 @@ echo -e "::: Installing python packages"
 
 export DEBIAN_FRONTEND=noninteractive
 
-# Create venv if missing
-if [ ! -x "$VENV_DIR/bin/python" ]; then
+# Create the venv when either of the tools the rest of this script runs out of
+# it is missing.
+#
+# Testing bin/python alone is what made a failed install unrecoverable: venv
+# links the interpreter into bin/ before it runs ensurepip, so a create that
+# aborted at ensurepip (a board with no python3-venv) left a directory that
+# passed that test forever after. Every later install skipped creation and died
+# one line further on at a pip that was never installed -- fixing the missing
+# dependency changed nothing, because the damage was already on disk. Testing
+# pip alone would fail the same way in mirror image, several steps later at
+# compileall or the shim build. Re-running venv over a partial directory
+# completes it in place, so this heals such a board on the next install.
+if [ ! -x "$VENV_DIR/bin/python" ] || [ ! -x "$VENV_DIR/bin/pip" ]; then
   python3 -m venv --system-site-packages "$VENV_DIR"
 fi
 
