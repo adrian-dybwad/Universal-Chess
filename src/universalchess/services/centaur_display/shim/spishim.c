@@ -30,6 +30,11 @@
  *      (synthetic cpuinfo needed). On a native 32-bit host the kernel includes
  *      the Hardware line and the legacy /dev/gpiomem, so both flags stay off and
  *      the fopen/open hooks pass straight through -- native hardware unaffected.
+ *      A third substitution, for an absent /dev/spidevN.M, is decided per-open
+ *      rather than by a load-time flag (see is_absent_spidev_path): centaur's
+ *      panel driver opens /dev/spidev1.0, which exists on a Pi Zero but not on a
+ *      board that bit-bangs its panel over GPIO, where the open returned ENOENT
+ *      and centaur died in epaperT5D.__init__ before drawing anything.
  *   1. Virtualizes /dev/gpiomem: centaur's mmap is redirected to a private
  *      shadow page, so its DC/RST/CS writes never reach the real pins (no
  *      contention with UC, which keeps driving the real panel) and its BUSY
@@ -152,6 +157,38 @@ static int fake_gpiomem_has(int fd) {
     return found;
 }
 
+/* fds returned in place of an absent spidev node. centaur's panel driver opens
+ * /dev/spidev1.0 -- the second SPI controller, where the T5D sits on a Pi Zero.
+ * A board that drives its panel by bit-banging GPIO (the Orange Pi profile has
+ * spi_bus=None) never creates that node, so the open returned ENOENT and centaur
+ * died in epaperT5D.__init__ with FileNotFoundError before drawing anything.
+ * Nothing is lost by faking it: in translate mode every SPI write and transfer
+ * is swallowed here and forwarded to UC's gateway, so the node is a handle to be
+ * held open, never a bus to be driven. The fd is recorded because readlink would
+ * report the substitute rather than a spidev path, so is_spidev_fd() could not
+ * recognise it and the writes would be passed through to the substitute
+ * instead of translated. */
+#define MAX_FAKE_SPIDEV_FDS 8
+static int fake_spidev_fds[MAX_FAKE_SPIDEV_FDS];
+
+static void fake_spidev_add(int fd) {
+    pthread_mutex_lock(&lk);
+    for (int i = 0; i < MAX_FAKE_SPIDEV_FDS; i++) {
+        if (fake_spidev_fds[i] < 0) { fake_spidev_fds[i] = fd; break; }
+    }
+    pthread_mutex_unlock(&lk);
+}
+
+static int fake_spidev_has(int fd) {
+    int found = 0;
+    pthread_mutex_lock(&lk);
+    for (int i = 0; i < MAX_FAKE_SPIDEV_FDS; i++) {
+        if (fake_spidev_fds[i] == fd) { found = 1; break; }
+    }
+    pthread_mutex_unlock(&lk);
+    return found;
+}
+
 /* ---- opt-in debug (UC_CENTAUR_SHIM_DEBUG=/path) ------------------------- */
 static int  dbg_fd = -1;            /* debug log fd, -1 if disabled */
 static volatile unsigned long dbg_faults = 0, dbg_decoded = 0,
@@ -230,6 +267,7 @@ static void forward_xfer(const unsigned char *buf, uint32_t len) {
  * spidev fd identification (avoids tracking open() across the LFS alias mess)
  * ---------------------------------------------------------------------- */
 static int is_spidev_fd(int fd) {
+    if (fake_spidev_has(fd)) return 1;     /* substitute fd (see open hook) */
     char p[64], target[256];
     snprintf(p, sizeof(p), "/proc/self/fd/%d", fd);
     ssize_t r = readlink(p, target, sizeof(target) - 1);
@@ -454,6 +492,25 @@ static int is_gpiomem_path(const char *path) {
     return path && strcmp(path, "/dev/gpiomem") == 0;
 }
 
+/* Satisfy open("/dev/spidevN.M") for a node this board does not have (see
+ * fake_spidev_fds). /dev/null is the substitute: the fd is only ever a handle,
+ * because the write/writev/ioctl hooks recognise it as spidev and translate the
+ * traffic to the gateway instead of letting it reach the substitute. */
+static int open_spidev_substitute(void) {
+    if (!real_open) real_open = dlsym(RTLD_NEXT, "open");
+    int fd = real_open("/dev/null", O_RDWR);
+    if (fd >= 0) fake_spidev_add(fd);
+    return fd;
+}
+
+/* An spidev path with no device node behind it. Tested per-open rather than
+ * gated by a flag at init: which controllers exist varies by board and overlay,
+ * and a node that is present must always be opened for real, so that a Pi -- or
+ * any board whose panel really is on SPI -- keeps driving its own bus. */
+static int is_absent_spidev_path(const char *path) {
+    return path && strncmp(path, "/dev/spidev", 11) == 0 && access(path, F_OK) != 0;
+}
+
 int open(const char *path, int flags, ...) {
     mode_t mode = 0;
     if (flags & O_CREAT) {
@@ -461,6 +518,7 @@ int open(const char *path, int flags, ...) {
     }
     if (!real_open) real_open = dlsym(RTLD_NEXT, "open");
     if (spoof_gpiomem && is_gpiomem_path(path)) return open_gpiomem_substitute();
+    if (is_absent_spidev_path(path)) return open_spidev_substitute();
     return real_open(path, flags, mode);
 }
 
@@ -471,6 +529,7 @@ int open64(const char *path, int flags, ...) {
     }
     if (!real_open64) real_open64 = dlsym(RTLD_NEXT, "open64");
     if (spoof_gpiomem && is_gpiomem_path(path)) return open_gpiomem_substitute();
+    if (is_absent_spidev_path(path)) return open_spidev_substitute();
     return real_open64(path, flags, mode);
 }
 
@@ -537,6 +596,14 @@ int ioctl(int fd, unsigned long request, ...) {
         }
         return (int)bytes;
     }
+    /* Remaining spidev config ioctls (mode/speed/bits) on a substituted node.
+     * A real spidev answers these; the substitute is /dev/null, which would fail
+     * them with ENOTTY and make Python's spidev raise while setting up the panel
+     * -- the same launch failure the substitute exists to prevent. Report success
+     * without touching anything: there is no bus to configure, and the settings
+     * do not affect the frames, which are forwarded already decoded. Real spidev
+     * fds are untouched and still go through to the driver. */
+    if (type == SPI_IOC_MAGIC && fake_spidev_has(fd)) return 0;
     return real_ioctl(fd, request, argp);
 }
 
@@ -573,6 +640,7 @@ static int real_cpuinfo_lacks_hardware_line(void) {
 __attribute__((constructor))
 static void shim_init(void) {
     for (int i = 0; i < MAX_FAKE_GPIOMEM_FDS; i++) fake_gpiomem_fds[i] = -1;
+    for (int i = 0; i < MAX_FAKE_SPIDEV_FDS; i++) fake_spidev_fds[i] = -1;
 
     /* Resolve the real entry points first: real_cpuinfo_lacks_hardware_line()
      * below reads /proc/cpuinfo through real_open. */

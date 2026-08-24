@@ -99,6 +99,32 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   ahead of the best-effort factory-marker write so a marker failure cannot leave
   it running.
 
+- **The translate-mode serial hold no longer deadlocks Centaur's handshake**:
+  the hold keeps board bytes from reaching Centaur until the first translated
+  frame is painted, guarding a race where a battery event reaches its T5D
+  driver while the framebuffer is still None. It held the *first* chunk
+  whatever it was, including the reply to Centaur's own startup handshake. On
+  an emulated host that handshake is the first board traffic, so its reply sat
+  in the hold, `doPing` failed four times, and Centaur powered itself off
+  without ever painting the frame the hold was waiting for -- the paint could
+  only happen after the handshake it was blocking. Widening the timeout cannot
+  help and shortening it only trades one race for another; the hold now lifts
+  as soon as Centaur transmits, since a reply to Centaur's own request is not
+  the unsolicited chatter the gate exists for. Board chatter arriving before
+  Centaur says anything is still held.
+
+- **The display shim satisfies Centaur's SPI node on boards that lack it**:
+  Centaur's panel driver opens `/dev/spidev1.0`, the second SPI controller,
+  where the T5D sits on a Pi Zero. A board that drives its panel by bit-banging
+  GPIO never creates that node, so the open returned ENOENT and Centaur died in
+  `epaperT5D.__init__` with `FileNotFoundError` before drawing anything. The
+  shim now substitutes for an absent `spidev` node exactly as it already does
+  for a missing `/dev/gpiomem`, and reports success for the spidev config
+  ioctls on it. Nothing is lost: in translate mode every SPI transfer is
+  swallowed and forwarded to the gateway, so the node is a handle to hold open,
+  not a bus to drive. Whether to substitute is decided per open by testing for
+  the node, so a board whose panel really is on SPI keeps driving its own bus.
+
 - **The BlueZ self-heal runs only on a Raspberry Pi**: the workaround targets
   a BCM43430 firmware fault and was gated on nothing more than the presence of
   an hci device. Orange Pi carries a uwe5622, an unrelated part the workaround

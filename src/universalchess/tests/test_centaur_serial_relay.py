@@ -495,6 +495,114 @@ def test_pump_events_holds_board_bytes_until_release_event():
     assert bytes(written) == BACK_DOWN_FRAME
 
 
+def test_pump_commands_releases_the_hold_when_centaur_transmits():
+    """Centaur speaking must lift the first-frame hold immediately.
+
+    Why this test exists: the hold guards board chatter arriving before Centaur
+    is listening, but it was holding *every* first chunk -- including the reply
+    to Centaur's own startup handshake. On an emulated host that handshake is the
+    first board traffic, so its reply sat in the hold, ``doPing`` failed four
+    times, and Centaur powered itself off without ever painting the frame the
+    hold was waiting for. Measured on an Orange Pi Zero 2W: with the hold
+    disabled the same launch produced zero PING failures.
+
+    How the regression manifests: the event is not set after forwarding
+    Centaur's bytes, so a reply chunk is delayed by the full timeout and the
+    handshake starves exactly as it did on hardware.
+    """
+    release = threading.Event()
+    stop = threading.Event()
+    to_board = bytearray()
+    state = {"i": 0}
+    chunks = [BACK_DOWN_FRAME]
+
+    def read_fn():
+        if state["i"] < len(chunks):
+            chunk = chunks[state["i"]]
+            state["i"] += 1
+            return chunk
+        stop.set()
+        return b""
+
+    assert not release.is_set()
+
+    pump_commands(
+        read_fn,
+        to_board.extend,
+        stop.is_set,
+        sleep_fn=lambda s: None,
+        release_event=release,
+    )
+
+    # Forwarded verbatim, and the hold lifted so the answer can come straight back.
+    assert bytes(to_board) == BACK_DOWN_FRAME
+    assert release.is_set()
+
+
+def test_pump_commands_leaves_the_hold_alone_when_centaur_is_silent():
+    """An idle Centaur must not lift the hold.
+
+    Why this test exists: the release must be caused by Centaur actually
+    transmitting, not merely by the pump running. If an idle read (the PTY
+    master returns empty constantly) set the event, the hold would be dead on
+    every launch and the pre-paint battery race it guards would be reopened on
+    hardware that never had this problem.
+
+    How the regression manifests: ``release`` is set despite nothing being
+    forwarded, so the gate is permanently disabled.
+    """
+    release = threading.Event()
+    stop = threading.Event()
+    to_board = bytearray()
+    reads = {"n": 0}
+
+    def read_fn():
+        reads["n"] += 1
+        if reads["n"] > 5:
+            stop.set()
+        return b""
+
+    pump_commands(
+        read_fn,
+        to_board.extend,
+        stop.is_set,
+        sleep_fn=lambda s: None,
+        release_event=release,
+    )
+
+    assert bytes(to_board) == b""
+    assert not release.is_set()
+
+
+def test_pump_commands_without_a_release_event_still_forwards():
+    """Direct mode passes no hold, and the pump must not require one.
+
+    Why this test exists: ``release_event`` is optional -- direct mode runs the
+    tap with no first-frame gate at all. An unguarded ``.set()`` would raise
+    AttributeError on None inside the forward path and kill the pump, taking the
+    board link down in the mode that has nothing to do with translated frames.
+
+    How the regression manifests: the forwarded bytes are missing because the
+    pump died on the first chunk.
+    """
+    stop = threading.Event()
+    to_board = bytearray()
+    state = {"i": 0}
+    chunks = [BACK_DOWN_FRAME]
+
+    def read_fn():
+        if state["i"] < len(chunks):
+            chunk = chunks[state["i"]]
+            state["i"] += 1
+            return chunk
+        stop.set()
+        return b""
+
+    pump_commands(read_fn, to_board.extend, stop.is_set, sleep_fn=lambda s: None)
+
+    assert bytes(to_board) == BACK_DOWN_FRAME
+
+
 def test_pump_events_releases_hold_when_timeout_elapses():
     """A silent gateway must not deadlock the board link.
 

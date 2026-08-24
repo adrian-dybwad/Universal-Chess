@@ -87,6 +87,7 @@ def pump_commands(
     sleep_fn: Callable[[float], None] = time.sleep,
     led_decoder: Optional[LedCommandDecoder] = None,
     on_led: Optional[LedCallback] = None,
+    release_event: Optional[threading.Event] = None,
 ) -> None:
     """Forward the app -> board direction verbatim until stopped.
 
@@ -99,6 +100,10 @@ def pump_commands(
     ``read_fn`` may return empty bytes when nothing is available (the PTY master
     is non-blocking); a short sleep then avoids a busy loop. IO errors (fd closed
     during teardown) end the pump.
+
+    ``release_event`` is the translate-mode first-frame gate shared with
+    :func:`pump_events`. This pump sets it as soon as Centaur transmits, so a
+    reply to Centaur's own request is never held (see the note at the write).
     """
     while not should_stop():
         try:
@@ -113,6 +118,14 @@ def pump_commands(
                 write_fn(data)
             except OSError:
                 break
+            # Centaur has asked the board something, so a reply is now owed and
+            # must not sit in the first-frame hold: that hold exists for board
+            # chatter arriving before Centaur is listening, not for answers to
+            # Centaur's own requests. Releasing here breaks the deadlock where
+            # Centaur cannot paint until its startup handshake completes and the
+            # handshake cannot complete because its reply is being held.
+            if release_event is not None:
+                release_event.set()
             if led_decoder is not None and on_led is not None:
                 # Decoding must never break the relay; a decode fault is caught
                 # here so the live board link keeps forwarding regardless.
@@ -171,6 +184,12 @@ def pump_events(
     event is set or ``release_timeout_seconds`` elapses. Later chunks pass
     immediately. The hold is the translate-mode first-frame gate, not a decode
     gate: a decode bug still cannot stall the link.
+
+    The event is set by the first painted frame *or* by :func:`pump_commands` the
+    moment Centaur transmits. Holding replies to Centaur's own requests deadlocks
+    it: on an emulated host its startup handshake is the first board traffic, so
+    the reply was held for the full timeout, the handshake failed, and Centaur
+    powered off without ever painting -- the paint the hold was waiting for.
     """
     released = release_event is None
     while not should_stop():
@@ -556,7 +575,11 @@ class ThreadedSerialTap:
         commands = threading.Thread(
             target=pump_commands,
             args=(read_master, write_real, self._stop.is_set),
-            kwargs={"led_decoder": led_decoder, "on_led": on_led},
+            kwargs={
+                "led_decoder": led_decoder,
+                "on_led": on_led,
+                "release_event": self._release_event,
+            },
             name="centaur-serial-commands",
             daemon=True,
         )
