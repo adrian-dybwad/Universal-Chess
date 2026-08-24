@@ -79,7 +79,7 @@ Once it is running, open `http://<your-hostname>.local/` to add any engines you
 want, then shut the Pi down and refit it in the Centaur.
 
 Full instructions, including per-platform troubleshooting, are in the
-[install procedure](https://github.com/adrian-dybwad/Universal-Chess#no-wi-fi-set-the-board-up-over-the-usb-cable).
+[install procedure](https://github.com/adrian-dybwad/Universal-Chess/blob/main/docs/install.md#no-wi-fi-set-the-board-up-over-the-usb-cable).
 
 ## Verify Download
 
