@@ -1,0 +1,59 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * Bit-banged SPI for the DGT Centaur e-paper on Allwinner H616/H618
+ * (Orange Pi Zero 2W 40-pin). Pin numbers were read on Zero 2W.
+ *
+ * Stock hardware SPI overlays mux the wrong pads: SoC SPI0 is the onboard
+ * NOR, SoC SPI1 is the Pi SPI0 header. The Centaur panel is wired to the
+ * Pi SPI1 header pins.
+ *
+ * Live pinctrl on 300b000.pinctrl (gpiochip1) named those SoC pins:
+ *   header 12 CS   PI1  bank 8 pin 1  (gpiochip1 257)
+ *   header 35 MISO PI2  bank 8 pin 2  (gpiochip1 258)
+ *   header 40 SCLK PI3  bank 8 pin 3  (gpiochip1 259)
+ *   header 38 MOSI PI4  bank 8 pin 4  (gpiochip1 260)
+ *
+ * UART on the same vendor 40-pin table is PH0/PH1 = header 8/10.
+ * CS is GPIO_ACTIVE_LOW (1).
+ *
+ * uart0's baud clock is APB2, which boots from OSC24M (24 MHz).
+ * 24e6/(16*1e6)=1.5, so 8250 programs divisor 2 = 750 kbaud while the
+ * Centaur MCU stays at 1 Mbps. CLK_APB2 is 27. Parent CLK_PLL_PERIPH0
+ * is 4 (600 MHz). 300 MHz is /2.
+ */
+/ {
+	compatible = "xunlong,orangepi-zero2w", "allwinner,sun50i-h618", "allwinner,sun50i-h616";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			uc_centaur_spi {
+				compatible = "spi-gpio";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				sck-gpios = <&pio 8 3 0>;
+				mosi-gpios = <&pio 8 4 0>;
+				miso-gpios = <&pio 8 2 0>;
+				cs-gpios = <&pio 8 1 1>;
+				num-chipselects = <1>;
+
+				spidev@0 {
+					compatible = "rohm,dh2228fv";
+					reg = <0>;
+					spi-max-frequency = <500000>;
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&uart0>;
+		__overlay__ {
+			assigned-clocks = <&ccu 27>;
+			assigned-clock-parents = <&ccu 4>;
+			assigned-clock-rates = <300000000>;
+		};
+	};
+};

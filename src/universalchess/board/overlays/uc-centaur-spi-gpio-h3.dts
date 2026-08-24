@@ -1,0 +1,57 @@
+/dts-v1/;
+/plugin/;
+
+/*
+ * Bit-banged SPI for the DGT Centaur e-paper on Allwinner H3/H5 40-pin
+ * Orange Pi boards (PC, One, Lite, Plus, Plus 2, Plus 2E, PC Plus, Prime, PC 2).
+ *
+ * Header map is the linux-sunxi 40-pin table, not the H616 PI bank:
+ *   header 12 CS   PD14  bank 3 pin 14
+ *   header 35 MISO PA10  bank 0 pin 10
+ *   header 38 MOSI PG6   bank 6 pin 6
+ *   header 40 SCLK PG7   bank 6 pin 7
+ *
+ * Header 8/10 is UART3 (ttyS3). Enable it here so the chess MCU link
+ * exists even when Armbian did not already load overlays=uart3.
+ *
+ * Do not apply the H616 APB2 clock fragment: CCU indices differ on H3.
+ */
+
+/ {
+	compatible = "xunlong,orangepi-pc", "xunlong,orangepi-pc-plus",
+		     "xunlong,orangepi-one", "xunlong,orangepi-lite",
+		     "xunlong,orangepi-plus2e", "xunlong,orangepi-plus",
+		     "xunlong,orangepi-plus2",
+		     "xunlong,orangepi-2", "xunlong,orangepi-pc2",
+		     "xunlong,orangepi-prime",
+		     "allwinner,sun8i-h3", "allwinner,sun50i-h5";
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			uc_centaur_spi {
+				compatible = "spi-gpio";
+				#address-cells = <1>;
+				#size-cells = <0>;
+				sck-gpios = <&pio 6 7 0>;
+				mosi-gpios = <&pio 6 6 0>;
+				miso-gpios = <&pio 0 10 0>;
+				cs-gpios = <&pio 3 14 1>;
+				num-chipselects = <1>;
+
+				spidev@0 {
+					compatible = "rohm,dh2228fv";
+					reg = <0>;
+					spi-max-frequency = <500000>;
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&uart3>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+};

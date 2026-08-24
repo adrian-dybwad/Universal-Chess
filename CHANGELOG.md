@@ -23,6 +23,21 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   models are now classified as equipped, so the radios stay offered even if
   firmware fails to bind.
 
+- **Orange Pi e-paper uses spi-gpio on the Centaur SPI1 header pins**:
+  Hardware SPI overlays mux the wrong pads (SPI0 is onboard NOR, SPI1 is the
+  Pi SPI0 header). With the 40-pin header soldered, live pinctrl on H618
+  named the Centaur panel pins PI11/PC12/PH9/PI1 (gpiochip1 267/76/233/257)
+  plus PI2/PI3/PI4 for MISO/SCLK/MOSI. The e-paper backend drives those
+  lines through libgpiod, and postinst loads a spi-gpio user overlay on
+  Orange Pi instead of `spidev0_0` / `spidev1_0`. The H616 overlay
+  `compatible` list is H616/H618 (Zero 2W). H3/H5 40-pin boards (PC, One,
+  Lite, Plus, Plus 2, Plus 2E, PC Plus, Prime, PC 2) load
+  `uc-centaur-spi-gpio-h3`, which also enables UART3 on header 8/10
+  (`/dev/ttyS3`); postinst adds `overlays=uart3` on those boards. Rockchip
+  Orange Pi boards (4/5/3B/800) skip Allwinner `&pio` / `&ccu` phandles and
+  do not load a spi-gpio overlay. SPI bus numbers stay un-hardcoded:
+  userspace opens the master whose driver is spi-gpio.
+
 - **Lichess Lobby on the web**: Settings → Players showed a credentials card
   (add/delete logins) under the name Lichess Settings, while the board lobby
   was Account, Ongoing Games, Challenges, and New Game. The Players card is
@@ -818,6 +833,30 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   `/etc/netplan/60-universal-chess-wifi.yaml` and runs `netplan apply`
   when `nmcli` is absent (passphrase on stdin, never on argv). Raspberry
   Pi OS still uses `nmcli`. Saved and Forget use the same netplan file.
+
+- **Orange Pi Zero 2W board service crash-looped on `import RPi.GPIO`**:
+  `epd2in9d.py` still imported `RPi.GPIO` at module load even though every
+  pin and SPI call goes through epdconfig. Raspberry Pi OS ships that
+  package; Armbian does not. The leftover import is gone, so the libgpiod
+  backend can load.
+
+- **Orange Pi Zero 2W e-paper missed the live spi-gpio master**: userspace
+  looked for a sysfs driver named `spi-gpio` (the DT compatible). This
+  kernel registers the platform driver as `spi_gpio`, so `module_init`
+  raised "overlay not loaded" while `/dev/spidev0.0` was already the
+  overlay child. Both names are accepted. `module_init` also releases a
+  prior libgpiod request before claiming again, because display boot and
+  `board.init_display()` both call it on the same singleton; the second
+  `request_lines` was EBUSY (lines 76/233/267 already `universalchess-epaper`)
+  and crash-looped the service.
+
+- **Orange Pi Zero 2W opened the chess UART at 750 kbaud**: the Centaur MCU
+  is 1 Mbps. H618 APB2 boots from OSC24M, so 8250's integer divisor for
+  1 Mbps is 2 (24 MHz / 16 / 2 = 750 kHz). Discovery transmitted (`tx`
+  climbing) and never heard the board (`rx` stayed 0). The spi-gpio
+  overlay now also parents APB2 from PLL_PERIPH0 at 300 MHz (divisor 19,
+  986842 baud, 1.32% error). The 50 MHz rate in Allwinner's UART note is
+  4.17% and sits on the 8N1 budget. Needs a reboot for the overlay.
 
 - **Timed games hid the clock when Show Clock was off**: Show Clock is the
   untimed turn-indicator toggle. The same flag also hid the e-paper clock in a

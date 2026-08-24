@@ -40,7 +40,6 @@ from .waveform_profiles import (
 )
 from PIL import Image
 import numpy as np
-import RPi.GPIO as GPIO
 
 log = logging.getLogger(__name__)
 
