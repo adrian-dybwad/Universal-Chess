@@ -788,6 +788,37 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Orange Pi Wi-Fi status and Scan used Raspberry Pi OS tools Armbian
+  does not ship**: the web UI and e-paper reported disconnected (and Scan
+  returned nothing) while wlan0 was associated, because status called
+  `iwgetid`/`iwconfig` and the privileged helper ran `iwlist`. Armbian
+  puts `iw` in `/sbin` and does not install `wireless-tools`. Status now
+  reads `iw dev wlan0 link` (and finds `rfkill` in sbin), and Scan falls
+  back to `iw dev wlan0 scan` and parses BSS blocks. `iw` is preferred, not
+  required: wireless-tools remains the fallback for the SSID, signal and band
+  wherever `iw` is absent or answers incompletely, so the substitution cannot
+  turn into the same defect pointed the other way. Signal strength on both
+  images is now the one dBm-to-percent mapping (-90 dBm = 0%, -30 dBm = 100%)
+  the `iwconfig` path used, instead of each caller deriving its own.
+
+- **A hard-blocked Wi-Fi radio was shown as enabled**: the rfkill check looked
+  only at the soft block, so a radio blocked in hardware read as on. The status
+  bar showed Wi-Fi available and every connect attempt failed with nothing to
+  explain it. Both block kinds now count as disabled. In the other direction,
+  a board where the block state cannot be determined at all -- no `rfkill`
+  binary, or no rfkill entry for wlan -- is reported enabled rather than
+  disabled: neither of those says the radio is switched off, and whether the
+  board has a radio is answered separately by the wireless-capability probe.
+
+- **Orange Pi Wi-Fi Connect used NetworkManager on an image that has
+  none**: Scan and status work via `iw`, but Connect still called `nmcli`.
+  This Armbian image uses systemd-networkd plus wpa_supplicant, configured
+  by netplan. NetworkManager is not installed and must not be: it fights
+  networkd. The privileged helper now writes
+  `/etc/netplan/60-universal-chess-wifi.yaml` and runs `netplan apply`
+  when `nmcli` is absent (passphrase on stdin, never on argv). Raspberry
+  Pi OS still uses `nmcli`. Saved and Forget use the same netplan file.
+
 - **Timed games hid the clock when Show Clock was off**: Show Clock is the
   untimed turn-indicator toggle. The same flag also hid the e-paper clock in a
   timed game, so remaining time vanished and the layout still reserved a blank

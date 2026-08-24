@@ -1,7 +1,8 @@
 #!/bin/sh
 # Root helper for the Wi-Fi operations the service needs but cannot perform
-# unprivileged: scanning for networks (iwlist), creating/activating/deleting
-# connection profiles (nmcli) and toggling the radio (rfkill).
+# unprivileged: scanning for networks (iwlist, or iw on Armbian),
+# creating/activating/deleting connection profiles (nmcli on Raspberry Pi OS,
+# netplan on Armbian) and toggling the radio (rfkill).
 #
 # Invoked by the board UI and the web app through a single pinned, passwordless
 # sudo grant installed by the package postinst:
@@ -47,8 +48,21 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 usage() {
-	echo "usage: uc-wifi-admin {scan|enable|disable|forget <uuid>|connect <ssid>|connect-wpa2 <ssid>}" >&2
+	echo "usage: uc-wifi-admin {scan|enable|disable|forget <uuid>|forget-ssid <ssid>|saved|connect <ssid>|connect-wpa2 <ssid>}" >&2
 	exit 2
+}
+
+# Armbian has no NetworkManager. Persist Wi-Fi through netplan (networkd +
+# wpa_supplicant). Resolve python here, then callers pipe the passphrase
+# straight to python -- a ``$(command -v ...)`` inside a piped function would
+# steal stdin and drop the PSK (CWE-214 would be the least of it: Connect
+# would write an open-network stanza).
+resolve_netplan() {
+	PY="$(command -v python3 2>/dev/null || true)"
+	[ -z "$PY" ] && [ -x /usr/bin/python3 ] && PY=/usr/bin/python3
+	[ -n "$PY" ] || { echo "uc-wifi-admin: need python3 for netplan Wi-Fi" >&2; exit 1; }
+	NETPLAN_PY="${0%/*}/uc-wifi-netplan.py"
+	[ -f "$NETPLAN_PY" ] || { echo "uc-wifi-admin: missing $NETPLAN_PY" >&2; exit 1; }
 }
 
 reject() {
@@ -112,7 +126,14 @@ write_psk_file() {
 case "$1" in
 	scan)
 		[ "$#" -eq 1 ] || usage
-		exec iwlist "$INTERFACE" scan
+		if command -v iwlist >/dev/null 2>&1; then
+			exec iwlist "$INTERFACE" scan
+		fi
+		IW="$(command -v iw 2>/dev/null || true)"
+		[ -z "$IW" ] && [ -x /sbin/iw ] && IW=/sbin/iw
+		[ -z "$IW" ] && [ -x /usr/sbin/iw ] && IW=/usr/sbin/iw
+		[ -n "$IW" ] || { echo "uc-wifi-admin: need iwlist or iw" >&2; exit 1; }
+		exec "$IW" dev "$INTERFACE" scan
 		;;
 	enable)
 		[ "$#" -eq 1 ] || usage
@@ -127,15 +148,34 @@ case "$1" in
 		require_uuid "$2"
 		exec nmcli connection delete uuid "$2"
 		;;
+	forget-ssid)
+		[ "$#" -eq 2 ] || usage
+		require_ssid "$2"
+		resolve_netplan
+		"$PY" "$NETPLAN_PY" forget "$INTERFACE" /etc/netplan "$2"
+		exit "$?"
+		;;
+	saved)
+		[ "$#" -eq 1 ] || usage
+		resolve_netplan
+		"$PY" "$NETPLAN_PY" saved /etc/netplan
+		exit "$?"
+		;;
 	connect)
-		# Let NetworkManager pick the security the AP advertises.
+		# Raspberry Pi OS: NetworkManager picks the security the AP advertises.
+		# Armbian: no nmcli; write netplan and apply.
 		[ "$#" -eq 2 ] || usage
 		require_ssid "$2"
 		read_passphrase
-		if [ -n "$passphrase" ]; then
-			exec nmcli device wifi connect "$2" password "$passphrase"
+		if command -v nmcli >/dev/null 2>&1; then
+			if [ -n "$passphrase" ]; then
+				exec nmcli device wifi connect "$2" password "$passphrase"
+			fi
+			exec nmcli device wifi connect "$2"
 		fi
-		exec nmcli device wifi connect "$2"
+		resolve_netplan
+		printf '%s\n' "$passphrase" | "$PY" "$NETPLAN_PY" connect "$INTERFACE" /etc/netplan "$2"
+		exit "$?"
 		;;
 	connect-wpa2)
 		# Force a WPA2-PSK profile for an AP whose WPA3-SAE handshake the Pi's
@@ -147,6 +187,11 @@ case "$1" in
 		require_ssid "$2"
 		read_passphrase
 		[ -n "$passphrase" ] || reject "connect-wpa2 requires a passphrase"
+		if ! command -v nmcli >/dev/null 2>&1; then
+			resolve_netplan
+			printf '%s\n' "$passphrase" | "$PY" "$NETPLAN_PY" connect "$INTERFACE" /etc/netplan "$2"
+			exit "$?"
+		fi
 		nmcli connection add type wifi con-name "$2" \
 			ifname "$INTERFACE" ssid "$2" \
 			wifi-sec.key-mgmt wpa-psk wifi-sec.psk-flags 0 \

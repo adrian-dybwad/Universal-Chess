@@ -1,6 +1,6 @@
 """UI-agnostic WiFi operations (scan, connect, saved networks, forget, status).
 
-Pure wrappers over ``iwlist``/``nmcli``/``iwgetid`` returning plain data, with no
+Pure wrappers over ``iw``/``iwlist``/``nmcli``/``iwgetid`` returning plain data, with no
 board or e-paper dependencies. The board's keyboard/splash UX lives in
 ``utils/wifi.py`` which delegates the actual system calls here; the Flask web API
 calls these directly. Keeping the logic in one place means scan parsing and the
@@ -12,7 +12,7 @@ sudoers grant, so on a board without a blanket passwordless rule the scan, the
 connect and the forget were all denied and the UI showed an empty network list.
 ``sudo -n`` makes a missing grant fail immediately rather than stall on a prompt
 no service can answer. Read-only queries (the profile listing, the AP list,
-iwgetid) need no privilege and still run directly.
+iwgetid / ``iw link``) need no privilege and still run directly.
 
 Note on ``forget``/``connect`` and the active network: deleting or replacing the
 profile of the network the caller is currently using will drop that connection.
@@ -26,6 +26,7 @@ import re
 import subprocess  # nosec B404  # trusted, fixed-arg helper/nmcli/iwgetid calls below
 from typing import List, Optional, Tuple
 
+from universalchess.connectivity.radio import find_tool, parse_iw_link, parse_scan_output
 from universalchess.paths import WIFI_ADMIN
 
 _DEFAULT_LOG = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ def _validate_ssid(ssid: str) -> bool:
 
 
 _SCAN_TIMEOUT_SECONDS = 30
-_CONNECT_TIMEOUT_SECONDS = 30
+_CONNECT_TIMEOUT_SECONDS = 90
 _NMCLI_TIMEOUT_SECONDS = 10
 _AP_LIST_TIMEOUT_SECONDS = 30
 
@@ -145,56 +146,44 @@ def scan_networks(log: Optional[logging.Logger] = None) -> List[dict]:
         log.error(f"[WiFi] scan failed: {result.stderr}")
         return networks
 
-    seen_ssids = set()
-    current_ssid: Optional[str] = None
-    current_signal = 0
-    current_security = ""
-
-    def flush() -> None:
-        nonlocal current_ssid, current_signal, current_security
-        if current_ssid and current_ssid not in seen_ssids:
-            seen_ssids.add(current_ssid)
-            networks.append(
-                {"ssid": current_ssid, "signal": current_signal, "security": current_security}
-            )
-        current_ssid = None
-        current_signal = 0
-        current_security = ""
-
-    for raw_line in result.stdout.split("\n"):
-        line = raw_line.strip()
-        if line.startswith("Cell "):
-            flush()
-        if "ESSID:" in line:
-            match = re.search(r'ESSID:"([^"]*)"', line)
-            if match:
-                current_ssid = match.group(1)
-        if "Quality=" in line:
-            match = re.search(r"Quality=(\d+)/(\d+)", line)
-            if match:
-                quality = int(match.group(1))
-                max_quality = int(match.group(2))
-                if max_quality:
-                    current_signal = int((quality / max_quality) * 100)
-        if "Encryption key:on" in line:
-            current_security = "WPA"
-    flush()
-
-    networks.sort(key=lambda n: n["signal"], reverse=True)
+    networks = parse_scan_output(result.stdout)
     log.info(f"[WiFi] Found {len(networks)} networks")
     return networks
 
 
 def get_active_ssid(log: Optional[logging.Logger] = None) -> Optional[str]:
-    """Return the SSID currently associated, or None if not connected."""
+    """Return the SSID currently associated, or None if not connected.
+
+    ``iwgetid`` is wireless-tools (Raspberry Pi OS). Armbian ships ``iw``
+    instead; FileNotFoundError or an empty SSID falls through to ``iw link``.
+    """
     log = _resolve_log(log)
     try:
         result = subprocess.run(["iwgetid", "-r"], capture_output=True, text=True, timeout=5)  # noqa: S607  # nosec B603 B607
+    except FileNotFoundError:
+        result = None
     except Exception as e:  # noqa: BLE001
         log.warning(f"[WiFi] Failed to get active SSID: {e}")
+        result = None
+    if result is not None:
+        ssid = result.stdout.strip()
+        if ssid:
+            return ssid
+    # ``or "iw"`` so a mocked subprocess still sees the fallback argv when
+    # ``iw`` is not installed on the machine running the tests.
+    iw = find_tool("iw") or "iw"
+    try:
+        link = subprocess.run(  # noqa: S603  # nosec B603
+            [iw, "dev", WLAN_INTERFACE, "link"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[WiFi] Failed to get active SSID from iw: {e}")
         return None
-    ssid = result.stdout.strip()
-    return ssid or None
+    parsed = parse_iw_link(link.stdout or "")
+    return parsed["ssid"] or None
 
 
 def list_saved_networks(log: Optional[logging.Logger] = None) -> List[dict]:
@@ -209,6 +198,8 @@ def list_saved_networks(log: Optional[logging.Logger] = None) -> List[dict]:
     saved: List[dict] = []
     try:
         listing = subprocess.run(["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"], capture_output=True, text=True, timeout=_NMCLI_TIMEOUT_SECONDS)  # noqa: S607  # nosec B603 B607
+    except FileNotFoundError:
+        return _list_saved_netplan(log, active_ssid)
     except Exception as e:  # noqa: BLE001
         log.warning(f"[WiFi] Could not list saved networks: {e}")
         return saved
@@ -246,6 +237,8 @@ def remove_profiles(ssid: str, log: Optional[logging.Logger] = None) -> int:
     deleted = 0
     try:
         listing = subprocess.run(["nmcli", "-t", "-f", "UUID,NAME,TYPE", "connection", "show"], capture_output=True, text=True, timeout=_NMCLI_TIMEOUT_SECONDS)  # noqa: S607  # nosec B603 B607
+    except FileNotFoundError:
+        raise
     except subprocess.TimeoutExpired:
         log.warning("[WiFi] Timed out listing profiles to remove")
         return deleted
@@ -275,15 +268,72 @@ def remove_profiles(ssid: str, log: Optional[logging.Logger] = None) -> int:
     return deleted
 
 
+def _drop_stale_profiles(ssid: str, log: logging.Logger) -> None:
+    """Remove NM profiles for ``ssid``; no-op when nmcli is absent (Armbian)."""
+    try:
+        remove_profiles(ssid, log)
+    except FileNotFoundError:
+        # No NetworkManager on this image, so there is no profile that could be
+        # stale. The netplan helper replaces its whole file on every Connect,
+        # which achieves the same clean start this call exists to give.
+        log.debug("[WiFi] nmcli absent; no saved profile to drop for '%s'", ssid)
+
+
+def _list_saved_netplan(log: logging.Logger, active_ssid: Optional[str]) -> List[dict]:
+    """List SSIDs from the netplan file the helper writes on Armbian."""
+    saved: List[dict] = []
+    try:
+        result = subprocess.run(  # noqa: S603  # nosec B603
+            _admin_argv("saved"),
+            capture_output=True,
+            text=True,
+            timeout=_NMCLI_TIMEOUT_SECONDS,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[WiFi] Could not list netplan networks: {e}")
+        return saved
+    if result.returncode != 0:
+        log.debug(f"[WiFi] netplan saved listing failed: {result.stderr}")
+        return saved
+    for line in result.stdout.splitlines():
+        name = line.strip()
+        if name:
+            saved.append({"ssid": name, "active": name == active_ssid})
+    return saved
+
+
+def _forget_netplan_ssid(ssid: str, log: logging.Logger) -> bool:
+    """Delete the Armbian netplan AP named ``ssid`` via the helper."""
+    try:
+        proc = subprocess.run(  # noqa: S603  # nosec B603
+            _admin_argv("forget-ssid", ssid),
+            capture_output=True,
+            text=True,
+            timeout=_NMCLI_TIMEOUT_SECONDS,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[WiFi] Error forgetting netplan SSID '{ssid}': {e}")
+        return False
+    return proc.returncode == 0
+
+
 def forget_network(ssid: str, log: Optional[logging.Logger] = None) -> bool:
     """Forget a saved WiFi network. Returns True if a profile was removed."""
-    return remove_profiles(ssid, log) > 0
+    log = _resolve_log(log)
+    try:
+        return remove_profiles(ssid, log) > 0
+    except FileNotFoundError:
+        return _forget_netplan_ssid(ssid, log)
 
 
 def connect_network(
     ssid: str, password: Optional[str] = None, log: Optional[logging.Logger] = None
 ) -> Tuple[bool, str]:
-    """Connect to ``ssid`` via ``nmcli``, returning ``(success, message)``.
+    """Connect to ``ssid``, returning ``(success, message)``.
+
+    Raspberry Pi OS uses NetworkManager (``nmcli``). Armbian has no
+    NetworkManager; the helper writes a netplan Wi-Fi file and runs
+    ``netplan apply`` instead.
 
     Any stale saved profile for the SSID is removed first so a retry after a
     failed attempt (e.g. a mistyped password) starts from a clean, fully
@@ -310,7 +360,7 @@ def connect_network(
     if not _validate_ssid(ssid):
         return False, "Invalid network name"
 
-    remove_profiles(ssid, log)
+    _drop_stale_profiles(ssid, log)
 
     # SECURITY INVARIANT (do not break): every call here uses shell=False with a
     # list argv, so no shell ever parses these values -- shell metacharacters in
@@ -336,7 +386,7 @@ def connect_network(
         result = subprocess.run(_admin_argv("connect", ssid), input=password or "", capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS, shell=False)  # noqa: S603  # nosec B603
     except subprocess.TimeoutExpired:
         log.error("[WiFi] Connection timed out")
-        remove_profiles(ssid, log)
+        _drop_stale_profiles(ssid, log)
         return False, "Connection timed out"
     except Exception as e:  # noqa: BLE001
         log.error(f"[WiFi] Error connecting: {e}")
@@ -348,7 +398,7 @@ def connect_network(
 
     stderr = (result.stderr or "").strip()
     log.error(f"[WiFi] Failed to connect: {stderr}")
-    remove_profiles(ssid, log)
+    _drop_stale_profiles(ssid, log)
 
     # A secrets/auth failure with a password may be the brcmfmac SAE timeout
     # rather than a wrong key (see docstring); retry forcing WPA2-PSK before
@@ -410,11 +460,11 @@ def _connect_wpa2_psk_fallback(
         result = subprocess.run(_admin_argv("connect-wpa2", resolved_ssid), input=password, capture_output=True, text=True, timeout=_CONNECT_TIMEOUT_SECONDS, shell=False)  # noqa: S603  # nosec B603
     except subprocess.TimeoutExpired:
         log.error("[WiFi] WPA2-PSK fallback timed out")
-        remove_profiles(resolved_ssid, log)
+        _drop_stale_profiles(resolved_ssid, log)
         return False, "Connection timed out"
     except (OSError, subprocess.SubprocessError) as e:
         log.error(f"[WiFi] WPA2-PSK fallback error: {e}")
-        remove_profiles(resolved_ssid, log)
+        _drop_stale_profiles(resolved_ssid, log)
         return False, "Connection failed"
 
     if result.returncode == 0:
@@ -423,7 +473,7 @@ def _connect_wpa2_psk_fallback(
 
     stderr = (result.stderr or "").strip()
     log.error(f"[WiFi] WPA2-PSK fallback failed: {stderr}")
-    remove_profiles(resolved_ssid, log)
+    _drop_stale_profiles(resolved_ssid, log)
     return False, format_connect_error(stderr, True)
 
 

@@ -10,10 +10,10 @@ Supports subscribing to WiFi status changes via callbacks.
 import subprocess  # nosec B404  # trusted, fixed-arg network tool invocations below
 import threading
 import os
-import re
 from typing import Optional, Tuple, Callable, List
 
 from universalchess.paths import WIFI_ADMIN
+from universalchess.connectivity import radio as wifi_radio
 from universalchess.i18n import t
 
 try:
@@ -60,25 +60,20 @@ def get_wifi_status() -> dict:
         'mac_address': '',
     }
     
-    # Check rfkill status
-    try:
-        result = subprocess.run(['rfkill', 'list', 'wifi'],  # noqa: S607  # nosec B603 B607
-                               capture_output=True, text=True, timeout=5)
-        # If "Soft blocked: no" is in output, WiFi is enabled
-        status['enabled'] = 'Soft blocked: no' in result.stdout
-    except Exception as e:
-        log.warning(f"[WiFi] Failed to check rfkill status: {e}")
-    
-    # Get SSID
-    try:
-        result = subprocess.run(['iwgetid', '-r'],  # noqa: S607  # nosec B603 B607
-                               capture_output=True, text=True, timeout=5)
-        if result.returncode == 0 and result.stdout.strip():
-            status['ssid'] = result.stdout.strip()
-            status['connected'] = True
-    except Exception as e:
-        log.warning(f"[WiFi] Failed to get SSID: {e}")
-    
+    # Check rfkill / sysfs. ``rfkill`` lives in /sbin on Armbian and is not
+    # on a login PATH; wireless-tools (iwgetid/iwconfig) is not installed.
+    status['enabled'] = wifi_radio.wifi_enabled()
+
+    # link_status prefers iw (the only option on Armbian) and falls back to
+    # wireless-tools for signal and band on images where iw reports neither.
+    link = wifi_radio.link_status()
+    if link['connected'] and link['ssid']:
+        status['ssid'] = link['ssid']
+        status['connected'] = True
+        if link['signal_dbm'] is not None:
+            status['signal'] = wifi_radio.dbm_to_percent(link['signal_dbm'])
+        status['frequency'] = link['frequency']
+
     # Get IP address and netmask via ip command
     if status['connected']:
         try:
@@ -127,35 +122,6 @@ def get_wifi_status() -> dict:
                     break
     except Exception as e:
         log.warning(f"[WiFi] Failed to get gateway: {e}")
-    
-    # Get signal strength and frequency via iwconfig
-    if status['connected']:
-        try:
-            result = subprocess.run(['iwconfig', 'wlan0'],  # noqa: S607  # nosec B603 B607
-                                   capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                output = result.stdout
-                
-                # Parse signal level (e.g., "Signal level=-45 dBm")
-                import re
-                signal_match = re.search(r'Signal level[=:](-?\d+)', output)
-                if signal_match:
-                    dbm = int(signal_match.group(1))
-                    # Convert dBm to percentage (rough approximation)
-                    # -30 dBm = 100%, -90 dBm = 0%
-                    percentage = max(0, min(100, (dbm + 90) * 100 // 60))
-                    status['signal'] = percentage
-                
-                # Parse frequency (e.g., "Frequency:2.437 GHz")
-                freq_match = re.search(r'Frequency[=:](\d+\.?\d*)\s*GHz', output)
-                if freq_match:
-                    freq = float(freq_match.group(1))
-                    if freq < 3:
-                        status['frequency'] = "2.4 GHz"
-                    else:
-                        status['frequency'] = "5 GHz"
-        except Exception as e:
-            log.warning(f"[WiFi] Failed to get signal info: {e}")
     
     # Get MAC address
     try:

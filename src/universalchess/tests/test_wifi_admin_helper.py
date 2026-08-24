@@ -78,15 +78,33 @@ def fake_bin(tmp_path):
     return bindir, log
 
 
-def _run(fake_bin, *argv, stdin="", failing=None, stdout=""):
+def _write_recording_python(bindir):
+    """Install a fake python3 that records argv and one line of stdin.
+
+    PATH-only tests have no ``cat``; ``read`` is a shell builtin.
+    """
+    python = bindir / "python3"
+    python.write_text(
+        "#!/bin/sh\n"
+        'echo "python3 $*" >> "$UC_WIFI_TEST_LOG"\n'
+        "IFS= read -r stdin || true\n"
+        'echo "python3-stdin $stdin" >> "$UC_WIFI_TEST_LOG"\n'
+        "exit 0\n"
+    )
+    python.chmod(0o755)
+
+
+def _run(fake_bin, *argv, stdin="", failing=None, stdout="", path_only=False):
     """Run the helper with the fakes on PATH; return (proc, recorded call lines).
 
     ``failing`` names a tool that should exit non-zero, for the status-propagation
     tests. ``stdout`` is echoed by every fake, for the scan passthrough test.
+    ``path_only`` restricts PATH to the fake bindir so a host ``iwlist`` cannot
+    steal the Armbian (iw-only) scan case.
     """
     bindir, log = fake_bin
     env = dict(os.environ)
-    env["PATH"] = f"{bindir}:{env['PATH']}"
+    env["PATH"] = str(bindir) if path_only else f"{bindir}:{env['PATH']}"
     env["UC_WIFI_TEST_LOG"] = str(log)
     env["UC_WIFI_TEST_STDOUT"] = stdout
     if failing:
@@ -123,6 +141,30 @@ def test_scan_asks_iwlist_for_the_wlan_interface_and_passes_output_through(fake_
     proc, calls = _run(fake_bin, "scan", stdout=payload)
     assert proc.returncode == 0, proc.stderr
     assert calls == [f"iwlist {INTERFACE} scan"]
+    assert payload in proc.stdout
+
+
+def test_scan_uses_iw_when_iwlist_is_not_installed(tmp_path):
+    """Armbian has iw, not wireless-tools; scan must still run.
+
+    Why this test exists: Orange Pi Armbian images ship ``/sbin/iw`` and do not
+    install ``iwlist``. The helper exec'd iwlist and exited 127, so Scan was
+    empty while the radio was associated. Manifests as ``iwlist: not found``
+    and an empty network list.
+
+    Failure: scan still requires iwlist, or the iw argv is not ``dev wlan0 scan``.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "calls.log"
+    for tool in ("iw", "nmcli", "rfkill"):
+        path = bindir / tool
+        path.write_text(_FAKE_TOOL.format(name=tool, upper=tool.upper()))
+        path.chmod(0o755)
+    payload = "BSS aa:bb:cc:dd:ee:ff(on wlan0)"
+    proc, calls = _run((bindir, log), "scan", stdout=payload, path_only=True)
+    assert proc.returncode == 0, proc.stderr
+    assert calls == [f"iw dev {INTERFACE} scan"]
     assert payload in proc.stdout
 
 
@@ -216,6 +258,89 @@ def test_connect_omits_the_password_words_for_an_open_network(fake_bin):
     proc, calls = _run(fake_bin, "connect", SSID, stdin="")
     assert proc.returncode == 0, proc.stderr
     assert calls == [f"nmcli device wifi connect {SSID}"]
+
+
+def test_connect_writes_netplan_when_nmcli_is_not_installed(tmp_path):
+    """Armbian has no NetworkManager; connect must still persist the AP.
+
+    Why this test exists: Orange Pi Armbian uses networkd plus wpa_supplicant
+    via netplan. The helper exec'd nmcli and exited 127, so Connect failed after
+    Scan started working. NetworkManager must not be installed: it fights
+    networkd. Manifests as Connect always failing while ``iw`` scan lists APs.
+
+    Failure: connect still requires nmcli, the passphrase is on python's argv,
+    or the writer argv is not ``connect wlan0 /etc/netplan <ssid>``.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "calls.log"
+    _write_recording_python(bindir)
+    proc, calls = _run((bindir, log), "connect", SSID, stdin=f"{PASSPHRASE}\n", path_only=True)
+    assert proc.returncode == 0, proc.stderr
+    py = [line for line in calls if line.startswith("python3 ")]
+    assert len(py) == 1, calls
+    assert "uc-wifi-netplan.py connect" in py[0]
+    assert f" {INTERFACE} /etc/netplan {SSID}" in py[0]
+    assert PASSPHRASE not in py[0]
+    assert f"python3-stdin {PASSPHRASE}" in calls
+
+
+def test_connect_wpa2_writes_netplan_when_nmcli_is_not_installed(tmp_path):
+    """connect-wpa2 on Armbian must use the same netplan path as connect.
+
+    Why this test exists: the WPA2-PSK retry is the path that actually
+    associates on many boards. If it still required nmcli, a successful
+    scan then a failed auto-connect would leave Connect broken on Armbian.
+
+    Failure: connect-wpa2 still execs nmcli, or the passphrase is on argv.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "calls.log"
+    _write_recording_python(bindir)
+    proc, calls = _run(
+        (bindir, log), "connect-wpa2", SSID, stdin=f"{PASSPHRASE}\n", path_only=True
+    )
+    assert proc.returncode == 0, proc.stderr
+    py = [line for line in calls if line.startswith("python3 ")]
+    assert len(py) == 1, calls
+    assert "uc-wifi-netplan.py connect" in py[0]
+    assert f" {INTERFACE} /etc/netplan {SSID}" in py[0]
+    assert PASSPHRASE not in py[0]
+    assert f"python3-stdin {PASSPHRASE}" in calls
+
+
+def test_forget_ssid_and_saved_use_netplan_when_nmcli_is_absent(tmp_path):
+    """Saved/Forget on Armbian go through the netplan writer, not nmcli.
+
+    Why this test exists: list_saved_networks and forget_network called nmcli
+    connection show/delete. On Armbian those fail, so Saved is empty and Forget
+    is a no-op after a netplan Connect. Manifests as a Saved list that never
+    shows the network just joined.
+
+    Failure: the verbs still require nmcli, or the writer argv is wrong.
+    """
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "calls.log"
+    python = bindir / "python3"
+    python.write_text(
+        "#!/bin/sh\n"
+        'echo "python3 $*" >> "$UC_WIFI_TEST_LOG"\n'
+        "exit 0\n"
+    )
+    python.chmod(0o755)
+    proc, calls = _run((bindir, log), "saved", path_only=True)
+    assert proc.returncode == 0, proc.stderr
+    assert any("uc-wifi-netplan.py saved /etc/netplan" in line for line in calls)
+
+    log.write_text("")
+    proc, calls = _run((bindir, log), "forget-ssid", SSID, path_only=True)
+    assert proc.returncode == 0, proc.stderr
+    assert any(
+        f"uc-wifi-netplan.py forget {INTERFACE} /etc/netplan {SSID}" in line
+        for line in calls
+    )
 
 
 def test_connect_wpa2_builds_the_forced_psk_profile_then_activates_it(fake_bin):
@@ -334,12 +459,15 @@ def test_connect_verbs_refuse_an_ssid_nmcli_would_misread(fake_bin, verb, bad_ss
         ("connect-wpa2",),
         ("forget",),
         ("forget", UUID, "extra"),
+        ("saved", "extra"),
+        ("forget-ssid",),
+        ("forget-ssid", UUID, "extra"),
         ("--help",),
         ("scan; rm -rf /",),
     ],
 )
 def test_rejects_anything_but_an_exact_known_verb(fake_bin, argv):
-    """Only the six verbs, each with its exact arity, are accepted.
+    """Only the known verbs, each with its exact arity, are accepted.
 
     Why this test exists: the postinst grants passwordless sudo on this script, so
     the verb table is the whole boundary of that grant. Any branch that forwarded
@@ -456,3 +584,19 @@ def test_the_helper_ships_in_the_package():
     """
     assert _HELPER.exists(), f"helper missing from the package: {_HELPER}"
     assert _HELPER.read_text().startswith("#!/bin/sh")
+
+
+def test_the_netplan_writer_ships_beside_the_helper():
+    """Armbian connect loads uc-wifi-netplan.py from the same scripts directory.
+
+    Why this test exists: the helper resolves the writer as ``${0%/*}/uc-wifi-netplan.py``.
+    Tests invoke python3 with a fake that never opens that file, so a missing
+    writer would not fail this suite, but on Armbian connect would exit 1
+    ("missing .../uc-wifi-netplan.py") after Scan already works.
+
+    Failure: the writer is renamed, moved, or is not a Python script the helper
+    can exec with python3.
+    """
+    writer = _HELPER.parent / "uc-wifi-netplan.py"
+    assert writer.exists(), f"netplan writer missing from the package: {writer}"
+    assert writer.read_text().startswith("#!/usr/bin/env python3")

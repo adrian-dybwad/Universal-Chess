@@ -14,7 +14,6 @@ not woken to run four subprocesses against missing hardware.
 """
 
 import os
-import re
 import subprocess  # nosec B404 - subprocess is only ever invoked with fixed argv lists, never shell=True
 import threading
 from typing import Optional
@@ -28,6 +27,7 @@ except ImportError:
 from universalchess.board.wireless_capability import (
     WirelessCapability, get_wireless_capability,
 )
+from universalchess.connectivity import radio as wifi_radio
 from universalchess.state import get_system
 from universalchess.state.system import (
     WIFI_ABSENT, WIFI_DISABLED, WIFI_DISCONNECTED, WIFI_CONNECTED,
@@ -253,57 +253,27 @@ class SystemPollingService:
     
     def _is_wifi_enabled(self) -> bool:
         """Check if WiFi is enabled (not blocked by rfkill)."""
-        try:
-            result = subprocess.run(  # noqa: S603  # nosec B603 B607 - argv list (no shell); fixed system utility
-                ['rfkill', 'list', 'wifi'],  # noqa: S607 - argv list (no shell); fixed system utility
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode == 0:
-                return 'blocked: yes' not in result.stdout.lower()
-        except Exception as e:
-            log.debug(f"[SystemPollingService] Error checking WiFi enabled: {e}")
-        return True  # Assume enabled if check fails
+        return wifi_radio.wifi_enabled()
     
     def _get_wifi_connection(self) -> tuple:
         """Get WiFi connection status.
         
+        Uses the shared radio probe rather than a single tool, so the header
+        indicator stays correct on both images: Armbian has only ``iw``,
+        Raspberry Pi OS additionally has wireless-tools, and neither is a
+        declared dependency. Probing one of them alone shows an associated
+        board as disconnected wherever that one is missing.
+        
         Returns:
             Tuple of (connected: bool, signal_pct: int, ssid: Optional[str])
         """
-        try:
-            result = subprocess.run(  # noqa: S603  # nosec B603 B607 - argv list (no shell); fixed system utility
-                ['iwconfig', 'wlan0'],  # noqa: S607 - argv list (no shell); fixed system utility
-                capture_output=True, text=True, timeout=5
-            )
-            if result.returncode != 0:
-                return (False, 0, None)
-            
-            output = result.stdout
-            
-            # Check if associated
-            if 'ESSID:off/any' in output or 'Not-Associated' in output:
-                return (False, 0, None)
-            
-            # Get SSID
-            ssid = None
-            ssid_match = re.search(r'ESSID:"([^"]*)"', output)
-            if ssid_match:
-                ssid = ssid_match.group(1)
-            
-            # Get signal quality
-            signal_pct = 0
-            quality_match = re.search(r'Link Quality[=:](\d+)/(\d+)', output)
-            if quality_match:
-                quality = int(quality_match.group(1))
-                max_quality = int(quality_match.group(2))
-                if max_quality > 0:
-                    signal_pct = (quality * 100) // max_quality
-            
-            return (True, signal_pct, ssid)
-            
-        except Exception as e:
-            log.debug(f"[SystemPollingService] Error getting WiFi connection: {e}")
+        parsed = wifi_radio.link_status()
+        if not parsed["connected"] or not parsed["ssid"]:
             return (False, 0, None)
+        signal_pct = 0
+        if parsed["signal_dbm"] is not None:
+            signal_pct = wifi_radio.dbm_to_percent(parsed["signal_dbm"])
+        return (True, signal_pct, parsed["ssid"])
     
     def _poll_bluetooth(self) -> None:
         """Poll Bluetooth status, or report the controller as absent on a board without one."""

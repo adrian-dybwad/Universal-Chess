@@ -214,6 +214,43 @@ class TestSavedNetworks(unittest.TestCase):
         mock_run.side_effect = [_proc(stdout=CONNECTION_LISTING_UUID)]
         assert wifi.forget_network("NONEXISTENT", MagicMock()) is False
 
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_lists_netplan_ssids_when_nmcli_is_missing(self, mock_run):
+        """Armbian has no nmcli; Saved must still list the netplan AP.
+
+        Failure manifestation: FileNotFoundError is swallowed into an empty
+        list, so the Saved page is blank after a successful Connect.
+        """
+        mock_run.side_effect = [
+            _proc(stdout="HomeNet\n"),
+            FileNotFoundError("nmcli"),
+            _proc(stdout="HomeNet\nCafe\n"),
+        ]
+
+        saved = wifi.list_saved_networks(MagicMock())
+
+        assert saved == [
+            {"ssid": "HomeNet", "active": True},
+            {"ssid": "Cafe", "active": False},
+        ]
+        assert mock_run.call_args_list[-1].args[0] == [*HELPER_PREFIX, "saved"]
+
+    @patch("universalchess.connectivity.wifi.subprocess.run")
+    def test_forget_uses_forget_ssid_when_nmcli_is_missing(self, mock_run):
+        """Armbian Forget must delete the netplan AP, not an nmcli UUID.
+
+        Failure manifestation: FileNotFoundError is swallowed and Forget
+        returns False while the board stays associated.
+        """
+        mock_run.side_effect = [
+            FileNotFoundError("nmcli"),
+            _proc(returncode=0),
+        ]
+        assert wifi.forget_network("DISPLAY", MagicMock()) is True
+        assert mock_run.call_args_list[-1].args[0] == [
+            *HELPER_PREFIX, "forget-ssid", "DISPLAY",
+        ]
+
 
 class TestConnectNetwork(unittest.TestCase):
     @patch("universalchess.connectivity.wifi.subprocess.run")
