@@ -46,6 +46,13 @@ def _run(args, action_log, *, dry_run="1", fs_root=None, extra_env=None):
     env["UC_USB_GADGET_ADMIN_DRY_RUN"] = dry_run
     env["UC_USB_GADGET_ADMIN_ACTION_LOG"] = str(action_log)
     env["UC_USB_GADGET_FS_ROOT"] = str(fs_root if fs_root is not None else action_log.parent / "fs")
+    # Pin a Pi model so this suite does not follow the Orange Pi musb path
+    # when run on the bring-up board (or any host with that device-tree).
+    if extra_env is None or "UC_DEVICE_TREE_MODEL" not in extra_env:
+        model_file = action_log.parent / "dt-model-pi"
+        if not model_file.exists():
+            model_file.write_text("Raspberry Pi Zero 2 W Rev 1.0", encoding="utf-8")
+        env["UC_DEVICE_TREE_MODEL"] = str(model_file)
     if extra_env:
         env.update(extra_env)
     argv = [_BASH, str(_HELPER), *args]
@@ -462,3 +469,125 @@ def test_postinst_installs_a_sudo_grant_for_this_helper():
     text = postinst.read_text(encoding="utf-8")
     assert 'USB_GADGET_ADMIN_HELPER="${DGTCM_PATH}/scripts/uc-usb-gadget-admin"' in text
     assert "NOPASSWD: $USB_GADGET_ADMIN_HELPER" in text
+
+def _orangepi_model_file(tmp_path):
+    """Device-tree model blob measured on the bring-up Orange Pi Zero 2W."""
+    path = tmp_path / "dt-model-orangepi"
+    path.write_text("OrangePi Zero 2W", encoding="utf-8")
+    return path
+
+
+def test_gadget_stack_is_rpi_dwc2_for_a_raspberry_pi_model(tmp_path):
+    """Missing or Pi model strings keep the rpi-usb-gadget / dwc2 stack.
+
+    Why: shipping Centaurs are Raspberry Pi. A regression that classifies them
+    as musb would skip rpi-usb-gadget and leave dwc2 unconfigured.
+    Failure: gadget-stack prints sunxi-musb for a Pi model.
+    """
+    log = tmp_path / "actions.log"
+    model = tmp_path / "dt-model-pi"
+    model.write_text("Raspberry Pi Zero 2 W Rev 1.0", encoding="utf-8")
+    proc, lines = _run(
+        ["gadget-stack"], log, extra_env={"UC_DEVICE_TREE_MODEL": str(model)}
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "rpi-dwc2"
+    assert lines == []
+
+
+def test_gadget_stack_is_sunxi_musb_for_the_measured_orangepi_model(tmp_path):
+    """The bring-up board's model string selects the musb / g_ether stack.
+
+    Why: that board has no rpi-usb-gadget, no config.txt, and a live musb UDC
+    already in peripheral mode. Failure: gadget-stack prints rpi-dwc2 and the
+    helper would call a vendor tool that is not installed.
+    """
+    log = tmp_path / "actions.log"
+    model = _orangepi_model_file(tmp_path)
+    proc, _ = _run(
+        ["gadget-stack"], log, extra_env={"UC_DEVICE_TREE_MODEL": str(model)}
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "sunxi-musb"
+
+
+def test_orangepi_client_loads_g_ether_and_does_not_call_rpi_usb_gadget(tmp_path):
+    """Client on Orange Pi Zero 2W binds g_ether instead of rpi-usb-gadget.
+
+    Why: rpi-usb-gadget is not installed; the musb UDC is already peripheral.
+    Failure: action log starts with rpi-usb-gadget on -f (command not found on
+    the board) or never records modprobe g_ether, so usb0 never appears.
+    """
+    log = tmp_path / "actions.log"
+    root = tmp_path / "fs"
+    proc, lines = _run(
+        ["client"],
+        log,
+        fs_root=root,
+        extra_env={"UC_DEVICE_TREE_MODEL": str(_orangepi_model_file(tmp_path))},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "rpi-usb-gadget" not in "\n".join(lines)
+    assert "nmcli" not in "\n".join(lines)
+    assert "arm-modules-load" in lines
+    assert "ensure-usb0-dhcp-netplan" in lines
+    assert "modprobe g_ether" in lines
+    modules = (root / "etc" / "modules-load.d" / "usb-gadget.conf").read_text(
+        encoding="utf-8"
+    )
+    assert modules.strip() == "g_ether"
+    assert "dwc2" not in modules
+    netplan = (root / "etc" / "netplan" / "60-uc-usb-gadget.yaml").read_text(
+        encoding="utf-8"
+    )
+    assert "usb0:" in netplan
+    assert "dhcp4: true" in netplan
+
+
+def test_orangepi_off_unloads_g_ether_and_does_not_call_rpi_usb_gadget(tmp_path):
+    """Off on Orange Pi Zero 2W removes g_ether persistence, not rpi-usb-gadget.
+
+    Why: rpi-usb-gadget off would fail (missing binary) and leave g_ether loaded.
+    Failure: action log is rpi-usb-gadget off, or modules-load.d / netplan linger.
+    """
+    log = tmp_path / "actions.log"
+    root = tmp_path / "fs"
+    modules = root / "etc" / "modules-load.d" / "usb-gadget.conf"
+    netplan = root / "etc" / "netplan" / "60-uc-usb-gadget.yaml"
+    modules.parent.mkdir(parents=True)
+    netplan.parent.mkdir(parents=True)
+    modules.write_text("g_ether\n", encoding="utf-8")
+    netplan.write_text("network: {}\n", encoding="utf-8")
+    proc, lines = _run(
+        ["off"],
+        log,
+        fs_root=root,
+        extra_env={"UC_DEVICE_TREE_MODEL": str(_orangepi_model_file(tmp_path))},
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert "rpi-usb-gadget" not in "\n".join(lines)
+    assert "disarm-modules-load" in lines
+    assert "remove-usb0-dhcp-netplan" in lines
+    assert "modprobe -r g_ether" in lines
+    assert not modules.exists()
+    assert not netplan.exists()
+
+
+def test_orangepi_auto_and_shared_are_refused(tmp_path):
+    """Auto/Shared stay Pi-only: they need ICS and NetworkManager, which Armbian lacks.
+
+    Why: implementing them would invent a dnsmasq/NM stack this image does not
+    have. Failure: auto or shared returns 0 after calling rpi-usb-gadget, or
+    silently maps to client and claims ICS switching that cannot run.
+    """
+    model = _orangepi_model_file(tmp_path)
+    for mode in ("auto", "shared"):
+        log = tmp_path / f"actions-{mode}.log"
+        proc, lines = _run(
+            [mode],
+            log,
+            extra_env={"UC_DEVICE_TREE_MODEL": str(model)},
+        )
+        assert proc.returncode != 0, f"{mode} should be refused: {lines}"
+        assert "rpi-usb-gadget" not in "\n".join(lines)
+        assert "not supported" in proc.stderr.lower() or "not supported" in proc.stdout.lower()

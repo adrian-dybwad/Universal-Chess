@@ -45,6 +45,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   and refuses to guess when the profile has no UART: an unrecognized board
   fails with a named error rather than opening a device that is not the MCU.
 
+- **Orange Pi USB Ethernet gadget uses the musb UDC, not dwc2**: The
+  Connectivity USB gadget setting called `rpi-usb-gadget` and required a
+  `dtoverlay=dwc2` line in `config.txt`. Armbian on Allwinner has neither; the
+  H618 OTG controller is already `dr_mode=peripheral` with UDC
+  `musb-hdrc.4.auto`, and `g_ether.ko` is in the kernel. Client now loads
+  `g_ether` and persists it in `modules-load.d`, and writes a netplan DHCP
+  stanza for `usb0` (stock Armbian only matches `e*`). Auto and Shared stay
+  Pi-only: they need the vendor ICS switcher, NetworkManager, and dnsmasq,
+  none of which this image has.
+
 - **Lichess Lobby on the web**: Settings → Players showed a credentials card
   (add/delete logins) under the name Lichess Settings, while the board lobby
   was Account, Ongoing Games, Challenges, and New Game. The Players card is

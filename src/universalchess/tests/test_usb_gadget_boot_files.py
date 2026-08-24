@@ -521,6 +521,66 @@ def test_a_missing_netplan_directory_is_not_an_error(tmp_path):
     assert not directory.exists()
 
 
+
+# ---------------------------------------------------------------------------
+# Orange Pi Zero 2W: modules-load.d + usb0 DHCP (no dwc2, no cmdline.txt)
+# ---------------------------------------------------------------------------
+
+
+def test_arming_modules_load_writes_g_ether_without_dwc2(tmp_path):
+    """arm-modules-load persists g_ether only; dwc2 is a Pi overlay.
+
+    Why: the H618 musb UDC is already peripheral. Writing dwc2 into
+    modules-load.d would fail to load a missing module and look like support.
+    Failure: the file contains dwc2, or is not created.
+    """
+    path = tmp_path / "usb-gadget.conf"
+    proc = _run("arm-modules-load", str(path))
+    assert proc.returncode == _OK, proc.stderr
+    assert path.read_text(encoding="utf-8") == "g_ether\n"
+
+
+def test_disarming_modules_load_removes_the_file(tmp_path):
+    """disarm-modules-load deletes the persistence file, including a missing one.
+
+    Why: Off must be able to run on a board that never enabled Client.
+    Failure: the file remains, or a missing file exits non-zero.
+    """
+    path = tmp_path / "usb-gadget.conf"
+    path.write_text("g_ether\n", encoding="utf-8")
+    assert _run("disarm-modules-load", str(path)).returncode == _OK
+    assert not path.exists()
+    assert _run("disarm-modules-load", str(path)).returncode == _OK
+
+
+def test_ensure_usb0_dhcp_netplan_claims_usb0(tmp_path):
+    """ensure-usb0-dhcp-netplan writes a usb0 DHCP stanza.
+
+    Why: Armbian's stock netplan matches e* only, so usb0 would enumerate on
+    the host and stay unaddressed on the board. Failure: the yaml omits usb0
+    or dhcp4.
+    """
+    path = tmp_path / "60-uc-usb-gadget.yaml"
+    proc = _run("ensure-usb0-dhcp-netplan", str(path))
+    assert proc.returncode == _OK, proc.stderr
+    text = path.read_text(encoding="utf-8")
+    assert "usb0:" in text
+    assert "dhcp4: true" in text
+
+
+def test_remove_usb0_dhcp_netplan_deletes_the_file(tmp_path):
+    """remove-usb0-dhcp-netplan deletes the stanza; missing is success.
+
+    Why: Off must undo Client without failing on a board that never had the file.
+    Failure: the yaml remains, or a missing path exits non-zero.
+    """
+    path = tmp_path / "60-uc-usb-gadget.yaml"
+    path.write_text("network: {}\n", encoding="utf-8")
+    assert _run("remove-usb0-dhcp-netplan", str(path)).returncode == _OK
+    assert not path.exists()
+    assert _run("remove-usb0-dhcp-netplan", str(path)).returncode == _OK
+
+
 # ---------------------------------------------------------------------------
 # argument handling
 # ---------------------------------------------------------------------------

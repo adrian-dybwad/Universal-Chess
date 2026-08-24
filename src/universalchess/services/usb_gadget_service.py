@@ -42,6 +42,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
+from universalchess.board.profile import (
+    USB_GADGET_STACK_DWC3,
+    USB_GADGET_STACK_RPI_DWC2,
+    USB_GADGET_STACK_SUNXI_MUSB,
+    get_board_profile,
+)
+
 log = logging.getLogger(__name__)
 
 HELPER_PATH = "/opt/universalchess/scripts/uc-usb-gadget-admin"
@@ -146,18 +153,25 @@ def is_prepared(
     config_txt: str,
     cmdline_txt: str,
     modules_load_txt: str = "",
+    gadget_stack: str | None = None,
 ) -> bool:
     """Return True when boot config loads the USB Ethernet gadget stack.
 
-    The dwc2 peripheral overlay is required, plus ``g_ether`` either on the
-    kernel command line (older host-side prep) or in modules-load.d (what
-    current ``rpi-usb-gadget on`` writes). Either modules source alone with the
-    overlay is enough; overlay alone or modules alone is not.
+    On Raspberry Pi the dwc2 peripheral overlay is required, plus ``g_ether``
+    either on the kernel command line (older host-side prep) or in
+    modules-load.d (what current ``rpi-usb-gadget on`` writes). Overlay alone
+    or modules alone is not enough.
+
+    On Orange Pi Zero 2W the musb UDC is already ``dr_mode=peripheral``; there
+    is no dwc2 overlay. Prepared means ``g_ether`` is on the cmdline or in
+    modules-load.d.
     """
-    has_overlay = DWC2_OVERLAY in config_txt
     has_g_ether = _cmdline_has_g_ether(cmdline_txt) or _modules_load_has_g_ether(
         modules_load_txt
     )
+    if gadget_stack in (USB_GADGET_STACK_SUNXI_MUSB, USB_GADGET_STACK_DWC3):
+        return has_g_ether
+    has_overlay = DWC2_OVERLAY in config_txt
     return has_overlay and has_g_ether
 
 
@@ -509,6 +523,27 @@ def _resolve_lease_count(
     return read_shared_lease_count()
 
 
+
+def _stack_for_status(
+    *,
+    gadget_stack: str | None,
+    config_txt: str | None,
+    cmdline_txt: str | None,
+    modules_load_txt: str | None,
+) -> str | None:
+    """Choose the gadget stack without probing the host during injected tests.
+
+    Injected boot texts are the Pi unit-test path. Reading the host
+    device-tree there would flip prepared detection to musb rules when the
+    suite runs on the Orange Pi bring-up board.
+    """
+    if gadget_stack is not None:
+        return gadget_stack
+    if config_txt is None and cmdline_txt is None and modules_load_txt is None:
+        return get_board_profile().usb_gadget_stack
+    return USB_GADGET_STACK_RPI_DWC2
+
+
 def get_status(  # noqa: PLR0913 - keyword-only probe seams, injected per test
     *,
     config_txt: str | None = None,
@@ -523,6 +558,7 @@ def get_status(  # noqa: PLR0913 - keyword-only probe seams, injected per test
     lease_run: CommandRunner | None = None,
     auto_switching: object = _AUTO_UNSET,
     settings_path: Path | None = None,
+    gadget_stack: str | None = None,
 ) -> UsbGadgetStatus:
     """Return desired / live / prepared / attachment / expected-state for the gadget."""
     path = Path(settings_path) if settings_path is not None else DEFAULT_SETTINGS_PATH
@@ -531,8 +567,17 @@ def get_status(  # noqa: PLR0913 - keyword-only probe seams, injected per test
     modules = (
         _default_modules_load_txt() if modules_load_txt is None else modules_load_txt
     )
+    stack = _stack_for_status(
+        gadget_stack=gadget_stack,
+        config_txt=config_txt,
+        cmdline_txt=cmdline_txt,
+        modules_load_txt=modules_load_txt,
+    )
     prepared = is_prepared(
-        config_txt=cfg, cmdline_txt=cmdline, modules_load_txt=modules
+        config_txt=cfg,
+        cmdline_txt=cmdline,
+        modules_load_txt=modules,
+        gadget_stack=stack,
     )
 
     # Each live signal is probed only when the caller injected nothing at all.
@@ -627,7 +672,7 @@ def get_status(  # noqa: PLR0913 - keyword-only probe seams, injected per test
     )
 
 
-def reconcile_desired_mode(
+def reconcile_desired_mode(  # noqa: PLR0913 - settings plus live/prepared seams
     *,
     settings_path: Path | None = None,
     live: str | None = None,

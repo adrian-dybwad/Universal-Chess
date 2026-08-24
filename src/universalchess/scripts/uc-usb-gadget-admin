@@ -49,6 +49,8 @@ set -u
 DRY_RUN="${UC_USB_GADGET_ADMIN_DRY_RUN:-0}"
 ACTION_LOG="${UC_USB_GADGET_ADMIN_ACTION_LOG:-}"
 FS_ROOT="${UC_USB_GADGET_FS_ROOT:-}"
+# Overridable so tests (and a chroot) can point at a fake model file.
+DEVICE_TREE_MODEL="${UC_DEVICE_TREE_MODEL:-/proc/device-tree/model}"
 LOG_TAG="uc-usb-gadget-admin"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -69,7 +71,7 @@ ETH0_SYSFS="${FS_ROOT}/sys/class/net/eth0"
 log() { logger -t "$LOG_TAG" -- "$*" 2>/dev/null || true; echo "[$LOG_TAG] $*" >&2; }
 
 usage() {
-    echo "usage: uc-usb-gadget-admin {off|auto|client|shared|read-shared-leases}" >&2
+    echo "usage: uc-usb-gadget-admin {off|auto|client|shared|read-shared-leases|gadget-stack}" >&2
     exit 2
 }
 
@@ -262,8 +264,87 @@ read_shared_leases() {
     exit 0
 }
 
+is_orangepi_zero2w() {
+    # Keep in step with board/profile: the _ORANGEPI and _H616_40 pair that
+    # routes a model to _orangepi_h616(). Missing model file
+    # (CI hosts, Pi boards) is not an Orange Pi -- the Pi rpi-usb-gadget
+    # path stays the default so existing tests and shipping images are unchanged.
+    local model
+    [ -r "$DEVICE_TREE_MODEL" ] || return 1
+    model=$(tr -d '\0' < "$DEVICE_TREE_MODEL" 2>/dev/null) || return 1
+    echo "$model" | grep -qiE '^orange[[:space:]]*pi[[:space:]]+zero[[:space:]]*2[[:space:]]*w'
+}
+
+gadget_stack() {
+    if is_orangepi_zero2w; then
+        echo sunxi-musb
+    else
+        echo rpi-dwc2
+    fi
+}
+
+enable_sunxi_gadget() {
+    # musb UDC is already peripheral; persist g_ether and give usb0 DHCP.
+    record "arm-modules-load"
+    record "ensure-usb0-dhcp-netplan"
+    if files_enabled; then
+        mkdir -p "${FS_ROOT}/etc/modules-load.d" "${FS_ROOT}/etc/netplan"
+        if ! python3 "$FILES_TOOL" arm-modules-load \
+            "${FS_ROOT}/etc/modules-load.d/usb-gadget.conf"; then
+            log "ERROR: could not persist g_ether in modules-load.d"
+            return 1
+        fi
+        if ! python3 "$FILES_TOOL" ensure-usb0-dhcp-netplan \
+            "${FS_ROOT}/etc/netplan/60-uc-usb-gadget.yaml"; then
+            log "ERROR: could not write usb0 DHCP netplan"
+            return 1
+        fi
+    fi
+    run_priv modprobe g_ether
+    return 0
+}
+
+disable_sunxi_gadget() {
+    record "disarm-modules-load"
+    record "remove-usb0-dhcp-netplan"
+    if files_enabled; then
+        python3 "$FILES_TOOL" disarm-modules-load \
+            "${FS_ROOT}/etc/modules-load.d/usb-gadget.conf" || true
+        python3 "$FILES_TOOL" remove-usb0-dhcp-netplan \
+            "${FS_ROOT}/etc/netplan/60-uc-usb-gadget.yaml" || true
+    fi
+    run_priv modprobe -r g_ether || true
+    return 0
+}
+
 run_mode() {
     local mode="$1"
+    if is_orangepi_zero2w; then
+        case "$mode" in
+            client)
+                if enable_sunxi_gadget; then
+                    log "USB gadget set to client (g_ether on musb UDC)"
+                    exit 0
+                fi
+                ;;
+            off)
+                if disable_sunxi_gadget; then
+                    log "USB gadget set to off"
+                    exit 0
+                fi
+                ;;
+            auto|shared)
+                log "ERROR: USB gadget $mode is not supported on Orange Pi Zero 2W (needs rpi-usb-gadget ICS / NetworkManager); client uses g_ether on the musb UDC"
+                exit 1
+                ;;
+            *)
+                log "ERROR: rejected mode (expected off|auto|client|shared): $mode"
+                exit 2
+                ;;
+        esac
+        log "ERROR: applying USB gadget mode $mode failed"
+        exit 1
+    fi
     case "$mode" in
         off)
             if run_priv rpi-usb-gadget off && disable_gadget; then
@@ -307,6 +388,7 @@ main() {
     case "$1" in
         off|auto|client|shared) run_mode "$1" ;;
         read-shared-leases)     read_shared_leases ;;
+        gadget-stack)           gadget_stack ;;
         *)                      usage ;;
     esac
 }

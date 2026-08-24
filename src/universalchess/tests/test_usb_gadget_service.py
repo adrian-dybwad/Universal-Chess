@@ -128,6 +128,63 @@ def test_is_prepared_true_when_g_ether_comes_from_modules_load_d():
     )
 
 
+
+def test_is_prepared_on_sunxi_musb_does_not_require_the_dwc2_overlay():
+    """Orange Pi Zero 2W has no dwc2 overlay; g_ether in modules-load.d is enough.
+
+    Why: this Armbian image has no config.txt and the musb UDC is already
+    peripheral. Requiring dtoverlay=dwc2 would keep prepared False forever, so
+    the Connectivity UI would never leave Off and would keep asking for a reboot
+    that cannot arm dwc2. Failure: is_prepared stays False with empty config.txt
+    and modules-load.d containing g_ether.
+    """
+    assert (
+        ugs.is_prepared(
+            config_txt="",
+            cmdline_txt=UNPREPARED_CMDLINE,
+            modules_load_txt="g_ether\n",
+            gadget_stack=ugs.USB_GADGET_STACK_SUNXI_MUSB,
+        )
+        is True
+    )
+
+
+def test_is_prepared_on_sunxi_musb_is_false_without_g_ether():
+    """A stock Armbian boot is not prepared just because the UDC exists.
+
+    Why: the musb UDC is always there. Prepared must mean g_ether will load at
+    boot, otherwise the UI would seed desired=client on a board that will never
+    grow usb0. Failure: empty modules-load.d still reads as prepared.
+    """
+    assert (
+        ugs.is_prepared(
+            config_txt="",
+            cmdline_txt=UNPREPARED_CMDLINE,
+            modules_load_txt="",
+            gadget_stack=ugs.USB_GADGET_STACK_SUNXI_MUSB,
+        )
+        is False
+    )
+
+
+def test_is_prepared_on_sunxi_musb_does_not_treat_a_dwc2_overlay_as_enough():
+    """A Pi overlay string on Orange Pi is not a substitute for g_ether.
+
+    Why: copying config.txt dwc2 detection onto musb would mark an unarmed
+    board prepared (this image has no overlay loader for that line). Failure:
+    overlay-only config.txt reads as prepared without g_ether.
+    """
+    assert (
+        ugs.is_prepared(
+            config_txt=PREPARED_CONFIG,
+            cmdline_txt=UNPREPARED_CMDLINE,
+            modules_load_txt="",
+            gadget_stack=ugs.USB_GADGET_STACK_SUNXI_MUSB,
+        )
+        is False
+    )
+
+
 def test_reconcile_applies_desired_when_live_differs(tmp_path):
     """Boot / startup re-applies desired mode when live does not match.
 

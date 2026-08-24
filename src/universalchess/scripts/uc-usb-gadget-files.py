@@ -49,6 +49,23 @@ ARM = "arm-cmdline"
 DISARM = "disarm-cmdline"
 DETACH = "detach-netplan-eth0"
 RESTORE = "restore-netplan-eth0"
+ARM_MODULES = "arm-modules-load"
+DISARM_MODULES = "disarm-modules-load"
+ENSURE_USB0_DHCP = "ensure-usb0-dhcp-netplan"
+REMOVE_USB0_DHCP = "remove-usb0-dhcp-netplan"
+G_ETHER_LINE = "g_ether\n"
+USB0_DHCP_NETPLAN = """\
+# Universal Chess: USB Ethernet gadget (client DHCP).
+# Armbian's stock netplan only matches e*, so usb0 would otherwise stay unconfigured.
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    usb0:
+      dhcp4: true
+      dhcp6: true
+      optional: true
+"""
 
 # Modules the gadget needs bound before userspace, in load order: the controller
 # in peripheral mode, then the ethernet function on top of it.
@@ -393,18 +410,64 @@ def restore_one(backup: Path) -> int:
     return OK
 
 
+
+def arm_modules_load(path: Path) -> int:
+    """Write a modules-load.d file that loads g_ether only (no dwc2).
+
+    Orange Pi Zero 2W's musb UDC is already peripheral; dwc2 is the Pi
+    overlay and is not present on this SoC. Persist g_ether so client
+    mode survives reboot.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_atomically(path, G_ETHER_LINE)
+    return OK
+
+
+def disarm_modules_load(path: Path) -> int:
+    """Remove the g_ether modules-load.d file if it exists."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return OK
+    return OK
+
+
+def ensure_usb0_dhcp_netplan(path: Path) -> int:
+    """Write a netplan stanza so usb0 gets DHCP under systemd-networkd.
+
+    Armbian's stock ``e*`` match never claims usb0, so without this file
+    Client mode would enumerate on the host and stay unaddressed on the board.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_atomically(path, USB0_DHCP_NETPLAN)
+    return OK
+
+
+def remove_usb0_dhcp_netplan(path: Path) -> int:
+    """Remove the usb0 DHCP netplan file if it exists."""
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return OK
+    return OK
+
+
 def usage() -> int:
     """Report the accepted verbs and return the usage exit code."""
     report(
         "usage: uc-usb-gadget-files.py {arm-cmdline|disarm-cmdline} <cmdline.txt>\n"
         "       uc-usb-gadget-files.py detach-netplan-eth0 <netplan-dir>"
         " {--eth0-present|--eth0-absent}\n"
-        "       uc-usb-gadget-files.py restore-netplan-eth0 <netplan-dir>"
+        "       uc-usb-gadget-files.py restore-netplan-eth0 <netplan-dir>\n"
+        "       uc-usb-gadget-files.py {arm-modules-load|disarm-modules-load} "
+        "<modules-load.conf>\n"
+        "       uc-usb-gadget-files.py {ensure-usb0-dhcp-netplan|remove-usb0-dhcp-netplan} "
+        "<netplan.yaml>"
     )
     return USAGE
 
 
-def main(argv: list[str]) -> int:
+def main(argv: list[str]) -> int:  # noqa: PLR0911 - one return per verb, plus usage
     """Dispatch one verb. Every unrecognised shape is a usage error, not a guess."""
     if len(argv) < MIN_ARGUMENTS:
         return usage()
@@ -417,6 +480,14 @@ def main(argv: list[str]) -> int:
         )
     if verb == RESTORE and not rest:
         return restore_netplan_eth0(Path(target))
+    if verb == ARM_MODULES and not rest:
+        return arm_modules_load(Path(target))
+    if verb == DISARM_MODULES and not rest:
+        return disarm_modules_load(Path(target))
+    if verb == ENSURE_USB0_DHCP and not rest:
+        return ensure_usb0_dhcp_netplan(Path(target))
+    if verb == REMOVE_USB0_DHCP and not rest:
+        return remove_usb0_dhcp_netplan(Path(target))
     return usage()
 
 
