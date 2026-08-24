@@ -15,6 +15,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Orange Pi boards are known to have onboard Wi-Fi and Bluetooth**: the
+  model classifier only knew Raspberry Pi strings, so an Orange Pi fell through
+  to the plain Pi Zero rule (which shares the word "zero") and was treated as
+  having no radios at all. Both indicators reported the hardware absent and
+  hid themselves, and the polling loop skipped the radios entirely. Orange Pi
+  models are now classified as equipped, so the radios stay offered even if
+  firmware fails to bind.
+
 - **Lichess Lobby on the web**: Settings → Players showed a credentials card
   (add/delete logins) under the name Lichess Settings, while the board lobby
   was Account, Ongoing Games, Challenges, and New Game. The Players card is

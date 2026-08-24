@@ -54,6 +54,10 @@ MODEL_PI_4_B = "Raspberry Pi 4 Model B Rev 1.4"
 MODEL_PI_5 = "Raspberry Pi 5 Model B Rev 1.0"
 MODEL_PI_400 = "Raspberry Pi 400 Rev 1.0"
 MODEL_CM4 = "Raspberry Pi Compute Module 4 Rev 1.1"
+MODEL_ORANGEPI_ZERO2W = "OrangePi Zero 2W"
+MODEL_ORANGEPI_ZERO = "OrangePi Zero"
+MODEL_ORANGEPI_ZERO3 = "Orange Pi Zero 3"
+MODEL_ORANGEPI_5 = "Orange Pi 5"
 
 
 # --------------------------------------------------------------------------- #
@@ -79,6 +83,14 @@ MODEL_CM4 = "Raspberry Pi Compute Module 4 Rev 1.1"
         (MODEL_PI_4_B, True),
         (MODEL_PI_5, True),
         (MODEL_PI_400, True),
+        # Orange Pi: onboard radios stay offered if firmware fails to bind.
+        # Must precede the plain-Pi-Zero False rule (the word "zero" is shared).
+        (MODEL_ORANGEPI_ZERO2W, True),
+        ("Orange Pi Zero 2W", True),
+        ("  orangepi zero 2w  ", True),
+        (MODEL_ORANGEPI_ZERO, True),
+        (MODEL_ORANGEPI_ZERO3, True),
+        (MODEL_ORANGEPI_5, True),
         # Unknown, not guessed: CM4 ships with and without wireless under this
         # exact string, so only the device probe can answer. Claiming either way
         # would hide the radio on one SKU or offer a missing one on the other.

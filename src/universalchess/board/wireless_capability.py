@@ -78,8 +78,11 @@ _HCI_PREFIX = "hci"
 # with). Absence from this table means "unknown", never "no": see the module
 # docstring on why a guess is worse than deferring to device presence.
 _MODEL_WIRELESS_RULES = (
+    # Orange Pi. Must precede the plain-Pi-Zero False rule, which would
+    # otherwise match the word "zero" and hide the radios on firmware failure.
+    (re.compile(r"^orange\s*pi\b"), True),
     (re.compile(r"\bzero\s+(?:2\s+)?w\b"), True),        # Zero W, Zero 2 W
-    (re.compile(r"\bzero\b"), False),                    # plain Zero: no radios
+    (re.compile(r"^raspberry pi zero\b"), False),         # plain Pi Zero only
     (re.compile(r"^raspberry pi model [ab]\b"), False),   # Pi 1 A/B/A+/B+
     (re.compile(r"^raspberry pi 2 model b\b"), False),    # Pi 2 B (all revisions)
     (re.compile(r"^raspberry pi (?:400|500|3|4|5)\b"), True),
