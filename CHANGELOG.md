@@ -906,6 +906,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   when `nmcli` is absent (passphrase on stdin, never on argv). Raspberry
   Pi OS still uses `nmcli`. Saved and Forget use the same netplan file.
 
+- **Orange Pi e-paper failed with "No module named 'gpiod'" after a
+  successful install**: the GPIO dependency was declared as
+  `python3-rpi.gpio | python3-libgpiod`, and apt takes the first alternative
+  when neither is installed. On Armbian, where neither is present, that
+  installed rpi.gpio and never libgpiod -- the one package the Orange Pi
+  e-paper backend imports. The clause had been written believing Armbian could
+  not install rpi.gpio at all, but Debian trixie carries it for arm64, so the
+  alternative resolved the wrong way on exactly the board it existed for.
+  libgpiod is now listed first, which installs it on Armbian and still leaves a
+  Raspberry Pi on the rpi.gpio its base image already has, since an installed
+  alternative satisfies the clause on its own.
+
 - **Orange Pi Zero 2W board service crash-looped on `import RPi.GPIO`**:
   `epd2in9d.py` still imported `RPi.GPIO` at module load even though every
   pin and SPI call goes through epdconfig. Raspberry Pi OS ships that

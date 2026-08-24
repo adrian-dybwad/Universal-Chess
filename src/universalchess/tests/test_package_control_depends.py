@@ -262,3 +262,37 @@ def test_rpi_gpio_is_an_alternative_to_libgpiod_not_a_hard_depends():
         "the rpi.gpio alternative must include python3-libgpiod for Orange Pi; "
         f"got {sorted(alternatives)}"
     )
+
+
+def test_libgpiod_is_the_first_gpio_alternative():
+    """``python3-libgpiod`` must be listed before ``python3-rpi.gpio``.
+
+    Why this test exists: order decides which package actually gets installed.
+    apt satisfies an alternative that is already installed, and otherwise takes
+    the first one -- so with rpi.gpio first, an Armbian board (where neither is
+    present) installed rpi.gpio and never got libgpiod. The e-paper backend for
+    that board imports ``gpiod``, so the panel failed at startup with "No module
+    named 'gpiod'". The clause was written believing Armbian could not install
+    rpi.gpio at all; Debian trixie carries it for arm64, so the alternative
+    silently resolved the wrong way on the one board it existed for.
+
+    Putting libgpiod first inverts that: Armbian installs libgpiod, and a
+    Raspberry Pi -- whose base image already has rpi.gpio -- keeps it, because
+    an installed alternative satisfies the clause without pulling the other one.
+
+    How a regression manifests: reordering brings back a board whose install
+    reports success and whose display never initializes.
+    """
+    text = CONTROL.read_text()
+    match = re.search(r"^Depends:(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
+    assert match, f"no Depends field in {CONTROL}"
+    gpio_clause = next(
+        clause for clause in match.group(1).split(",") if "python3-rpi.gpio" in clause
+    )
+    ordered = [
+        alternative.split("(")[0].strip() for alternative in gpio_clause.split("|")
+    ]
+    assert ordered.index("python3-libgpiod") < ordered.index("python3-rpi.gpio"), (
+        "python3-libgpiod must come first, or apt installs rpi.gpio on a board "
+        f"whose e-paper driver imports gpiod; got {ordered}"
+    )
