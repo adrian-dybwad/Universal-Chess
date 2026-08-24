@@ -156,6 +156,33 @@ def test_depends_provides_logrotate_for_the_service_logs():
     )
 
 
+def test_depends_provides_ensurepip_for_the_application_venv():
+    """``Depends`` must guarantee ``python3-venv`` is present.
+
+    Why this test exists: the postinst builds the application environment with
+    ``python3 -m venv --system-site-packages`` and then installs the vendored
+    wheels with that venv's pip. Debian splits ``ensurepip`` -- and the bundled
+    pip wheel it seeds the venv from -- out of the interpreter into
+    ``python3-venv``. Raspberry Pi OS ships it in the base image, which is
+    exactly why relying on it silently is a trap: on an Armbian trixie image it
+    is absent, and the venv step aborts with "ensurepip is not available ...
+    install the python3-venv package".
+
+    ``python3-venv`` rather than a versioned ``python3.13-venv`` because the
+    unversioned metapackage tracks whichever interpreter the release makes
+    default, so the field stays correct across bookworm and trixie.
+
+    How a regression manifests: the install fails at "::: Installing python
+    packages" with a non-zero postinst exit, leaving universal-chess
+    half-configured -- no venv, so the service cannot start on the next boot
+    either.
+    """
+    assert "python3-venv" in _declared_depends(), (
+        "Depends must include python3-venv; without it `python3 -m venv` has no "
+        "ensurepip and the postinst cannot build /opt/universalchess/.venv"
+    )
+
+
 def test_depends_omits_the_incompatible_debian_pam_binding():
     """``Depends`` must not pull in ``python3-pam``.
 

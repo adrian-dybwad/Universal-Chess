@@ -852,6 +852,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Installing the package on Armbian failed at "Installing python
+  packages"**: the postinst builds `/opt/universalchess/.venv` with
+  `python3 -m venv`, but nothing declared `python3-venv`, which is where
+  Debian keeps `ensurepip` and the bundled pip wheel a new environment is
+  seeded from. Raspberry Pi OS ships it in the base image, so the omission
+  was invisible there; on an Armbian trixie image the step aborted with
+  "ensurepip is not available", the postinst exited non-zero, and
+  universal-chess was left half-configured with no venv for the service to
+  start from. `python3-venv` is now a declared dependency, unversioned so it
+  tracks whichever interpreter the Debian release makes default.
+
 - **Orange Pi Wi-Fi status and Scan used Raspberry Pi OS tools Armbian
   does not ship**: the web UI and e-paper reported disconnected (and Scan
   returned nothing) while wlan0 was associated, because status called
