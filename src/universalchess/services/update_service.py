@@ -8,11 +8,14 @@ Handles:
 - Persisting update state
 
 The update state is stored in /opt/universalchess/update-state.json and includes:
-- channel: "stable" | "nightly" - which release channel to follow
+- channel: "stable" | "nightly" | null - a channel switch the user selected but
+  has not installed yet; null means the board follows the channel of the build
+  it is running (see channel_for_version)
 - pending_deb: path to downloaded .deb waiting for install, or null
 - last_check: ISO timestamp of last update check
 - available_version: version string if update available, or null
 - current_version: currently installed version
+- state_version: schema version of this file (see STATE_VERSION)
 """
 
 import hashlib
@@ -43,6 +46,13 @@ GITHUB_REPO = "Universal-Chess"
 GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases"
 
 STATE_FILE = Path("/opt/universalchess/update-state.json")
+
+# Schema version of update-state.json, bumped when existing files need a one-shot
+# adjustment as they are loaded. Version 1 narrowed ``channel`` to mean a pending
+# switch rather than the whole selection; a file at version 0 predates that and
+# its channel is reconciled once (see UpdateService._reconcile_channel).
+STATE_VERSION = 1
+
 PENDING_DEB_DIR = Path("/opt/universalchess/pending-updates")
 VERSION_FILE = Path("/opt/universalchess/VERSION")
 
@@ -79,6 +89,21 @@ class UpdateChannel(Enum):
     """Update channel selection."""
     STABLE = "stable"
     NIGHTLY = "nightly"
+
+
+def channel_for_version(version: Optional[str]) -> UpdateChannel:
+    """The channel a build belongs to, read from its version string.
+
+    The installed build is the ground truth for which channel a board is on. A
+    nightly names itself in both places its version can come from: the release
+    tag scripts/build.sh writes to VERSION (``nightly-<stamp>-<sha>``) and the
+    dpkg version the nightly workflow sets (``<base>-nightly``), so one substring
+    test covers a board built either way. Anything else -- including an unknown
+    version -- is stable, the channel that cannot pull unreviewed builds.
+    """
+    if version and "nightly" in version.lower():
+        return UpdateChannel.NIGHTLY
+    return UpdateChannel.STABLE
 
 
 class UpdateCheckError(Exception):
@@ -177,14 +202,22 @@ def sha256_of_file(path) -> Optional[str]:
 
 @dataclass
 class UpdateState:
-    """Persistent update state."""
-    channel: str = "stable"
+    """Persistent update state.
+
+    ``channel`` holds a switch the user selected but has not installed yet, and
+    is None whenever the board simply follows the channel of the build it runs.
+    Storing the selection only while it is pending keeps one value authoritative:
+    there is no stored channel that can disagree with the installed build once
+    the switch has been carried out. Use :func:`resolve_channel` to read it.
+    """
+    channel: Optional[str] = None
     auto_update: bool = False
     pending_deb: Optional[str] = None
     last_check: Optional[str] = None
     available_version: Optional[str] = None
     available_release_tag: Optional[str] = None
     current_version: Optional[str] = None
+    state_version: int = STATE_VERSION
     
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON serialization."""
@@ -192,16 +225,39 @@ class UpdateState:
     
     @classmethod
     def from_dict(cls, data: dict) -> "UpdateState":
-        """Create from dictionary."""
+        """Create from dictionary.
+
+        A file with no ``state_version`` predates the pending-switch meaning of
+        ``channel``, so it reads as version 0 and is reconciled on load. New
+        state gets the current version from the field default instead, so a
+        freshly created file is never treated as needing that migration.
+        """
         return cls(
-            channel=data.get("channel", "stable"),
+            channel=data.get("channel"),
             auto_update=data.get("auto_update", False),
             pending_deb=data.get("pending_deb"),
             last_check=data.get("last_check"),
             available_version=data.get("available_version"),
             available_release_tag=data.get("available_release_tag"),
             current_version=data.get("current_version"),
+            state_version=data.get("state_version", 0),
         )
+
+
+def resolve_channel(state: UpdateState, installed_version: Optional[str]) -> UpdateChannel:
+    """The channel the board is following.
+
+    A pending switch recorded in ``state.channel`` wins while it is set;
+    otherwise the installed build decides. An unrecognised stored value is
+    ignored rather than raised on: this is writable state on disk, and a board
+    whose file has been hand-edited must still be able to check for updates.
+    """
+    if state.channel:
+        try:
+            return UpdateChannel(state.channel)
+        except ValueError:
+            log.warning(f"[UpdateService] Ignoring unknown channel {state.channel!r}")
+    return channel_for_version(installed_version)
 
 
 class UpdateService:
@@ -216,10 +272,12 @@ class UpdateService:
         self._lock = threading.Lock()
         
         # Update current version on init
-        self._state.current_version = self.get_current_version()
+        installed_version = self.get_current_version()
+        self._state.current_version = installed_version
+        self._reconcile_channel(installed_version)
         self._save_state()
         
-        log.info(f"[UpdateService] Initialized: channel={self._state.channel}, version={self._state.current_version}")
+        log.info(f"[UpdateService] Initialized: channel={self.get_channel().value}, version={self._state.current_version}")
     
     # =========================================================================
     # State Management
@@ -300,19 +358,94 @@ class UpdateService:
         return "unknown"
     
     def get_channel(self) -> UpdateChannel:
-        """Get current update channel."""
-        return UpdateChannel(self._state.channel)
+        """Get current update channel.
+
+        Resolved against the installed build read live, never against the version
+        recorded in the state file: the recorded copy is a snapshot taken at the
+        last service start, and every other channel decision (notably
+        :meth:`_is_channel_switch`, which controls whether the install is allowed
+        to downgrade) reads the build directly. Two sources would let those
+        decisions disagree.
+        """
+        return resolve_channel(self._state, self.get_current_version())
     
     def set_channel(self, channel: UpdateChannel) -> None:
-        """Set update channel."""
-        self._state.channel = channel.value
-        # Clear pending update when switching channels
+        """Select the update channel.
+
+        The selection is recorded only while it differs from the installed
+        build's channel, because that is the only situation it describes: a
+        switch the user has asked for but not yet installed. Once the matching
+        build is running the board follows its own build again (see
+        :meth:`_reconcile_channel`), so selecting the channel already installed
+        clears the override instead of pinning it -- and is not a change, so a
+        build staged for that same channel is still wanted and is kept.
+        """
+        previous = self.get_channel()
+        installed = channel_for_version(self.get_current_version())
+        self._state.channel = None if channel == installed else channel.value
+        if channel != previous:
+            self._discard_previous_channel_state()
+        self._save_state()
+        log.info(f"[UpdateService] Channel set to {channel.value}")
+
+    def _discard_previous_channel_state(self) -> None:
+        """Drop the staged build and the recorded offer of the previous channel.
+
+        Both were selected by the previous channel's release filter, so keeping
+        them would advertise -- and then install -- a build from the channel the
+        board is no longer following.
+        """
         if self._state.pending_deb:
             self._clear_pending_update()
         self._state.available_version = None
         self._state.available_release_tag = None
-        self._save_state()
-        log.info(f"[UpdateService] Channel set to {channel.value}")
+
+    def _reconcile_channel(self, installed_version: str) -> None:
+        """Bring the recorded channel switch in line with the installed build.
+
+        Takes the installed version the caller already read rather than reading
+        it again, so the reconciliation and the ``current_version`` it is stored
+        beside cannot describe different builds.
+
+        Called from construction, which is what a service start is -- and the
+        package postinst restarts both services at the end of an install -- so a
+        newly installed build's channel is picked up as soon as it runs. Two
+        adjustments:
+
+        - An override that now matches the installed build has been carried out,
+          so it is dropped and the board goes back to following its build.
+        - A file written before ``channel`` meant a pending switch (state_version
+          0) records a bare channel with no way to distinguish a chosen switch
+          from the former "stable" default. A nightly recorded on a stable board
+          cannot have come from that default, so it is kept as a pending switch;
+          anything else defers to the installed build, which is what corrects the
+          boards that ran a nightly while reporting stable. This runs once,
+          because a nightly board deliberately moving to stable records the very
+          combination the correction looks for and must not be reverted at the
+          next start.
+        """
+        installed = channel_for_version(installed_version)
+        before = resolve_channel(self._state, installed_version)
+
+        if self._state.state_version < STATE_VERSION:
+            chosen_switch = (
+                self._state.channel == UpdateChannel.NIGHTLY.value
+                and installed == UpdateChannel.STABLE
+            )
+            if not chosen_switch:
+                self._state.channel = None
+            self._state.state_version = STATE_VERSION
+
+        if self._state.channel == installed.value:
+            self._state.channel = None
+
+        after = resolve_channel(self._state, installed_version)
+        if after != before:
+            log.info(
+                f"[UpdateService] Channel now follows the installed build: "
+                f"{before.value} -> {after.value}"
+            )
+            self._discard_previous_channel_state()
     
     def is_auto_update_enabled(self) -> bool:
         """Check if auto-update is enabled."""
@@ -909,11 +1042,10 @@ class UpdateService:
         and the install are separate user actions, potentially separated by a
         restart, so a flag would have to be persisted and could go stale. The
         installed version is the ground truth for which channel the board is
-        actually on.
+        actually on -- which is also why a channel that is merely being followed
+        (no recorded switch) can never read as one.
         """
-        installed_is_nightly = "nightly" in (self.get_current_version() or "").lower()
-        selected_is_nightly = self._state.channel == UpdateChannel.NIGHTLY.value
-        return installed_is_nightly != selected_is_nightly
+        return self.get_channel() != channel_for_version(self.get_current_version())
 
     def _launch_install(self, deb_path: Path) -> bool:
         """Launch the install via the pinned root helper.
@@ -1066,10 +1198,14 @@ class UpdateService:
         persisted = self._load_state()
         pending_deb = persisted.pending_deb
         has_pending = bool(pending_deb) and Path(pending_deb).exists()
+        # The channel is resolved against the build read live, matching
+        # :meth:`get_channel`, so the page and the board menu cannot show
+        # different channels while a snapshot is stale.
+        installed_version = self.get_current_version()
         return {
-            "channel": persisted.channel,
+            "channel": resolve_channel(persisted, installed_version).value,
             "auto_update": persisted.auto_update,
-            "current_version": persisted.current_version or self.get_current_version(),
+            "current_version": persisted.current_version or installed_version,
             "available_version": persisted.available_version,
             "has_pending_update": has_pending,
             "last_check": persisted.last_check,

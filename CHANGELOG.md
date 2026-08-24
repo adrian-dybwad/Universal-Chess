@@ -1524,6 +1524,27 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   failed. The board's Check for Updates splash reports the same failure
   instead of "Up to date".
 
+- A board running a nightly build reported the Stable channel and followed it.
+  The channel was stored in `update-state.json` as a preference defaulting to
+  `stable`, and nothing ever compared it with the build that was installed, so a
+  board flashed or sideloaded with a nightly read Stable in Settings and in the
+  board's Updates menu, filtered every nightly release out of the check, and was
+  offered the stable release -- which compares as newer, because a
+  `nightly-<stamp>-<sha>` tag parses to no version numbers at all. Installing it
+  declared a channel switch, so the board left the nightly channel without being
+  asked. The channel is now read from the installed build, which names its
+  channel both in the release tag written to `/opt/universalchess/VERSION` and in
+  its dpkg version. The stored field now records only a switch the user has
+  selected and not yet installed, and is dropped once the matching build is
+  running: a selection still survives a restart while it is pending, and once it
+  is carried out the board follows what it runs. Existing state files are
+  reconciled once as they load -- a nightly recorded on a stable board can only
+  have been chosen, so it is kept; any other combination defers to the installed
+  build -- because applying that correction on every start would revert a nightly
+  board's deliberate move to stable before it could be installed. Re-selecting
+  the channel a board already runs also no longer discards a downloaded update
+  that was waiting to be installed.
+
 - Long-press OK on a highlighted move never opened Take back / New game from
   this position. The handler called `PlayerManager.supports_takeback` as a
   method; it is a bool property, so the events thread logged
