@@ -84,6 +84,21 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   System and Check for OS updates (the control that refreshes apt indexes)
   instead of a generic network hint with no in-app next step.
 
+- **Handing over to the original Centaur stops UC's own board polling**: once
+  the binary could execute, every launch still bounced straight back to the
+  menu. Centaur's startup handshake failed four times with `Initial PING:
+  Command failed`, whereupon it powered itself off and exited 1. The handoff
+  released the serial board, but nothing stopped the battery poller, which asks
+  the controller for `DGT_SEND_BATTERY_INFO` every five seconds and simply
+  reopens whatever now sits at the node. UC and Centaur were two masters on one
+  board link, each consuming the replies the other was waiting for -- UC logging
+  its own `Timeout for DGT_SEND_BATTERY_INFO` while Centaur's PING starved
+  between them. Stopping the UC service by hand and running Centaur against the
+  same UART produced no PING failure at all, which is what identified the
+  poller. Polling is now stopped before either handoff mode launches Centaur,
+  ahead of the best-effort factory-marker write so a marker failure cannot leave
+  it running.
+
 - **The BlueZ self-heal runs only on a Raspberry Pi**: the workaround targets
   a BCM43430 firmware fault and was gated on nothing more than the presence of
   an hci device. Orange Pi carries a uwe5622, an unrelated part the workaround

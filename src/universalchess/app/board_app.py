@@ -6168,8 +6168,21 @@ def _launch_original_centaur():
     Both modes stop Universal Chess once centaur exits.
     """
     from universalchess.board.settings import Settings
+    from universalchess.services import get_system_service
     from universalchess.services.centaur_import import ensure_factory_marker
     from universalchess.services.power import centaur_direct_mode_enabled
+
+    # Stop UC's own board polling before centaur is given the UART, for both
+    # modes: SystemPollingService asks the controller for DGT_SEND_BATTERY_INFO
+    # every five seconds, and releasing the port does not stop it -- the next
+    # poll simply reopens whatever now sits at the node. UC and centaur are then
+    # two masters on one board link, each consuming the replies the other is
+    # waiting for, so centaur's startup PING fails and it powers itself off
+    # before drawing anything. This runs first, ahead of the best-effort marker
+    # write below, so a marker failure cannot leave the poller running. stop()
+    # is guarded and idempotent, so calling it when polling never started is a
+    # no-op. Nothing restarts it here: both modes end by restarting the service.
+    get_system_service().stop()
 
     # Without settings/factory.info, centaur boots into its factory hardware-test +
     # calibration "Test Screen" (and never leaves, since that calibration does not
