@@ -520,18 +520,28 @@ def test_ensure_armhf_support_invokes_pinned_helper_via_sudo_n(tmp_path):
     assert seen["kwargs"].get("timeout")
 
 
+_ARMHF_SUPPORT_FAILED_MSG = (
+    "Could not install the 32-bit armhf support Centaur needs to run on "
+    "this system. In Settings > System, use Check for OS updates, then try "
+    "the import again."
+)
+
+
 def test_ensure_armhf_support_raises_on_nonzero_exit(tmp_path):
     """A non-zero helper exit must raise CentaurImportError, not return quietly.
 
     The armhf support is required, so a failed install must abort the import rather
     than be swallowed. Asserts the raise so the required-step contract holds and
-    the user is told to retry.
+    the message names Settings > System and Check for OS updates -- the UI that
+    refreshes apt indexes -- rather than a generic network hint that leaves the
+    user with no in-app next step.
     """
     def runner(cmd, *a, **k):
         return types.SimpleNamespace(returncode=1)
 
-    with pytest.raises(CentaurImportError):
+    with pytest.raises(CentaurImportError) as exc:
         ensure_armhf_support(runner)
+    assert str(exc.value) == _ARMHF_SUPPORT_FAILED_MSG
 
 
 def test_ensure_armhf_support_raises_when_sudo_missing(tmp_path):
@@ -540,13 +550,15 @@ def test_ensure_armhf_support_raises_when_sudo_missing(tmp_path):
     On a host without sudo, or if the helper path is absent, the subprocess call
     raises OSError. That is still a failure to provision the required support, so
     it must surface as a CentaurImportError (with a clean message) rather than a
-    raw OSError leaking to the client. Asserts the translated exception type.
+    raw OSError leaking to the client. The same Settings > System copy as the
+    apt-failure path is asserted so the two cannot drift into different advice.
     """
     def runner(cmd, *a, **k):
         raise FileNotFoundError("sudo")
 
-    with pytest.raises(CentaurImportError):
+    with pytest.raises(CentaurImportError) as exc:
         ensure_armhf_support(runner)
+    assert str(exc.value) == _ARMHF_SUPPORT_FAILED_MSG
 
 
 def test_ensure_factory_marker_is_idempotent_and_preserves_content(tmp_path):

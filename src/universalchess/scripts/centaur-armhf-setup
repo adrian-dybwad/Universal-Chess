@@ -12,7 +12,16 @@
 # Armbian 6.18.45-current-sunxi64 on the Orange Pi Zero 2W) leave
 # `# CONFIG_COMPAT is not set`. On those hosts libc6:armhf is not enough -- the
 # ELF fails with Exec format error -- so this helper also installs
-# qemu-user-static (binfmt) on a host that cannot exec AArch32.
+# qemu-user-static and registers the qemu-arm binfmt handler.
+#
+# Installing the package is not sufficient. Debian's qemu-user-static postinst
+# skips qemu-arm on arm64 because dpkg treats armhf as a native compatible
+# architecture. That skip is correct on Raspberry Pi OS 64-bit (native AArch32
+# must not be intercepted by qemu) and wrong here: only qemu-armeb (big-endian)
+# is registered, and little-endian centaur stays Exec format error. This helper
+# therefore calls update-binfmts for qemu-arm itself, but only after the exec
+# probe has already shown the kernel cannot run AArch32. A Pi never reaches
+# that path, so qemu-arm is never registered there.
 #
 # Which host that is, is decided by running an AArch32 binary, not by reading
 # the kernel's build config. /proc/config.gz requires CONFIG_IKCONFIG_PROC,
@@ -64,6 +73,19 @@ REQUIRED_PACKAGES="$ARMHF_RUNTIME_PKG gcc-arm-linux-gnueabihf libc6-dev-armhf-cr
 # resolves. UC_ARMHF_LOADER replaces the search for tests.
 ARMHF_LOADER_PATHS="/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3 /usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3"
 
+# qemu-arm-static interpreter locations (Debian Trixie uses libexec; older
+# packages put it in /usr/bin). UC_QEMU_ARM_STATIC replaces the search for tests.
+QEMU_ARM_STATIC_PATHS="/usr/libexec/qemu-binfmt/qemu-arm-static /usr/bin/qemu-arm-static"
+
+# Debian's packaged binfmt description. qemu-user-static's postinst will not
+# import this on arm64; this helper may, but only on the cannot-exec path.
+QEMU_ARM_BINFMT_DESC="/usr/share/binfmts/qemu-arm"
+
+# ELF32 little-endian ARM magic/mask from Debian's qemu-arm binfmt. The 0xfe
+# mask on e_type matches both ET_EXEC and ET_DYN (the loader and centaur).
+QEMU_ARM_MAGIC='\x7f\x45\x4c\x46\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00'
+QEMU_ARM_MASK='\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff'
+
 # Exit status a POSIX shell reports when a file exists but execve refused it.
 # On arm64 without CONFIG_COMPAT that refusal is ENOEXEC ("Exec format error"),
 # which is precisely the condition qemu-user-static's binfmt handler fixes.
@@ -110,6 +132,68 @@ can_exec_armhf() {
 	[ -n "$loader" ] || return 1
 	"$loader" --verify "$loader" >/dev/null 2>&1
 	[ "$?" -ne "$EXEC_FORMAT_ERROR_STATUS" ]
+}
+
+# Echo the qemu-arm-static path, or nothing when it is not on disk.
+find_qemu_arm_static() {
+	if [ -n "${UC_QEMU_ARM_STATIC:-}" ]; then
+		[ -x "$UC_QEMU_ARM_STATIC" ] && echo "$UC_QEMU_ARM_STATIC"
+		return 0
+	fi
+	for candidate in $QEMU_ARM_STATIC_PATHS; do
+		if [ -x "$candidate" ]; then
+			echo "$candidate"
+			return 0
+		fi
+	done
+	command -v qemu-arm-static 2>/dev/null || true
+}
+
+# True when the little-endian ARM qemu handler is registered in binfmt_misc.
+# qemu-armeb (big-endian) does not count: that is the handler Debian does
+# register on arm64, and it cannot run centaur.
+qemu_arm_binfmt_registered() {
+	dir="${UC_BINFMT_MISC_DIR:-/proc/sys/fs/binfmt_misc}"
+	[ -e "$dir/qemu-arm" ]
+}
+
+# Register qemu-arm. Reached only after can_exec_armhf has failed, so a
+# Raspberry Pi OS 64-bit host (native AArch32) never gets here and never has
+# its armhf binaries intercepted by qemu.
+ensure_qemu_arm_binfmt() {
+	if qemu_arm_binfmt_registered; then
+		log "qemu-arm binfmt already registered"
+		return 0
+	fi
+	if ! command -v update-binfmts >/dev/null 2>&1; then
+		log "update-binfmts not found (binfmt-support)"
+		return 1
+	fi
+	desc="${UC_BINFMT_DESC:-$QEMU_ARM_BINFMT_DESC}"
+	if [ -f "$desc" ]; then
+		log "importing qemu-arm binfmt from $desc"
+		# --import is not subject to qemu-user-static's postinst skip.
+		if update-binfmts --import qemu-arm && qemu_arm_binfmt_registered; then
+			return 0
+		fi
+		log "update-binfmts --import qemu-arm did not register the handler"
+	fi
+	interp="$(find_qemu_arm_static)"
+	if [ -z "$interp" ]; then
+		log "qemu-arm-static interpreter not found"
+		return 1
+	fi
+	log "registering qemu-arm binfmt with $interp"
+	# Hard-coded magic matches Debian's qemu-arm description so a host
+	# whose --import was skipped still gets the same handler. --fix-binary
+	# opens the interpreter at registration time (required for binfmt).
+	update-binfmts --install qemu-arm "$interp" \
+		--magic "$QEMU_ARM_MAGIC" \
+		--mask "$QEMU_ARM_MASK" \
+		--offset 0 \
+		--credential yes \
+		--fix-binary yes || return 1
+	qemu_arm_binfmt_registered
 }
 
 # Bring apt to a state where an install can run: non-interactive, no other dpkg
@@ -177,29 +261,43 @@ fi
 
 # The loader is present now, so the exec probe is meaningful. A host that runs
 # AArch32 -- natively, or through a binfmt handler already registered -- needs
-# nothing further, which is the common Raspberry Pi OS 64-bit case.
+# nothing further, which is the common Raspberry Pi OS 64-bit case. That includes
+# a Pi that happens to have qemu-user-static installed for other reasons: do not
+# register qemu-arm there, or every armhf binary is intercepted by qemu.
 if can_exec_armhf; then
 	log "host executes AArch32; $QEMU_PKG not required"
 	log "armhf runtime and shim toolchain ready"
 	exit 0
 fi
 
-if pkg_installed "$QEMU_PKG"; then
-	# qemu is installed and the host still cannot exec AArch32, so its binfmt
-	# handler is not registered. Failing here is the point: reporting success
-	# would hand back a board whose Centaur binary dies with Exec format error.
-	log "$QEMU_PKG is installed but AArch32 still will not execute; binfmt handler not registered"
+# No loader means the exec probe never ran an AArch32 ELF. Installing qemu
+# cannot fix a missing libc6:armhf file set, and must not register qemu-arm
+# on a host we have not actually measured as unable to exec AArch32.
+if [ -z "$(find_armhf_loader)" ]; then
+	log "AArch32 loader not found; cannot verify or provision binfmt"
 	exit 1
 fi
 
-log "host cannot exec AArch32 (no CONFIG_COMPAT); installing $QEMU_PKG for binfmt"
-install_packages "$QEMU_PKG"
-pkg_installed "$QEMU_PKG" || { log "install reported success but $QEMU_PKG is still missing"; exit 1; }
+# Beyond this point the kernel cannot exec AArch32. Raspberry Pi OS 64-bit
+# never arrives here. Installing the qemu package still leaves qemu-arm
+# unregistered on arm64 (Debian skip); register it ourselves.
+if pkg_installed "$QEMU_PKG"; then
+	log "$QEMU_PKG is present but AArch32 does not execute; registering qemu-arm"
+else
+	log "host cannot exec AArch32 (no CONFIG_COMPAT); installing $QEMU_PKG for binfmt"
+	install_packages "$QEMU_PKG"
+	pkg_installed "$QEMU_PKG" || { log "install reported success but $QEMU_PKG is still missing"; exit 1; }
+fi
+
+if ! ensure_qemu_arm_binfmt; then
+	log "could not register qemu-arm binfmt"
+	exit 1
+fi
 
 if ! can_exec_armhf; then
 	log "$QEMU_PKG installed but AArch32 still will not execute"
 	exit 1
 fi
 
-log "armhf runtime and shim toolchain installed"
+log "armhf runtime and qemu-arm binfmt ready"
 exit 0

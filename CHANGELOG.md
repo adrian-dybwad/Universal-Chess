@@ -68,6 +68,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   Pi and pull qemu plus its binfmt handlers onto boards that never needed them.
   A host that still refuses AArch32 after the install now fails the import
   rather than reporting success on a board whose `centaur` cannot launch.
+  Installing `qemu-user-static` is not itself enough on arm64: Debian's
+  postinst skips the little-endian `qemu-arm` handler there (dpkg treats
+  armhf as native), so only `qemu-armeb` is registered and `centaur` stays
+  `Exec format error`. After the exec probe fails, import now registers
+  `qemu-arm` itself. Raspberry Pi OS 64-bit never reaches that path -- the
+  kernel already runs AArch32, so qemu is not installed and `qemu-arm` is
+  not registered, including on a Pi that happens to have the package for
+  other reasons. When that provisioning step fails, the import error now
+  points at Settings > System and Check for OS updates (the control that
+  refreshes apt indexes) instead of a generic network hint with no in-app
+  next step.
 
 - **The BlueZ self-heal runs only on a Raspberry Pi**: the workaround targets
   a BCM43430 firmware fault and was gated on nothing more than the presence of

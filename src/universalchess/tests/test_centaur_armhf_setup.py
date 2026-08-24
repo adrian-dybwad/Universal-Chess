@@ -16,8 +16,11 @@ the exact outcome two of the tests below forbid. The probe runs the armhf
 loader instead and only treats shell status 126 (ENOEXEC) as "cannot exec".
 
 The helper's grant is a closed package set. These tests drive the real script
-with fake ``dpkg`` / ``dpkg-query`` / ``apt-get`` on PATH, plus a fake armhf
-loader, so the arch gate, the qemu decision, and the apt argv stay pinned.
+with fake ``dpkg`` / ``dpkg-query`` / ``apt-get`` / ``update-binfmts`` on PATH,
+plus a fake armhf loader, so the arch gate, the qemu decision, the apt argv,
+and the qemu-arm binfmt registration stay pinned. Raspberry Pi OS 64-bit
+fixtures must never call update-binfmts: registering qemu-arm there would
+intercept native AArch32.
 """
 
 from __future__ import annotations
@@ -99,20 +102,39 @@ exit ${UC_TEST_APT_EXIT:-0}
 #
 # UC_TEST_COMPAT=1 (default) models a CONFIG_COMPAT kernel: the loader runs and
 # returns UC_TEST_LOADER_RC, whose value must not change the qemu decision.
-# UC_TEST_COMPAT=0 models the sunxi64 kernel: exec is refused (126) until
-# qemu-user-static appears in the install marker, which is what registering its
-# binfmt handler does in reality. UC_TEST_BINFMT_BROKEN keeps it refused even
-# then, for the case where the package is present but the handler is not.
+# UC_TEST_COMPAT=0 models the sunxi64 kernel: exec is refused (126) until the
+# qemu-arm binfmt handler is registered. Installing qemu-user-static is not
+# enough: Debian's postinst skips qemu-arm on arm64 (it treats armhf as native),
+# so only qemu-armeb appears -- which cannot run little-endian Centaur.
+# UC_TEST_BINFMT_BROKEN keeps it refused even after registration.
 _FAKE_ARMHF_LOADER = """#!/bin/sh
 echo "armhf-loader $*" >> "$UC_TEST_LOG"
 if [ "${UC_TEST_COMPAT:-1}" = "1" ]; then
     exit "${UC_TEST_LOADER_RC:-0}"
 fi
 if [ "${UC_TEST_BINFMT_BROKEN:-0}" != "1" ] \\
-   && grep -qx "qemu-user-static" "${UC_TEST_MARK_INSTALLED:-/dev/null}" 2>/dev/null; then
+   && [ -n "${UC_BINFMT_MISC_DIR:-}" ] \\
+   && [ -e "${UC_BINFMT_MISC_DIR}/qemu-arm" ]; then
     exit 0
 fi
 exit 126
+"""
+
+_FAKE_UPDATE_BINFMTS = """#!/bin/sh
+# Log only the subcommand and name: --magic/--mask are raw ELF bytes and would
+# make the test log unreadable as UTF-8.
+echo "update-binfmts $1 $2" >> "$UC_TEST_LOG"
+name=""
+if [ "$1" = "--import" ]; then
+    name=$2
+elif [ "$1" = "--install" ]; then
+    name=$2
+fi
+if [ -n "$name" ] && [ "${UC_TEST_BINFMT_EXIT:-0}" = "0" ]; then
+    mkdir -p "${UC_BINFMT_MISC_DIR}"
+    touch "${UC_BINFMT_MISC_DIR}/$name"
+fi
+exit ${UC_TEST_BINFMT_EXIT:-0}
 """
 
 
@@ -129,9 +151,15 @@ def helper_env(tmp_path):
     _write_tool(bindir, "dpkg", _FAKE_DPKG)
     _write_tool(bindir, "dpkg-query", _FAKE_DPKG_QUERY)
     _write_tool(bindir, "apt-get", _FAKE_APT_GET)
+    _write_tool(bindir, "update-binfmts", _FAKE_UPDATE_BINFMTS)
     loader = tmp_path / "ld-linux-armhf.so.3"
     loader.write_text(_FAKE_ARMHF_LOADER)
     loader.chmod(0o755)
+    qemu_arm = tmp_path / "qemu-arm-static"
+    qemu_arm.write_text("#!/bin/sh\nexit 0\n")
+    qemu_arm.chmod(0o755)
+    binfmt_dir = tmp_path / "binfmt_misc"
+    binfmt_dir.mkdir()
     log = tmp_path / "calls.log"
     marked = tmp_path / "marked-installed"
     marked.write_text("")
@@ -143,7 +171,14 @@ def helper_env(tmp_path):
     env["UC_TEST_FOREIGN_ARCH"] = ""
     env["UC_TEST_MARK_INSTALLED"] = str(marked)
     env["UC_ARMHF_LOADER"] = str(loader)
+    env["UC_QEMU_ARM_STATIC"] = str(qemu_arm)
+    env["UC_BINFMT_MISC_DIR"] = str(binfmt_dir)
     return env, log, tmp_path
+
+
+def _update_binfmts_calls(calls):
+    """update-binfmts lines from the helper's command log."""
+    return [c for c in calls if c.startswith("update-binfmts ")]
 
 
 def _run(env):
@@ -196,7 +231,8 @@ def test_already_provisioned_compat_host_does_not_install_qemu(helper_env):
     """Pi OS 64-bit with the three armhf packages present is done.
 
     Failure: qemu-user-static is installed on every arm64 board, including
-    ones that already run armhf ELF natively.
+    ones that already run armhf ELF natively, or qemu-arm is registered and
+    intercepts native AArch32.
     """
     env, _, _ = helper_env
     env["UC_TEST_INSTALLED"] = " ".join(ALL_ARMHF)
@@ -204,6 +240,7 @@ def test_already_provisioned_compat_host_does_not_install_qemu(helper_env):
     assert proc.returncode == 0, proc.stderr
     assert not any(c.startswith("apt-get install") for c in calls)
     assert QEMU_PKG not in "\n".join(calls)
+    assert not _update_binfmts_calls(calls)
 
 
 def test_compat_host_installs_armhf_runtime_without_qemu(helper_env):
@@ -220,6 +257,7 @@ def test_compat_host_installs_armhf_runtime_without_qemu(helper_env):
     for pkg in CROSS_PACKAGES:
         assert pkg in installed
     assert QEMU_PKG not in installed
+    assert not _update_binfmts_calls(calls)
 
 
 def test_no_kernel_config_on_the_host_does_not_pull_qemu_onto_a_pi(helper_env):
@@ -242,6 +280,7 @@ def test_no_kernel_config_on_the_host_does_not_pull_qemu_onto_a_pi(helper_env):
     proc, calls = _run(env)
     assert proc.returncode == 0, proc.stderr
     assert QEMU_PKG not in "\n".join(calls)
+    assert not _update_binfmts_calls(calls)
 
 
 @pytest.mark.parametrize("loader_rc", ["0", "1", "127"])
@@ -262,6 +301,7 @@ def test_a_loader_that_runs_needs_no_qemu_whatever_its_exit_code(helper_env, loa
     proc, calls = _run(env)
     assert proc.returncode == 0, proc.stderr
     assert QEMU_PKG not in "\n".join(calls)
+    assert not _update_binfmts_calls(calls)
 
 
 def test_sunxi64_without_compat_installs_qemu_user_static(helper_env):
@@ -269,17 +309,23 @@ def test_sunxi64_without_compat_installs_qemu_user_static(helper_env):
 
     Measured on the Orange Pi Zero 2W: 6.18.45-current-sunxi64 has
     CONFIG_COMPAT unset, so an armhf ELF fails with Exec format error even
-    after libc6:armhf is present.
+    after libc6:armhf is present. Debian's qemu-user-static postinst still
+    skips qemu-arm on arm64, so the helper must register that handler itself.
 
     Failure: apt-get install lists only libc6:armhf / the cross toolchain,
-    and Centaur import reports success on a board that cannot exec centaur.
+    the qemu package is installed but qemu-arm is never registered, and
+    Centaur import reports success on a board that cannot exec centaur.
     """
-    env, _, _ = helper_env
+    env, _, tmp_path = helper_env
     env["UC_TEST_COMPAT"] = "0"
     env["UC_TEST_INSTALLED"] = " ".join(ALL_ARMHF)
     proc, calls = _run(env)
     assert proc.returncode == 0, proc.stderr
     assert _apt_install_packages(calls) == [QEMU_PKG]
+    binfmt_calls = _update_binfmts_calls(calls)
+    assert binfmt_calls, calls
+    assert any("qemu-arm" in c for c in binfmt_calls)
+    assert (tmp_path / "binfmt_misc" / "qemu-arm").exists()
 
 
 def test_sunxi64_missing_everything_installs_armhf_then_qemu(helper_env):
@@ -291,7 +337,7 @@ def test_sunxi64_missing_everything_installs_armhf_then_qemu(helper_env):
     Failure: only the Pi package set is installed and the binary still cannot
     exec, or qemu is requested before there is anything to probe.
     """
-    env, _, _ = helper_env
+    env, _, tmp_path = helper_env
     env["UC_TEST_COMPAT"] = "0"
     proc, calls = _run(env)
     assert proc.returncode == 0, proc.stderr
@@ -301,6 +347,54 @@ def test_sunxi64_missing_everything_installs_armhf_then_qemu(helper_env):
         assert pkg in installed
     assert QEMU_PKG in installed
     assert installed.index(ARMHF_RUNTIME_PKG) < installed.index(QEMU_PKG)
+    assert any("qemu-arm" in c for c in _update_binfmts_calls(calls))
+    assert (tmp_path / "binfmt_misc" / "qemu-arm").exists()
+
+
+def test_qemu_package_without_qemu_arm_registers_the_handler(helper_env):
+    """qemu-user-static on disk is not the same as a working qemu-arm handler.
+
+    Why this test exists: Debian skips importing qemu-arm on arm64 because
+    dpkg treats armhf as a native compatible architecture. That is correct
+    on Raspberry Pi OS 64-bit (CONFIG_COMPAT) and wrong on sunxi64 without
+    COMPAT, where only qemu-armeb (big-endian) is registered. The measured
+    board had the package installed, qemu-armeb in binfmt_misc, and
+    ``./centaur`` still died with Exec format error. The previous helper
+    treated "package installed + still ENOEXEC" as a terminal failure and
+    never called update-binfmts.
+
+    Failure: the helper apt-gets qemu again, or exits 1 without registering
+    qemu-arm, or registers qemu-armeb.
+    """
+    env, _, tmp_path = helper_env
+    env["UC_TEST_COMPAT"] = "0"
+    env["UC_TEST_INSTALLED"] = " ".join((*ALL_ARMHF, QEMU_PKG))
+    proc, calls = _run(env)
+    assert proc.returncode == 0, proc.stderr
+    assert QEMU_PKG not in _apt_install_packages(calls)
+    assert any(
+        "qemu-arm" in c and "qemu-armeb" not in c for c in _update_binfmts_calls(calls)
+    )
+    assert (tmp_path / "binfmt_misc" / "qemu-arm").exists()
+
+
+def test_compat_host_with_qemu_already_installed_does_not_register_qemu_arm(helper_env):
+    """A Pi that already has qemu-user-static must keep native AArch32.
+
+    Why this test exists: qemu-user-static may be present for unrelated
+    reasons. Registering qemu-arm on a CONFIG_COMPAT kernel intercepts
+    every armhf binary, including libc6:armhf, and replaces native 32-bit
+    execution with qemu. The helper must not touch binfmt when the kernel
+    already runs AArch32.
+
+    Failure: update-binfmts --install/--import qemu-arm runs on Pi OS 64-bit.
+    """
+    env, _, _ = helper_env
+    env["UC_TEST_INSTALLED"] = " ".join((*ALL_ARMHF, QEMU_PKG))
+    proc, calls = _run(env)
+    assert proc.returncode == 0, proc.stderr
+    assert not any(c.startswith("apt-get install") for c in calls)
+    assert not _update_binfmts_calls(calls)
 
 
 def test_qemu_already_installed_but_binfmt_dead_fails_loudly(helper_env):
@@ -309,10 +403,11 @@ def test_qemu_already_installed_but_binfmt_dead_fails_loudly(helper_env):
     Why this test exists: ``ensure_armhf_support`` is a required step, not
     best-effort. Exiting 0 here would hand back a board whose centaur binary
     dies with Exec format error at launch, long after the import said it
-    worked.
+    worked. The helper must try to register qemu-arm (Debian will not have)
+    and still fail if that does not make AArch32 executable.
 
     Failure: the helper exits 0 with no working AArch32, or loops installing a
-    package that is already present.
+    package that is already present, or never attempts update-binfmts.
     """
     env, _, _ = helper_env
     env["UC_TEST_COMPAT"] = "0"
@@ -321,7 +416,8 @@ def test_qemu_already_installed_but_binfmt_dead_fails_loudly(helper_env):
     proc, calls = _run(env)
     assert proc.returncode == 1
     assert QEMU_PKG not in _apt_install_packages(calls)
-    assert "binfmt handler not registered" in proc.stdout
+    assert _update_binfmts_calls(calls)
+    assert "AArch32 still will not execute" in proc.stdout
 
 
 def test_absent_loader_after_install_fails_rather_than_claiming_success(helper_env):

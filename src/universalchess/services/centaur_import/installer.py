@@ -31,6 +31,17 @@ MOUNT_HELPER = os.path.join(SCRIPTS_DIR, "centaur-import-mount")
 # scripts/centaur-armhf-setup and the postinst sudoers grant.
 ARMHF_SETUP_HELPER = os.path.join(SCRIPTS_DIR, "centaur-armhf-setup")
 
+# Surfaced to the client when the helper cannot run or exits non-zero. Apt
+# failures on a fresh Armbian image are often stale or missing indexes, which
+# Settings > System -> Check for OS updates refreshes; a generic "check the
+# network" line left no in-app next step. Author-written and path-free so it
+# is safe to return over HTTP (CWE-209).
+ARMHF_SUPPORT_FAILED_MSG = (
+    "Could not install the 32-bit armhf support Centaur needs to run on "
+    "this system. In Settings > System, use Check for OS updates, then try "
+    "the import again."
+)
+
 # Fixed read-only mountpoint the helper uses; kept under TMP_DIR so it shares the
 # service-owned, writable tree and matches the helper's own path allow-list.
 DEFAULT_MOUNT_ROOT = os.path.join(TMP_DIR, "centaur-mnt")
@@ -137,9 +148,11 @@ def ensure_armhf_support(runner: Callable = subprocess.run) -> None:
     installed, and its display "translate" shim cannot be built until the armhf
     cross toolchain (``gcc-arm-linux-gnueabihf`` + ``libc6-dev-armhf-cross``) is
     present -- the native aarch64 ``gcc`` physically cannot emit centaur's armhf
-    ABI. Kernels without ``CONFIG_COMPAT=y`` also need ``qemu-user-static``
-    (binfmt) or the ELF fails with Exec format error; the helper installs that
-    package only when the running kernel config lacks the compat line. This
+    ABI.     Kernels without ``CONFIG_COMPAT=y`` also need ``qemu-user-static`` and a
+    registered ``qemu-arm`` binfmt handler or the ELF fails with Exec format
+    error. The helper installs that package and registers the handler only
+    after running an AArch32 binary and seeing ``ENOEXEC``; Raspberry Pi OS
+    64-bit executes AArch32 natively, so it never gets qemu-arm. This
     invokes the pinned ``centaur-armhf-setup`` helper via ``sudo -n``; the helper
     is arch-guarded and installs only what is missing, so it is a fast no-op
     (exit 0) on a native armhf host or an already-provisioned board.
@@ -148,22 +161,15 @@ def ensure_armhf_support(runner: Callable = subprocess.run) -> None:
     its shim without these, so a failure raises CentaurImportError to fail the
     whole import. Reporting success on a half-provisioned system would hand back
     an install that cannot launch; failing loudly makes the user retry (a
-    re-import wipes and redoes the tree). The message is author-written and
-    path-free, so it is safe to surface to the client.
+    re-import wipes and redoes the tree). The message is ARMHF_SUPPORT_FAILED_MSG.
     """
     cmd = ["sudo", "-n", ARMHF_SETUP_HELPER]
     try:
         result = runner(cmd, capture_output=True, timeout=600)
     except OSError as exc:
-        raise CentaurImportError(
-            "Could not install the 32-bit armhf support Centaur needs to run on "
-            "this system. Check that it is online and try the import again."
-        ) from exc
+        raise CentaurImportError(ARMHF_SUPPORT_FAILED_MSG) from exc
     if getattr(result, "returncode", 0) != 0:
-        raise CentaurImportError(
-            "Could not install the 32-bit armhf support Centaur needs to run on "
-            "this system. Check network connectivity and try the import again."
-        )
+        raise CentaurImportError(ARMHF_SUPPORT_FAILED_MSG)
 
 
 def install_from_image(
