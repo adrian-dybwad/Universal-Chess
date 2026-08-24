@@ -75,6 +75,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   cannot help, so installing rebuilt BlueZ against a chipset that never had
   the bug. Boards other than a Raspberry Pi now skip it.
 
+- **The package installs on Armbian instead of aborting**: the .deb
+  hard-depended on `python3-rpi.gpio` (Pi BCM GPIO) and the postinst wrote
+  `dtoverlay=spi1-1cs` into a `config.txt` that does not exist there, which
+  under `set -e` left the package unpacked but unconfigured -- as did
+  `usermod` exit 6 for Pi-only groups such as `kmem`. `Depends` now accepts
+  `python3-libgpiod` as an alternative, Pi `config.txt` overlays are skipped
+  when the file is absent, and absent groups no longer fail the configure.
+  On Armbian or Orange Pi OS the postinst sets `console=none` /
+  `extraargs=console=tty1` in `armbianEnv.txt` or `orangepiEnv.txt`, because
+  this image's `boot.cmd` otherwise keeps ttyS0 on the kernel cmdline and a
+  getty holds the chess UART.
+
 - **Lichess Lobby on the web**: Settings → Players showed a credentials card
   (add/delete logins) under the name Lichess Settings, while the board lobby
   was Account, Ongoing Games, Challenges, and New Game. The Players card is
@@ -894,6 +906,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   overlay now also parents APB2 from PLL_PERIPH0 at 300 MHz (divisor 19,
   986842 baud, 1.32% error). The 50 MHz rate in Allwinner's UART note is
   4.17% and sits on the 8N1 budget. Needs a reboot for the overlay.
+
+- **Orange Pi Zero 2W e-paper nodes were root-only**: after the spi-gpio
+  overlay loaded, `/dev/gpiochip*` and `/dev/spidev0.0` stayed `root:root`
+  mode 600. The service runs as the UID 1000 user, so libgpiod and spidev
+  could not open them. The package now creates `gpio`/`spi` groups, ships a
+  udev rule that sets those nodes to `0660`, and applies the same ownership
+  during configure.
 
 - **Timed games hid the clock when Show Clock was off**: Show Clock is the
   untimed turn-indicator toggle. The same flag also hid the e-paper clock in a

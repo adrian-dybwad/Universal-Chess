@@ -196,3 +196,42 @@ def test_depends_lists_each_package_once():
     occurrences = _depends_occurrences()
     duplicates = sorted({name for name in occurrences if occurrences.count(name) > 1})
     assert not duplicates, f"Depends lists these packages more than once: {duplicates}"
+
+
+def test_rpi_gpio_is_an_alternative_to_libgpiod_not_a_hard_depends():
+    """``python3-rpi.gpio`` must be optional when ``python3-libgpiod`` is present.
+
+    Why this test exists: ``python3-rpi.gpio`` is a Raspberry Pi OS package that
+    talks BCM numbers through the Pi GPIO character device. Armbian on an
+    Orange Pi Zero 2W either does not ship it or ships a stub that cannot drive
+    the H618. A hard Depends makes dpkg refuse (or force-install the wrong
+    GPIO stack) on that board. ``python3-libgpiod`` is the backend the Orange
+    Pi profile uses. Listing them as alternatives keeps Pi images on rpi.gpio
+    (first alternative, already installed) and lets Armbian satisfy the field
+    with libgpiod.
+
+    How a regression manifests: a hard ``python3-rpi.gpio`` Depends fails the
+    Universal Chess .deb install on Armbian, or pulls a Pi-only GPIO library
+    onto the H618 and the e-paper driver claims the wrong lines.
+    """
+    text = CONTROL.read_text()
+    match = re.search(r"^Depends:(.*?)(?=^\S|\Z)", text, re.MULTILINE | re.DOTALL)
+    assert match, f"no Depends field in {CONTROL}"
+    gpio_clause = None
+    for clause in match.group(1).split(","):
+        if "python3-rpi.gpio" in clause:
+            gpio_clause = clause
+            break
+    assert gpio_clause is not None, "Depends no longer mentions python3-rpi.gpio"
+    assert "|" in gpio_clause, (
+        "python3-rpi.gpio must be an alternative (|) so Armbian can satisfy "
+        f"Depends with python3-libgpiod; got {gpio_clause!r}"
+    )
+    alternatives = {
+        alternative.split("(")[0].strip() for alternative in gpio_clause.split("|")
+    }
+    assert "python3-rpi.gpio" in alternatives
+    assert "python3-libgpiod" in alternatives, (
+        "the rpi.gpio alternative must include python3-libgpiod for Orange Pi; "
+        f"got {sorted(alternatives)}"
+    )

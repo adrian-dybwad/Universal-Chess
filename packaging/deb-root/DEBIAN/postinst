@@ -23,6 +23,49 @@ detect_primary_user() {
 PRIMARY_USER=$(detect_primary_user)
 PRIMARY_HOME=$(eval echo "~$PRIMARY_USER")
 
+# Raspberry Pi OS ships gpio/kmem; Armbian typically does not. usermod
+# exits 6 when the group is absent, which aborts the rest of configure.
+add_primary_user_to_group_if_present() {
+    local group="$1"
+    if getent group "$group" >/dev/null 2>&1; then
+        usermod -a -G "$group" "$PRIMARY_USER"
+    fi
+}
+
+# gpio/spi exist on Raspberry Pi OS; Armbian has neither, and leaves
+# /dev/gpiochip* and /dev/spidev* at 600 root:root. Create the groups so
+# udev GROUP= can chown those nodes for the service user.
+ensure_system_group() {
+    local group="$1"
+    if ! getent group "$group" >/dev/null 2>&1; then
+        groupadd --system "$group"
+    fi
+}
+
+# Reload udev so gpiochip/spidev pick up GROUP=gpio/spi, then apply the
+# same ownership now so this configure does not wait for a reboot.
+_apply_epaper_device_permissions() {
+    if command -v udevadm >/dev/null 2>&1; then
+        udevadm control --reload-rules || true
+        udevadm trigger --action=add --subsystem-match=gpio --subsystem-match=spidev || true
+    fi
+    local node
+    if getent group gpio >/dev/null 2>&1; then
+        for node in /dev/gpiochip*; do
+            [ -e "$node" ] || continue
+            chgrp gpio "$node" || true
+            chmod 0660 "$node" || true
+        done
+    fi
+    if getent group spi >/dev/null 2>&1; then
+        for node in /dev/spidev*; do
+            [ -e "$node" ] || continue
+            chgrp spi "$node" || true
+            chmod 0660 "$node" || true
+        done
+    fi
+}
+
 # Configure needrestart to suppress all blue screen prompts
 # This prevents interactive dialogs during package updates/kernel upgrades
 if [ -f /etc/needrestart/needrestart.conf ]; then
@@ -127,7 +170,9 @@ function grantRuntimeDataOwnership {
 }
 ################################
 
-if ! cat $CONFIG | grep -q "#dgtcentaurmods"
+# Raspberry Pi OS only. Armbian has no config.txt; `cat` of a missing file
+# would abort this script under `set -e` and leave the package unconfigured.
+if [ -f "$CONFIG" ] && ! grep -q "#dgtcentaurmods" "$CONFIG"
 then
     echo -e "::: Hardware configuration"
     echo -e "::: Backup some first"
@@ -208,8 +253,134 @@ strip_serial_console() {
   mv "${_cmdline_file}.uc-tmp" "$_cmdline_file"
 }
 
+configure_armbian_uart() {
+  # Free the header UART on Armbian. The Centaur MCU shares ttyS0 with the
+  # kernel console. This image's boot.cmd treats console=display like both
+  # (still injects console=ttyS0,115200), so the working setting is
+  # console=none plus extraargs=console=tty1. Does not enable SPI overlays:
+  # stock sun50i-h616 spidev nodes are not the Centaur e-paper pins.
+  #
+  # Writes via a temp file rather than sed -i so the helper is testable on
+  # macOS (BSD sed -i requires a backup suffix) and a power loss mid-write
+  # cannot leave a truncated env file.
+  _env_file="$1"
+  [ -f "$_env_file" ] || return 0
+  _original=$(cat "$_env_file") || return 1
+  _updated=$(printf '%s\n' "$_original" | awk '
+    BEGIN { seen_console=0; seen_extra=0 }
+    /^console=/ {
+      print "console=none"
+      seen_console=1
+      next
+    }
+    /^extraargs=/ {
+      line=$0
+      if (line !~ /console=tty1/) {
+        line=line " console=tty1"
+      }
+      print line
+      seen_extra=1
+      next
+    }
+    { print }
+    END {
+      if (!seen_console) print "console=none"
+      if (!seen_extra) print "extraargs=console=tty1"
+    }
+  ') || return 1
+  if [ "$_updated" = "$_original" ]; then
+    return 0
+  fi
+  printf '%s\n' "$_updated" > "${_env_file}.uc-tmp" || return 1
+  mv "${_env_file}.uc-tmp" "$_env_file"
+}
+
+
+
+configure_armbian_spi_gpio() {
+  # Load the spi-gpio overlay that matches this Orange Pi family.
+  # H616/H618 Zero 2W uses PI-bank pads; H3/H5 40-pin boards use PD/PA/PG.
+  # Boards without a 40-pin Centaur map get no overlay. Does not enable
+  # sun50i-h616 spidev0_0 / spidev1_0 (onboard NOR / Pi SPI0 header).
+  #
+  # Args: armbianEnv.txt or orangepiEnv.txt, overlay .dts path, model string.
+  _env_file="$1"
+  _dts="$2"
+  _model="$3"
+  _overlay=""
+  _m=$(printf '%s' "$_model" | tr '[:upper:]' '[:lower:]')
+  case "$_m" in
+    *orange*pi*zero*2*w*|*orangepi*zero*2*w*|*orangepi*zero2w*)
+      _overlay=uc-centaur-spi-gpio ;;
+  esac
+  if [ -z "$_overlay" ]; then
+    if echo "$_m" | grep -qE 'one[[:space:]]*plus|lite[[:space:]]*2'; then
+      :
+    elif echo "$_m" | grep -qE 'orange[[:space:]]*pi[[:space:]]*(pc([[:space:]]|$|-)|pc[[:space:]]*plus|pc[[:space:]]*2|one([[:space:]]|$|-)|lite([[:space:]]|$|-)|plus([[:space:]]|$|-)|plus[[:space:]]*2|plus2e|prime([[:space:]]|$|-)|2([[:space:]]|$))'; then
+      _overlay=uc-centaur-spi-gpio-h3
+    elif echo "$_m" | grep -qE 'orangepi[[:space:]]*(pc|one|lite|plus|plus2e|plus2|prime|2)([[:space:]]|$|-)'; then
+      _overlay=uc-centaur-spi-gpio-h3
+    fi
+  fi
+  [ -n "$_overlay" ] || return 0
+  _dir=$(dirname "$_dts")
+  _use="${_dir}/${_overlay}.dts"
+  [ -f "$_use" ] || _use="$_dts"
+  [ -f "$_env_file" ] || return 0
+  [ -f "$_use" ] || return 0
+  _original=$(cat "$_env_file") || return 1
+  _uart3=""
+  if [ "$_overlay" = "uc-centaur-spi-gpio-h3" ]; then
+    _uart3=uart3
+  fi
+  _updated=$(printf '%s\n' "$_original" | awk -v name="$_overlay" -v uart3="$_uart3" '
+    BEGIN { seen=0; seen_ov=0 }
+    /^user_overlays=/ {
+      if ($0 ~ name) { print; seen=1; next }
+      print $0 " " name
+      seen=1
+      next
+    }
+    /^overlays=/ {
+      if (uart3 != "" && $0 !~ "(^|[[:space:]])" uart3 "([[:space:]]|$)") {
+        print $0 " " uart3
+      } else print
+      seen_ov=1
+      next
+    }
+    { print }
+    END {
+      if (!seen) print "user_overlays=" name
+      if (uart3 != "" && !seen_ov) print "overlays=" uart3
+    }
+  ') || return 1
+  if [ "$_updated" != "$_original" ]; then
+    printf '%s\n' "$_updated" > "${_env_file}.uc-tmp" || return 1
+    mv "${_env_file}.uc-tmp" "$_env_file"
+  fi
+  if command -v armbian-add-overlay >/dev/null 2>&1; then
+    armbian-add-overlay "$_use" >/dev/null 2>&1 || true
+  fi
+}
+
 if [ -f "$CMDLINEFILE" ]; then
     strip_serial_console "$CMDLINEFILE"
+fi
+
+_uc_model=$(tr -d '\0' < /proc/device-tree/model 2>/dev/null || true)
+_uc_dts="${DGTCM_PATH}/board/overlays/uc-centaur-spi-gpio.dts"
+_uc_configured_uart=0
+for _uc_env in /boot/armbianEnv.txt /boot/orangepiEnv.txt; do
+    [ -f "$_uc_env" ] || continue
+    echo "::: Configuring UART (header UART reserved for the Centaur board) via $_uc_env"
+    configure_armbian_uart "$_uc_env"
+    echo "::: Configuring spi-gpio (Centaur e-paper on Pi SPI1 header pins) via $_uc_env"
+    configure_armbian_spi_gpio "$_uc_env" "$_uc_dts" "$_uc_model"
+    _uc_configured_uart=1
+done
+if [ "$_uc_configured_uart" -eq 1 ]; then
+    systemctl disable --now serial-getty@ttyS0.service 2>/dev/null || true
+    systemctl disable --now serial-getty@ttyS3.service 2>/dev/null || true
 fi
 
     # Setting up Bluetooth configuration
@@ -263,17 +434,22 @@ ln -sfnT "$DGTCM_PATH" "$TARGET_PATH"
 # sudo touch /etc/authbind/byport/80
 # sudo chmod 777 /etc/authbind/byport/80
 
-# Allow memory access for epaper driver
-sudo usermod -a -G gpio "$PRIMARY_USER"
-sudo usermod -a -G kmem "$PRIMARY_USER"
+# Allow memory access for epaper driver. gpio/spi are created when missing
+# (Armbian) so udev can grant gpiochip/spidev; kmem stays Pi-only.
+ensure_system_group gpio
+ensure_system_group spi
+add_primary_user_to_group_if_present gpio
+add_primary_user_to_group_if_present spi
+add_primary_user_to_group_if_present kmem
+_apply_epaper_device_permissions
 
 # Allow Bluetooth service advertising (required for advertise_service)
-sudo usermod -a -G bluetooth "$PRIMARY_USER"
+add_primary_user_to_group_if_present bluetooth
 
 # Allow reading Bluetooth HID keyboard events from /dev/input/event* (the
 # devices BlueZ creates for a paired keyboard are owned root:input). The
 # service runs as the primary user, so it must be in the 'input' group.
-sudo usermod -a -G input "$PRIMARY_USER"
+add_primary_user_to_group_if_present input
 
 
 ##### Patch systemd services and tmpfiles to use the detected primary user.

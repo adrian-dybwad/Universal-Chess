@@ -1,0 +1,5 @@
+# Universal Chess e-paper on Armbian. Raspberry Pi OS already ships gpio/spi
+# udev rules; Armbian leaves /dev/gpiochip* and /dev/spidev* as root:root 600,
+# so the service user cannot drive the Centaur panel.
+KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
+KERNEL=="spidev*", GROUP="spi", MODE="0660"
