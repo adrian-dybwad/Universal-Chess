@@ -24,6 +24,7 @@ How a regression manifests:
 import unittest
 
 from universalchess.board import hardware_info as hw
+from universalchess.board import profile
 from universalchess.managers import bluez_patch_status
 
 
@@ -112,6 +113,99 @@ class DpkgVersionParseTests(unittest.TestCase):
     def test_missing_package_returns_none(self):
         self.assertIsNone(hw.parse_dpkg_version(_DPKG_STATUS, "not-installed"))
         self.assertIsNone(hw.parse_dpkg_version("", "bluez"))
+
+    def test_removed_but_not_purged_package_reports_no_version(self):
+        # Why: dpkg keeps a stanza -- with its Version -- for a package that was
+        # removed without being purged, so a stanza is not evidence that the
+        # files are on the board. This matters because the firmware row now picks
+        # the first *installed* package from a candidate list: an Orange Pi lists
+        # firmware-brcm80211 without having it, and a version read from that
+        # leftover stanza would name Broadcom firmware that is not present and
+        # hide the package actually supplying the radio's firmware.
+        #
+        # How a regression manifests: the row reports a version for firmware the
+        # board does not have, which is worse than the blank it used to show.
+        status = (
+            "Package: firmware-brcm80211\n"
+            "Status: deinstall ok config-files\n"
+            "Version: 1:20250410-1+rpt1\n"
+        )
+        self.assertIsNone(hw.parse_dpkg_version(status, "firmware-brcm80211"))
+
+
+class WifiFirmwarePackageTests(unittest.TestCase):
+    """Which firmware package the Wi-Fi firmware row should report.
+
+    The row read one hardcoded Broadcom package, so it was blank on every board
+    that is not a Raspberry Pi. An Orange Pi Zero 2W running Armbian carries the
+    radio firmware in ``armbian-firmware`` -- the driver loads
+    ``/lib/firmware/uwe5622/wcnmodem.bin`` and that package owns the tree -- while
+    listing ``firmware-brcm80211`` as merely known to dpkg.
+    """
+
+    # Versions as dpkg reports them on the two boards this covers.
+    _ARMBIAN_VERSION = "26.11.0-trunk.19"
+    _BRCM_VERSION = "1:20250410-1+rpt1"
+
+    def _stanza(self, package: str, status: str, version: str) -> str:
+        return f"Package: {package}\nStatus: {status}\nVersion: {version}\n\n"
+
+    def test_reports_the_installed_armbian_package_on_an_orange_pi(self):
+        # The reported case: only armbian-firmware is installed, so it is the
+        # answer and the row can finally name a version. Manifests as a blank row.
+        status = self._stanza(
+            "armbian-firmware", "install ok installed", self._ARMBIAN_VERSION
+        )
+        self.assertEqual(
+            hw.find_wifi_firmware_package(status),
+            ("armbian-firmware", self._ARMBIAN_VERSION),
+        )
+
+    def test_prefers_the_broadcom_package_when_it_is_installed(self):
+        # Why: on a Raspberry Pi the Broadcom package IS the radio's firmware, and
+        # a generic tree package may sit beside it. Order must keep the shipping
+        # board reporting the specific package. Manifests as a Pi suddenly
+        # reporting a generic firmware version instead of its own.
+        status = self._stanza(
+            "armbian-firmware", "install ok installed", self._ARMBIAN_VERSION
+        ) + self._stanza(
+            "firmware-brcm80211", "install ok installed", self._BRCM_VERSION
+        )
+        self.assertEqual(
+            hw.find_wifi_firmware_package(status),
+            ("firmware-brcm80211", self._BRCM_VERSION),
+        )
+
+    def test_skips_a_preferred_package_that_is_not_installed(self):
+        # Why: this is the exact state of the Orange Pi -- firmware-brcm80211
+        # known to dpkg but not installed, ahead of the package that is. Ranking
+        # by name alone would report Broadcom firmware the board does not have.
+        # The leftover stanza carries a Version, so only the status distinguishes
+        # them.
+        #
+        # How a regression manifests: the row names firmware-brcm80211 on a board
+        # with no Broadcom radio and no Broadcom firmware installed.
+        status = self._stanza(
+            "firmware-brcm80211", "deinstall ok config-files", self._BRCM_VERSION
+        ) + self._stanza(
+            "armbian-firmware", "install ok installed", self._ARMBIAN_VERSION
+        )
+        self.assertEqual(
+            hw.find_wifi_firmware_package(status),
+            ("armbian-firmware", self._ARMBIAN_VERSION),
+        )
+
+    def test_no_firmware_package_installed_reports_nothing(self):
+        # Why: with no candidate installed the row must stay blank rather than
+        # naming a package at a guessed version. Empty input is the dev-host case
+        # (no dpkg status file at all).
+        self.assertEqual(hw.find_wifi_firmware_package(""), (None, None))
+        self.assertEqual(
+            hw.find_wifi_firmware_package(
+                self._stanza("bluez", "install ok installed", "5.82-1.1")
+            ),
+            (None, None),
+        )
 
 
 class KernelTupleParseTests(unittest.TestCase):
@@ -325,6 +419,35 @@ class CollectHardwareInfoTests(unittest.TestCase):
         self.assertIsNone(info.wireless_chip)
         self.assertEqual(info.hotspot_health, hw.HEALTH_UNKNOWN)
 
+    def test_armbian_board_reports_its_own_firmware_package(self):
+        # Why: the assembled info -- not just the parser -- has to carry the
+        # package through, since the card renders the name beside the version to
+        # say which firmware it is. On this board dpkg knows firmware-brcm80211
+        # without it being installed, so both fields must come from
+        # armbian-firmware.
+        #
+        # How a regression manifests: the Wi-Fi firmware row is blank on an Orange
+        # Pi, or names Broadcom firmware the board does not carry.
+        status = (
+            "Package: firmware-brcm80211\n"
+            "Status: purge ok not-installed\n"
+            "\n"
+            "Package: armbian-firmware\n"
+            "Status: install ok installed\n"
+            "Version: 26.11.0-trunk.19\n"
+        )
+        info = hw.collect_hardware_info(
+            self._source(
+                "6.18.45-current-sunxi64",
+                "no chip named here",
+                dpkg_status=status,
+                declared_wireless_chip=profile.WIRELESS_CHIP_UWE5622,
+            )
+        )
+        self.assertEqual(info.wifi_firmware_package, "armbian-firmware")
+        self.assertEqual(info.wifi_firmware_version, "26.11.0-trunk.19")
+        self.assertEqual(info.wireless_chip, profile.WIRELESS_CHIP_UWE5622)
+
     def test_affected_board_full_contract(self):
         # Verifies the whole to_dict shape for the affected board, so the React
         # card cannot read an undefined field and the verdict is wired through.
@@ -337,6 +460,7 @@ class CollectHardwareInfoTests(unittest.TestCase):
                 "kernel_release": "6.18.34+rpt-rpi-v7",
                 "wireless_chip": "BCM43430B0",
                 "wifi_firmware_version": "1:20250410-1+rpt1",
+                "wifi_firmware_package": "firmware-brcm80211",
                 "bluez_version": "5.82-1.1+rpt1",
                 # No marker supplied -> "unknown" (never a fabricated "stock").
                 "bluez_stack": bluez_patch_status.STACK_UNKNOWN,

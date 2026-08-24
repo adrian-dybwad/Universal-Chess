@@ -45,6 +45,7 @@ _SAMPLE_INFO = HardwareInfo(
     kernel_release="6.18.34+rpt-rpi-v7",
     wireless_chip="BCM43430B0",
     wifi_firmware_version="1:20250410-1+rpt1",
+    wifi_firmware_package="firmware-brcm80211",
     bluez_version="5.82-1.1+rpt1",
     bluez_stack="patched",
     bluez_stack_summary="Non-stock bluetoothd (pre-release fix) based on BlueZ 5.82-1.1+rpt1.",

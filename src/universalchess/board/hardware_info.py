@@ -11,6 +11,9 @@ Why this is separate from :mod:`universalchess.board.system_info`:
   The wireless part is read from the kernel log, which names the Broadcom
   stepping the advertising verdict depends on, and falls back to the part the
   board profile declares for boards whose kernel prints no part number at all.
+  The firmware version comes from whichever candidate package dpkg reports as
+  installed, because the package holding the radio's firmware differs per
+  distribution (see :func:`find_wifi_firmware_package`).
 
 Primary motivation -- the Bluetooth advertising health row:
   The DGT Centaur's Pi uses a Broadcom combo (Wi-Fi + Bluetooth on one die).
@@ -127,8 +130,18 @@ _RPI_BLUEZ_RPT = re.compile(r"^5\.82-1\.1\+rpt(\d+)$")
 _BLUEZ_UPSTREAM = re.compile(r"^(\d+)\.(\d+)")
 
 # Packages whose versions are part of the wireless story and worth surfacing.
-_WIFI_FIRMWARE_PACKAGE = "firmware-brcm80211"
+# The Wi-Fi firmware candidates are ordered most-specific-to-the-radio first, so
+# a board that has both reports the package that actually feeds its radio; see
+# find_wifi_firmware_package.
+_WIFI_FIRMWARE_PACKAGES: tuple[str, ...] = (
+    "firmware-brcm80211",
+    "armbian-firmware",
+    "armbian-firmware-full",
+    "linux-firmware",
+)
 _BLUEZ_PACKAGE = "bluez"
+# dpkg's status triplet for a package whose files are installed and configured.
+_DPKG_INSTALLED = re.compile(r"^Status:\s*install ok installed\s*$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -145,6 +158,10 @@ class HardwareInfo:
     kernel_release: str
     wireless_chip: Optional[str]
     wifi_firmware_version: Optional[str]
+    # The package the version came from. Which package carries the radio's
+    # firmware differs per distribution, so the name travels with the version to
+    # keep the card's row unambiguous.
+    wifi_firmware_package: Optional[str]
     bluez_version: Optional[str]
     # Active bluetoothd stack (stock/patched/unknown) from the install-time
     # self-heal marker, surfaced so the operator sees when the board runs a
@@ -175,6 +192,7 @@ class HardwareInfo:
             "kernel_release": self.kernel_release,
             "wireless_chip": self.wireless_chip,
             "wifi_firmware_version": self.wifi_firmware_version,
+            "wifi_firmware_package": self.wifi_firmware_package,
             "bluez_version": self.bluez_version,
             "bluez_stack": self.bluez_stack,
             "bluez_stack_summary": self.bluez_stack_summary,
@@ -247,15 +265,47 @@ def parse_dpkg_version(dpkg_status: str, package: str) -> Optional[str]:
     locating the ``Package: <name>`` stanza and returning its ``Version:`` line.
     Returns ``None`` if the package is absent. Guards against a substring match
     (``bluez`` vs ``bluez-tools``) by requiring an exact package-name line.
+
+    A stanza is not evidence that the files are on the board: dpkg keeps the
+    stanza, ``Version:`` included, for a package removed without being purged,
+    and lists packages it merely knows about with no version at all (an Orange Pi
+    lists ``firmware-brcm80211`` this way). Only ``install ok installed`` counts,
+    so a leftover stanza cannot report a version for software that is gone.
     """
     if not dpkg_status:
         return None
     # Stanzas are separated by blank lines; scan for the exact package stanza.
     for stanza in dpkg_status.split("\n\n"):
-        if re.search(rf"^Package:\s*{re.escape(package)}\s*$", stanza, re.MULTILINE):
-            version = re.search(r"^Version:\s*(.+?)\s*$", stanza, re.MULTILINE)
-            return version.group(1) if version else None
+        if not re.search(
+            rf"^Package:\s*{re.escape(package)}\s*$", stanza, re.MULTILINE
+        ):
+            continue
+        if not _DPKG_INSTALLED.search(stanza):
+            return None
+        version = re.search(r"^Version:\s*(.+?)\s*$", stanza, re.MULTILINE)
+        return version.group(1) if version else None
     return None
+
+
+def find_wifi_firmware_package(dpkg_status: str) -> tuple[Optional[str], Optional[str]]:
+    """The installed package supplying the Wi-Fi firmware, as ``(name, version)``.
+
+    Which package holds the radio's firmware is distribution-specific, so the
+    candidates are tried in order of how specific they are to the radio: a
+    Raspberry Pi carries it in ``firmware-brcm80211``, while Armbian ships one
+    tree for the whole board (an Orange Pi Zero 2W loads
+    ``/lib/firmware/uwe5622/wcnmodem.bin`` from ``armbian-firmware``). Reading
+    only the Broadcom package left the row blank on every non-Pi board.
+
+    Returns ``(None, None)`` when no candidate is installed, rather than naming a
+    package at a guessed version. The name is returned with the version because
+    the version alone does not say which firmware it describes.
+    """
+    for package in _WIFI_FIRMWARE_PACKAGES:
+        version = parse_dpkg_version(dpkg_status, package)
+        if version:
+            return package, version
+    return None, None
 
 
 def classify_bluez_ext_adv_fix(bluez_version: Optional[str]) -> Optional[bool]:
@@ -492,6 +542,7 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
     # kernel prints one, so those boards reported no chip and, with nothing to
     # assess, no advertising verdict either).
     wireless_chip = parse_wireless_chip(kernel_log) or source.declared_wireless_chip()
+    firmware_package, firmware_version = find_wifi_firmware_package(dpkg_status)
     bluez_version = parse_dpkg_version(dpkg_status, _BLUEZ_PACKAGE)
     bluez_stack, bluez_stack_summary = summarize_bluez_stack(source.bluez_patch())
     health, summary = assess_wireless_health(
@@ -512,7 +563,8 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
         pi_model=source.pi_model(),
         kernel_release=kernel_release,
         wireless_chip=wireless_chip,
-        wifi_firmware_version=parse_dpkg_version(dpkg_status, _WIFI_FIRMWARE_PACKAGE),
+        wifi_firmware_version=firmware_version,
+        wifi_firmware_package=firmware_package,
         bluez_version=bluez_version,
         bluez_stack=bluez_stack,
         bluez_stack_summary=bluez_stack_summary,

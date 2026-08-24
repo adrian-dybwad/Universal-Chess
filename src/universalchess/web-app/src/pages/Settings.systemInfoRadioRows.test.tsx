@@ -94,6 +94,7 @@ function hardwarePayload() {
     kernel_release: '6.18.34+rpt-rpi-v6',
     wireless_chip: null,
     wifi_firmware_version: '7.45',
+    wifi_firmware_package: firmwarePackage,
     bluez_version: '5.66',
     bluez_stack: 'unknown',
     bluez_stack_summary: 'BlueZ stack not determined.',
@@ -110,10 +111,14 @@ function hardwarePayload() {
 
 // Replaced per test: what /api/system/info reports about the fitted radios.
 let systemInfo: Record<string, unknown>;
+// Replaced per test: the package the firmware version came from, or null when no
+// candidate package is installed.
+let firmwarePackage: string | null;
 
 beforeEach(() => {
   useSettingsStore.setState({ raw: null, loaded: false, revision: 0, pendingKeys: new Set<string>() });
   systemInfo = { has_wifi: false, has_bluetooth: false };
+  firmwarePackage = 'firmware-brcm80211';
 
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
     const method = ((init?.method as string) ?? 'GET').toUpperCase();
@@ -233,5 +238,37 @@ describe('System Information wireless rows', () => {
     for (const label of [...WIRELESS_ROW_LABELS, ...BLUETOOTH_ROW_LABELS]) {
       expect(scoped.getByText(label)).toBeInTheDocument();
     }
+  });
+});
+
+/** The rendered cell for the Wi-Fi firmware row: the <dd> beside its label. */
+function firmwareRowValue(scoped: ReturnType<typeof within>): string {
+  const label = scoped.getByText('Wi-Fi firmware');
+  return label.nextElementSibling?.textContent ?? '';
+}
+
+describe('Wi-Fi firmware row value', () => {
+  /**
+   * Which package carries the radio's firmware is distribution-specific -- an
+   * Orange Pi running Armbian reports armbian-firmware where a Raspberry Pi
+   * reports firmware-brcm80211 -- so the row names the package beside the
+   * version. A bare version cannot be acted on: it does not say what to upgrade.
+   */
+  it('names the package the version came from', async () => {
+    systemInfo = { has_wifi: true, has_bluetooth: true };
+    const scoped = await expandSystemInfo();
+
+    expect(firmwareRowValue(scoped)).toBe('7.45 (firmware-brcm80211)');
+  });
+
+  it('shows the bare version when no package is named', async () => {
+    // Why: the package is null whenever no candidate firmware package is
+    // installed. Manifests as the row reading "7.45 (null)" -- a template
+    // interpolating the absent name straight into the cell.
+    systemInfo = { has_wifi: true, has_bluetooth: true };
+    firmwarePackage = null;
+    const scoped = await expandSystemInfo();
+
+    expect(firmwareRowValue(scoped)).toBe('7.45');
   });
 });

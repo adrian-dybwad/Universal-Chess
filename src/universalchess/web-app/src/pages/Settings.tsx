@@ -4997,6 +4997,7 @@ interface HardwareInfo {
   kernel_release: string;
   wireless_chip: string | null;
   wifi_firmware_version: string | null;
+  wifi_firmware_package: string | null;
   bluez_version: string | null;
   bluez_stack: BluezStack;
   bluez_stack_summary: string;
@@ -5060,6 +5061,15 @@ const BLUETOOTH_ROW_IDS = ['bluez', 'bluezStack', 'btAdvertising'];
 // Render a nullable string field as itself or an em dash, never an empty cell.
 function orDash(value: string | null): string {
   return value && value.trim() ? value : EM_DASH;
+}
+
+// Which package carries the radio's firmware is distribution-specific
+// (firmware-brcm80211 on a Raspberry Pi, armbian-firmware on an Orange Pi), so
+// the version is shown with the package it came from -- a bare version does not
+// say what to upgrade.
+function formatWifiFirmware(version: string | null, packageName: string | null): string {
+  if (!version || !version.trim()) return EM_DASH;
+  return packageName && packageName.trim() ? `${version} (${packageName})` : version;
 }
 
 function formatStatPercent(value: number | null): string {
@@ -5171,7 +5181,11 @@ function SystemInfoCard() {
         { id: 'device', label: t('settingsPage.systemInfo.device'), value: orDash(hardware.pi_model) },
         { id: 'kernel', label: t('settingsPage.systemInfo.kernel'), value: orDash(hardware.kernel_release) },
         { id: 'wifiBtChip', label: t('settingsPage.systemInfo.wifiBtChip'), value: orDash(hardware.wireless_chip) },
-        { id: 'wifiFirmware', label: t('settingsPage.systemInfo.wifiFirmware'), value: orDash(hardware.wifi_firmware_version) },
+        {
+          id: 'wifiFirmware',
+          label: t('settingsPage.systemInfo.wifiFirmware'),
+          value: formatWifiFirmware(hardware.wifi_firmware_version, hardware.wifi_firmware_package),
+        },
         { id: 'bluez', label: t('settingsPage.systemInfo.bluez'), value: orDash(hardware.bluez_version) },
         {
           id: 'bluezStack',

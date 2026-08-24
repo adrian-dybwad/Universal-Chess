@@ -1517,6 +1517,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   security updates must not depend on a state file that can be wiped. "Not
   determined" is now reserved for a host with no `bluetoothd` at all.
 
+- The System card's Wi-Fi firmware row was blank on every board that is not a
+  Raspberry Pi. It reported the version of one hardcoded package,
+  `firmware-brcm80211`, which Armbian does not install: an Orange Pi Zero 2W
+  loads `/lib/firmware/uwe5622/wcnmodem.bin` from `armbian-firmware`. The row now
+  reports the first of the known firmware packages that dpkg says is installed,
+  ordered so a board carrying both still names the one specific to its radio, and
+  shows the package beside the version -- a version alone does not say what to
+  upgrade. Installation is now judged by the package's dpkg status rather than by
+  a stanza existing, because dpkg keeps the stanza and its version for a package
+  removed without being purged, and lists packages it merely knows about. That
+  board lists `firmware-brcm80211` without having it, so name-matching alone
+  would have reported Broadcom firmware absent from the disk.
+
 - Top-of-page status banners (a pending update, a running install, background)
   activity) sat in normal document flow above a sticky navbar, so they
   scrolled off as soon as the page left the top. They now stick with the
