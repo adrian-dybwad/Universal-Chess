@@ -111,6 +111,47 @@ def test_orangepi_zero2w_uses_measured_uart_and_epaper_gpiochip1_offsets():
     assert profile.spi_gpio_overlay == OVERLAY_H616
 
 
+def test_orangepi_zero2w_declares_the_wireless_part_it_was_brought_up_with():
+    # Why: the System card names the wireless chip by matching a Broadcom part in
+    # the kernel log, which no Allwinner board prints, so this board reported no
+    # chip at all -- and with no chip named, the Bluetooth advertising row has
+    # nothing to assess either. The part is a recorded bring-up fact for this
+    # model (the BlueZ self-heal's Pi gate exists because this board carries it),
+    # so the profile -- the one place board hardware differences are described --
+    # is where it belongs.
+    #
+    # How a regression manifests: the chip row goes back to blank on the only
+    # board whose part this project has actually identified, or a different
+    # model inherits a claim about hardware nobody looked at.
+    assert profile_for_model(MODEL_ORANGEPI_ZERO2W).wireless_chip == "UWE5622"
+
+
+@pytest.mark.parametrize(
+    "model",
+    [
+        MODEL_ZERO_2_W,
+        MODEL_PI_4,
+        MODEL_ORANGEPI_ZERO,
+        MODEL_ORANGEPI_ZERO3,
+        MODEL_ORANGEPI_5,
+        MODEL_ORANGEPI_PC,
+        "Some Other SBC",
+    ],
+)
+def test_models_without_a_measured_wireless_part_declare_none(model):
+    # Why: a declared chip is a claim about physical hardware, so it is only made
+    # for the model it was observed on. Raspberry Pi boards deliberately declare
+    # nothing even though their part is well known -- their kernel log prints the
+    # A1/B0 stepping, and the stepping is what the advertising verdict turns on,
+    # so a profile-level "BCM43430" would be a less precise answer competing with
+    # a better one.
+    #
+    # How a regression manifests: a chip name spreading to boards it was never
+    # measured on, which then drives an advertising verdict for hardware nobody
+    # tested.
+    assert profile_for_model(model).wireless_chip is None
+
+
 @pytest.mark.parametrize(
     "model",
     [

@@ -36,6 +36,13 @@ USB_GADGET_STACK_SUNXI_MUSB = "sunxi-musb"
 USB_GADGET_STACK_DWC3 = "dwc3"
 OVERLAY_H616 = "uc-centaur-spi-gpio"
 OVERLAY_H3 = "uc-centaur-spi-gpio-h3"
+
+# Wireless part fitted to the Orange Pi Zero 2W, observed during its bring-up:
+# the board comes up with a live hci0 on this Unisoc combo, which is why the
+# BlueZ self-heal (written for a Broadcom defect) is gated to Raspberry Pi. No
+# Allwinner kernel prints a part number the System card can parse, so the card
+# has no other way to name it. Declared only for the model it was measured on.
+WIRELESS_CHIP_UWE5622 = "UWE5622"
 _ORANGEPI = re.compile(r"^orange\s*pi\b")
 _RASPBERRY_PI = re.compile(r"^raspberry\s+pi\b")
 _H616_40 = re.compile(r"zero\s*2\s*w\b")
@@ -65,6 +72,10 @@ class BoardProfile:
     the SPI master (spi-gpio) rather than open a hardcoded ``/dev/spidev*``.
     ``spi_gpio_overlay`` is the Armbian user overlay basename, or ``None``
     when this board must not load a spi-gpio overlay.
+    ``wireless_chip`` is the radio part fitted to this model, and is ``None``
+    unless it was actually observed on the board -- a Raspberry Pi declares
+    nothing because its kernel log names the part, down to the stepping the
+    Bluetooth advertising verdict depends on.
     """
 
     id: str
@@ -80,6 +91,7 @@ class BoardProfile:
     gpiochip: str | None = None
     usb_gadget_stack: str | None = None
     spi_gpio_overlay: str | None = None
+    wireless_chip: str | None = None
 
 
 def _normalize(model: str | None) -> str:
@@ -121,6 +133,7 @@ def _orangepi_h616(model: str) -> BoardProfile:
         gpiochip="gpiochip1",
         usb_gadget_stack=USB_GADGET_STACK_SUNXI_MUSB,
         spi_gpio_overlay=OVERLAY_H616,
+        wireless_chip=WIRELESS_CHIP_UWE5622,
     )
 
 

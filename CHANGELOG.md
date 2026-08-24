@@ -1493,6 +1493,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   kept a red "Known issue" badge. The row now requires a faulty BlueZ as well,
   and treats a patched ``bluetoothd`` as already repaired.
 
+- The System card described none of an Orange Pi's radio. The chip was read out
+  of the kernel log by matching a Broadcom part number, which no Allwinner
+  kernel prints, so the chip row was blank -- and with no chip named, the
+  Bluetooth advertising row had nothing to assess and reported "unknown" too.
+  The board profile, which already holds this board's hardware differences, now
+  declares the part the Orange Pi Zero 2W was brought up with (`UWE5622`, the
+  reason the BlueZ self-heal is gated to Raspberry Pi), and the card falls back
+  to it. The kernel log still wins where it speaks, because it names the
+  Broadcom stepping the advertising verdict depends on and a profile can only
+  name a part for the board as a whole. A part is declared only for the model it
+  was observed on, so a board nobody has looked at still reports nothing rather
+  than an inherited guess.
+
 - Top-of-page status banners (a pending update, a running install, background)
   activity) sat in normal document flow above a sticky navbar, so they
   scrolled off as soon as the page left the top. They now stick with the

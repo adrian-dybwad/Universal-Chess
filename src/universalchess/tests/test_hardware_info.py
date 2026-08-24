@@ -264,9 +264,12 @@ class CollectHardwareInfoTests(unittest.TestCase):
         display_status=None,
         bluez_patch=None,
         dpkg_status=None,
+        declared_wireless_chip=None,
     ):
         # bluez_patch defaults to "no marker" (unknown) so the common cases do
         # not have to specify it; the stack-specific tests pass a real marker.
+        # declared_wireless_chip defaults to None -- the board profile makes no
+        # claim -- so only the fallback tests opt into one.
         status_text = _DPKG_STATUS if dpkg_status is None else dpkg_status
         return hw.HardwareInfoSource(
             pi_model=lambda: "Raspberry Pi Zero W Rev 1.1",
@@ -277,7 +280,50 @@ class CollectHardwareInfoTests(unittest.TestCase):
             bluez_patch=lambda: bluez_patch
             if bluez_patch is not None
             else bluez_patch_status.unknown_status(),
+            declared_wireless_chip=lambda: declared_wireless_chip,
         )
+
+    def test_profile_names_the_chip_when_the_kernel_log_does_not(self):
+        # Why: the chip was only ever read out of the kernel log as a Broadcom
+        # part, so every Allwinner board reported no chip -- an Orange Pi Zero 2W
+        # showed a blank row and, with nothing to assess, an unknown Bluetooth
+        # advertising verdict. The board profile's declared part is the fallback.
+        #
+        # How a regression manifests: the row is blank again on any board whose
+        # kernel does not print a BCM part.
+        info = hw.collect_hardware_info(
+            self._source(
+                "6.18.45-current-sunxi64",
+                "sunxi kernel log with no Broadcom part in it",
+                declared_wireless_chip="UWE5622",
+            )
+        )
+        self.assertEqual(info.wireless_chip, "UWE5622")
+
+    def test_kernel_log_stepping_outranks_the_declared_part(self):
+        # Why: the log carries the A1-vs-B0 stepping and the profile can only
+        # name a family, and the stepping is the input the advertising verdict
+        # turns on -- so a declared part must never displace it. Asserted through
+        # the verdict as well as the field, since preferring the coarser name
+        # would silently turn "affected" into "no known issue".
+        #
+        # How a regression manifests: an affected board stops being told, because
+        # its profile answered first with a name that matches no known fault.
+        info = hw.collect_hardware_info(
+            self._source(_KERNEL_618, _LOG_B0, declared_wireless_chip="BCM43430")
+        )
+        self.assertEqual(info.wireless_chip, "BCM43430B0")
+        self.assertEqual(info.hotspot_health, hw.HEALTH_AFFECTED)
+
+    def test_no_log_part_and_no_declared_part_stays_unidentified(self):
+        # Why: with neither source able to name the hardware, the field must stay
+        # None so the card shows nothing rather than a fabricated part -- a
+        # guessed name would drive a wrong advertising verdict.
+        info = hw.collect_hardware_info(
+            self._source("6.18.45-current-sunxi64", "no chip named here")
+        )
+        self.assertIsNone(info.wireless_chip)
+        self.assertEqual(info.hotspot_health, hw.HEALTH_UNKNOWN)
 
     def test_affected_board_full_contract(self):
         # Verifies the whole to_dict shape for the affected board, so the React

@@ -3,10 +3,14 @@
 Why this is separate from :mod:`universalchess.board.system_info`:
   ``system_info`` reports *telemetry* -- numbers that change every second (CPU,
   memory, uptime) and are polled on an interval. This module reports *identity*
-  -- facts fixed for the life of a boot (which Broadcom wireless die is fitted,
-  the kernel/firmware versions, the e-paper panel). Mixing the two would make
-  the telemetry card re-run kernel-log parsing on every 5-second poll. Identity
-  is gathered once and cached.
+  -- facts fixed for the life of a boot (which wireless part is fitted, the
+  kernel/firmware versions, the e-paper panel). Mixing the two would make the
+  telemetry card re-run kernel-log parsing on every 5-second poll. Identity is
+  gathered once and cached.
+
+  The wireless part is read from the kernel log, which names the Broadcom
+  stepping the advertising verdict depends on, and falls back to the part the
+  board profile declares for boards whose kernel prints no part number at all.
 
 Primary motivation -- the Bluetooth advertising health row:
   The DGT Centaur's Pi uses a Broadcom combo (Wi-Fi + Bluetooth on one die).
@@ -49,7 +53,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Optional
 
-from universalchess.board import wireless_capability
+from universalchess.board import profile, wireless_capability
 from universalchess.managers import bluez_patch_status
 from universalchess.paths import TMP_DIR
 
@@ -202,6 +206,10 @@ class HardwareInfoSource:
     dpkg_status: Callable[[], str]
     display_status: Callable[[], Optional[dict]]
     bluez_patch: Callable[[], dict]
+    # The radio part this board's profile declares, or None when the profile
+    # makes no claim. Used only when the kernel log names no part (see
+    # collect_hardware_info).
+    declared_wireless_chip: Callable[[], Optional[str]]
 
 
 # ---------------------------------------------------------------------------
@@ -477,7 +485,13 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
     kernel_log = source.kernel_log()
     dpkg_status = source.dpkg_status()
 
-    wireless_chip = parse_wireless_chip(kernel_log)
+    # The kernel log is preferred because it names the Broadcom stepping, and the
+    # A1-vs-B0 distinction is what the advertising verdict turns on; the profile
+    # can only name a part for the board as a whole. The fallback is what lets a
+    # board whose kernel prints no part number be named at all (no Allwinner
+    # kernel prints one, so those boards reported no chip and, with nothing to
+    # assess, no advertising verdict either).
+    wireless_chip = parse_wireless_chip(kernel_log) or source.declared_wireless_chip()
     bluez_version = parse_dpkg_version(dpkg_status, _BLUEZ_PACKAGE)
     bluez_stack, bluez_stack_summary = summarize_bluez_stack(source.bluez_patch())
     health, summary = assess_wireless_health(
@@ -624,6 +638,7 @@ def default_source() -> HardwareInfoSource:
         dpkg_status=_read_dpkg_status,
         display_status=read_display_status,
         bluez_patch=bluez_patch_status.read_status,
+        declared_wireless_chip=lambda: profile.get_board_profile().wireless_chip,
     )
 
 
