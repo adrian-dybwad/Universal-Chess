@@ -9,6 +9,9 @@ import gzip
 import os
 import shutil
 import subprocess  # nosec B404 - only the pinned, path-validated mount/runtime helpers are invoked
+import time
+import zlib
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -18,6 +21,11 @@ from universalchess.services.centaur_import.detection import (
     detect_app_dir,
     ignore_cruft,
     validate_app_dir,
+)
+from universalchess.services.centaur_import.events import (
+    log_command_failure,
+    log_import_event,
+    log_step_failure,
 )
 from universalchess.services.centaur_import.import_state import ImportStage
 
@@ -45,6 +53,31 @@ ARMHF_SUPPORT_FAILED_MSG = (
 # Fixed read-only mountpoint the helper uses; kept under TMP_DIR so it shares the
 # service-owned, writable tree and matches the helper's own path allow-list.
 DEFAULT_MOUNT_ROOT = os.path.join(TMP_DIR, "centaur-mnt")
+
+# Wall-clock budgets for the two privileged helpers. The mount/stage/umount
+# operations are local filesystem work; the armhf helper runs apt, which is
+# network-bound and legitimately slow on a board with stale indexes. Both are
+# bounded so a wedged helper fails the import instead of pinning the worker
+# thread forever, and both limits are named so a timeout can say what it was.
+_HELPER_TIMEOUT_SECONDS = 120
+_ARMHF_TIMEOUT_SECONDS = 600
+
+# Step-level messages surfaced to the client. Author-written and path-free
+# (CWE-209); the exception behind each one is recorded to the event log instead.
+# Each names the next action for its step: before these existed, every failure
+# outside the helpers arrived as the web worker's bare "Import failed".
+DECOMPRESS_FAILED_MSG = (
+    "The uploaded image could not be decompressed. It is most likely incomplete "
+    "or corrupted, or the board is out of disk space. Check free space in "
+    "Settings > System, then create and upload the image again."
+)
+COPY_FAILED_MSG = (
+    "Could not write the Centaur software to the board. Check free disk space "
+    "in Settings > System, then try the import again."
+)
+EXEC_BITS_FAILED_MSG = "Could not make the imported Centaur program executable."
+ENGINE_HOOK_FAILED_MSG = "Could not install the engine proxy into the imported Centaur."
+FINALIZE_FAILED_MSG = "Could not finalize the imported Centaur install."
 
 # UC artifacts in CENTAUR_HOME that are not part of the SD app and must survive a
 # re-import (the install wipes the destination before copying the fresh app).
@@ -80,16 +113,63 @@ def _gunzip_to(src, dst) -> None:
         shutil.copyfileobj(fin, fout, length=4 * 1024 * 1024)
 
 
+@contextmanager
+def _step(step: str, user_message: str, *, errors=(OSError,), free_space_dir=None):
+    """Run one import step, turning any failure into a logged, actionable error.
+
+    Every step outside the privileged helpers used to collapse into the web
+    worker's generic "Import failed", with the real exception written only to
+    the boot-truncated ``~/debug.log``. Wrapping each step records what failed
+    and why in the persistent event log and gives the user the step-specific
+    next action instead of a dead end.
+
+    ``errors`` is the exception set that step can legitimately raise; anything
+    outside it is a bug and is left to propagate to the caller's catch-all
+    rather than being relabelled as a user-fixable import problem.
+    """
+    try:
+        yield
+    except errors as exc:
+        log_step_failure(step, exc, free_space_dir=free_space_dir)
+        raise CentaurImportError(user_message) from exc
+
+
 def _run_helper(runner: Callable, verb: str, *helper_args) -> None:
     """Invoke the pinned mount helper with ``sudo -n`` and raise on failure.
 
     ``sudo -n`` fails fast if the grant is missing rather than blocking on a
     password prompt. A non-zero result means the mount/umount did not happen, so
     it is escalated as a CentaurImportError instead of silently continuing.
+
+    The helper's captured argv, exit code and output go to the event log before
+    the error is raised. They used to be discarded, which left "Failed to mount
+    the uploaded image." as the entire record of a failed import -- identical
+    whether the sudoers grant was missing, the SD app directory was unreadable,
+    or the mountpoint was busy.
     """
     cmd = ["sudo", "-n", MOUNT_HELPER, verb, *helper_args]
-    result = runner(cmd, capture_output=True, timeout=120)
-    if getattr(result, "returncode", 0) != 0:
+    step = f"Image {verb}"
+    try:
+        result = runner(cmd, capture_output=True, timeout=_HELPER_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        log_command_failure(
+            step, cmd,
+            reason=f"timed out after {_HELPER_TIMEOUT_SECONDS}s",
+            stdout=exc.stdout, stderr=exc.stderr,
+        )
+        raise CentaurImportError(f"Failed to {verb} the uploaded image.") from exc
+    except OSError as exc:
+        log_command_failure(step, cmd, reason=f"could not be started ({type(exc).__name__}: {exc})")
+        raise CentaurImportError(f"Failed to {verb} the uploaded image.") from exc
+
+    returncode = getattr(result, "returncode", 0)
+    if returncode != 0:
+        log_command_failure(
+            step, cmd,
+            returncode=returncode,
+            stdout=getattr(result, "stdout", None),
+            stderr=getattr(result, "stderr", None),
+        )
         raise CentaurImportError(f"Failed to {verb} the uploaded image.")
 
 
@@ -162,13 +242,36 @@ def ensure_armhf_support(runner: Callable = subprocess.run) -> None:
     whole import. Reporting success on a half-provisioned system would hand back
     an install that cannot launch; failing loudly makes the user retry (a
     re-import wipes and redoes the tree). The message is ARMHF_SUPPORT_FAILED_MSG.
+
+    That message is one fixed sentence for every cause, so the helper's own apt
+    output is recorded to the event log before it is raised: no network, a stale
+    index, and an interrupted dpkg are three different fixes and are otherwise
+    indistinguishable. A timeout is reported as such rather than as a failed
+    install, because a ten-minute apt block has its own cause.
     """
     cmd = ["sudo", "-n", ARMHF_SETUP_HELPER]
+    step = "32-bit armhf support install"
     try:
-        result = runner(cmd, capture_output=True, timeout=600)
-    except OSError as exc:
+        result = runner(cmd, capture_output=True, timeout=_ARMHF_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired as exc:
+        log_command_failure(
+            step, cmd,
+            reason=f"timed out after {_ARMHF_TIMEOUT_SECONDS}s",
+            stdout=exc.stdout, stderr=exc.stderr,
+        )
         raise CentaurImportError(ARMHF_SUPPORT_FAILED_MSG) from exc
-    if getattr(result, "returncode", 0) != 0:
+    except OSError as exc:
+        log_command_failure(step, cmd, reason=f"could not be started ({type(exc).__name__}: {exc})")
+        raise CentaurImportError(ARMHF_SUPPORT_FAILED_MSG) from exc
+
+    returncode = getattr(result, "returncode", 0)
+    if returncode != 0:
+        log_command_failure(
+            step, cmd,
+            returncode=returncode,
+            stdout=getattr(result, "stdout", None),
+            stderr=getattr(result, "stderr", None),
+        )
         raise CentaurImportError(ARMHF_SUPPORT_FAILED_MSG)
 
 
@@ -209,8 +312,20 @@ def install_from_image(
     means no reporting, so callers that do not track progress are unaffected. The
     long, otherwise-silent phase on a 64-bit host is INSTALLING_ARMHF (the apt run
     inside ``ensure_runtime``); it is reported before that call.
+
+    Every stage and every failure is also written to the persistent event log
+    (Settings > System). Live progress disappears with the page and with the
+    process, so after the fact there was no way to place a stalled or killed
+    import at a stage; the logged timeline is what identifies the step that hung.
     """
+    started_at = time.monotonic()
+
     def report(stage, message):
+        # The stage goes to the persistent log as well as to the caller: the
+        # polled progress a caller renders is gone the moment the page closes or
+        # the service restarts, which is exactly when a stalled import is
+        # investigated.
+        log_import_event(message)
         # Progress reporting is additive: a caller that passes no callback (every
         # non-web caller and the existing tests) must be unaffected.
         if stage_callback is not None:
@@ -235,7 +350,15 @@ def install_from_image(
     # that without giving the copy step any privilege.
     staging = tmp_dir / "centaur-stage"
     report(ImportStage.DECOMPRESSING, "Decompressing image...")
-    decompress(image_path, raw_image)
+    # An interrupted browser upload is the most likely reason an import fails at
+    # all, and it lands here as a gzip error. zlib.error covers a corrupt deflate
+    # stream, EOFError a truncated one, and OSError both BadGzipFile and a full
+    # disk -- all the same step to the user, all distinct in the log.
+    with _step(
+        "Decompress uploaded image", DECOMPRESS_FAILED_MSG,
+        errors=(OSError, EOFError, zlib.error), free_space_dir=tmp_dir,
+    ):
+        decompress(image_path, raw_image)
 
     try:
         # The helper pins its own read-only mountpoint (its security boundary),
@@ -253,12 +376,24 @@ def install_from_image(
             report(ImportStage.VALIDATING, "Validating Centaur files...")
             app_dir = detect_app_dir(mount_root)
             if app_dir is None:
+                # Records that the image really was searched and really was
+                # empty, which is what separates a wrongly-imaged SD card (the
+                # boot partition captured instead of the root one) from a bug in
+                # detection. The user-facing message below stays path-free.
+                log_import_event(
+                    f"No Centaur program found anywhere under {mount_root}",
+                    level="error",
+                )
                 raise CentaurImportError(
                     "Could not find the Centaur software in the uploaded image "
                     "(no 'centaur' program next to 'engines' and 'fonts')."
                 )
             validation = validate_app_dir(app_dir)
             if not validation.ok:
+                log_import_event(
+                    f"Centaur app at {app_dir} is missing: " + ", ".join(validation.missing),
+                    level="error",
+                )
                 raise CentaurImportError(
                     "The uploaded image is missing required Centaur files: "
                     + ", ".join(validation.missing)
@@ -272,14 +407,22 @@ def install_from_image(
         # The mount is released; the staged copy is service-readable. Apply the
         # cruft-stripping / shim-preserving copy from staging into the install dir.
         report(ImportStage.INSTALLING_FILES, "Installing Centaur software...")
-        _install_app_dir(staging, dest, copytree)
+        # This writes a full copy of the app after a ~2 GB decompression, so a
+        # small card runs out of room here; shutil.Error carries copytree's
+        # per-file failures, which a bare OSError clause would miss.
+        with _step(
+            "Install Centaur files", COPY_FAILED_MSG,
+            errors=(OSError, shutil.Error), free_space_dir=dest.parent,
+        ):
+            _install_app_dir(staging, dest, copytree)
     finally:
         if raw_image.exists():
             raw_image.unlink()
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
 
-    _apply_exec_bits(dest)
+    with _step("Set executable permissions", EXEC_BITS_FAILED_MSG):
+        _apply_exec_bits(dest)
     # The imported binary is a 32-bit armhf ELF; on a 64-bit host it cannot exec,
     # and its display shim cannot be built, until the armhf runtime and cross
     # toolchain are installed. Do it now, having just confirmed and made the binary
@@ -291,13 +434,23 @@ def install_from_image(
     ensure_runtime(runner)
     # Route Centaur's engine through the UC proxy (any UC engine + game recording).
     report(ImportStage.CONFIGURING, "Configuring engine proxy...")
-    install_hook(dest / "engines")
+    with _step("Install engine proxy hook", ENGINE_HOOK_FAILED_MSG):
+        install_hook(dest / "engines")
     # A freshly imported tree has no settings/factory.info, so Centaur would boot
     # into the factory Test Screen. Seed the marker so the import yields a board
     # that boots straight to play (see ensure_factory_marker for the full why).
     report(ImportStage.FINALIZING, "Finalizing...")
-    ensure_factory_marker(dest)
+    with _step("Create factory marker", FINALIZE_FAILED_MSG):
+        ensure_factory_marker(dest)
     file_count = sum(1 for p in dest.rglob("*") if p.is_file())
+    # The completion record is the baseline a slow import is measured against and
+    # the confirmation that the tree really was written; a failed import has no
+    # such line, which is how the log distinguishes "never finished" from
+    # "finished and something later broke".
+    log_import_event(
+        f"Original Centaur imported: {file_count} files installed in {dest}",
+        duration_ms=int((time.monotonic() - started_at) * 1000),
+    )
     return InstallResult(app_dir=str(app_dir), installed_path=str(dest), file_count=file_count)
 
 

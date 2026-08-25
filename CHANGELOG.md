@@ -1201,6 +1201,30 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   band. Timed games now always show the clock. Show Clock still hides the turn
   indicator in untimed games, and its help names the exception.
 
+- **A failed Original Centaur import left almost nothing to diagnose it with**:
+  the privileged mount, stage, unmount and armhf helpers all ran with their
+  output captured and then discarded once the exit code was read, so a missing
+  sudoers grant, an SD app directory the service user could not read, a busy
+  mountpoint and a stale apt index all arrived as one fixed sentence. Anything
+  that was not a helper -- a browser upload cut short, a card with no room for
+  the 2 GB decompression -- was caught by the worker's catch-all, stored as the
+  words "Import failed", and written in full only to ~/debug.log, which is
+  truncated on every boot and so was usually gone before the failure was
+  reported. Settings -> System -> Event Log now carries the whole run under a
+  Centaur import heading: the upload it accepted and its size, every stage as it
+  starts, and for each failure the command, its exit code (or that it timed out,
+  or could not be started at all) and the tail of what it printed, collapsed to
+  one line and bounded so an apt run cannot evict the rest of the board's
+  history. Failures that reach the user keep their author-written, path-free
+  message, because that one is returned over HTTP; the detail belongs in the
+  auth-gated log. Rejected uploads, a save that runs out of disk, an import a
+  restart killed and the percent it had reached are recorded too, and a
+  successful import files the file count and how long it took, so a slow one has
+  a baseline to be compared against. Three steps that used to fail as the
+  generic "Import failed" -- the decompression, the copy into the install
+  directory, and the engine-proxy hook -- now name their own step and next
+  action.
+
 - **Original Centaur in translate mode crashed on a battery poll**: the T5D
   driver calls ``image.tobytes()`` in ``update()`` without checking that the
   framebuffer exists. Translate mode's GPIO shim makes the first paint slower

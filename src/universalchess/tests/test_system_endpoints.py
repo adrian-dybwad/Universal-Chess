@@ -476,8 +476,11 @@ def test_return_to_universal_requires_auth(monkeypatch):
 # --- Original Centaur SD-image import ----------------------------------------
 
 
+import errno  # noqa: E402
 import io  # noqa: E402
 import os  # noqa: E402
+
+from werkzeug.datastructures import FileStorage  # noqa: E402
 
 import universalchess.services.centaur_import as _centaur_import  # noqa: E402
 
@@ -692,6 +695,223 @@ def test_centaur_import_status_endpoint_reports_store_state(client, fresh_import
     assert body["stage"] == "installing_armhf"
     assert body["message"] == "Installing 32-bit support..."
     assert 0 < body["percent"] < 100
+
+
+# --- Original Centaur import: event-log diagnostics ---------------------------
+# The web layer owns the parts of the import the installer never sees: the
+# multipart upload itself, the terminal outcome of the background worker, and an
+# import a reboot killed. None of those reached the persistent Event Log, so a
+# user whose upload was rejected or whose disk filled mid-save had nothing in
+# Settings > System to show support.
+
+
+@pytest.fixture
+def import_events(tmp_path, monkeypatch):
+    """Redirect the event log to a temp file and read it back on demand.
+
+    Returns a callable so each assertion reads the events written by the request
+    it just made, not a snapshot taken before it ran.
+    """
+    from universalchess.services import event_log
+
+    path = tmp_path / "events.jsonl"
+    monkeypatch.setenv("UC_EVENT_LOG_PATH", str(path))
+    # The module caches one logger per resolved path; a stale handler from an
+    # earlier test's tmp_path would send this test's records to a deleted file.
+    monkeypatch.setattr(event_log, "_loggers", {})
+    return lambda: event_log.read_events(path=path)
+
+
+def test_accepted_upload_is_recorded_with_its_name_and_size(
+    client, monkeypatch, tmp_path, fresh_import_store, import_events
+):
+    """A started import must record the file it accepted and how big it was.
+
+    Why this test exists: the reported failures are "I uploaded it and nothing
+    happened". Whether the board received the file at all -- and whether it
+    received the whole ~200 MB or a truncated fragment -- is the first question,
+    and nothing in the log answered it. The recorded size is what identifies an
+    upload that was cut short by a proxy or a dropped connection.
+
+    How the regression manifests: dropping the write leaves the log with no
+    record of the upload, so the filename assertion fails on an empty list.
+    """
+    monkeypatch.setattr("universalchess.paths.TMP_DIR", str(tmp_path))
+    monkeypatch.setattr(webapp, "_start_centaur_import", lambda path: None)
+
+    resp = _upload(client, content=b"\x1f\x8b" + b"D" * 4094)
+
+    assert resp.status_code == 202
+    events = import_events()
+    assert len(events) == 1
+    assert events[0]["level"] == "info"
+    assert events[0]["category"] == "centaur_import"
+    assert "centaur-sd.img.gz" in events[0]["message"]
+    assert "4096" in events[0]["message"] or "4.0 KB" in events[0]["message"]
+
+
+@pytest.mark.parametrize(
+    "kwargs, expect_status, expect_fragment",
+    [
+        ({"field": "wrong-field"}, 400, "no image file"),
+        ({"filename": "notes.txt"}, 400, "not a .gz"),
+    ],
+)
+def test_rejected_upload_is_recorded_as_a_warning(
+    client, monkeypatch, tmp_path, fresh_import_store, import_events,
+    kwargs, expect_status, expect_fragment,
+):
+    """Each rejected upload must leave a warning naming why it was refused.
+
+    Why this test exists: a rejection is invisible after the page closes, and the
+    two causes have different fixes -- a browser that sent no file part versus a
+    user who picked the wrong file (commonly the .img before gzip, or the
+    generator script itself). Recording which one happened is what lets support
+    answer without a screenshot.
+
+    How the regression manifests: no warning is written, so the single-event
+    assertion fails while the request still returns the same 400.
+    """
+    monkeypatch.setattr("universalchess.paths.TMP_DIR", str(tmp_path))
+    monkeypatch.setattr(webapp, "_start_centaur_import", lambda path: None)
+
+    resp = _upload(client, **kwargs)
+
+    assert resp.status_code == expect_status
+    events = import_events()
+    assert len(events) == 1
+    assert events[0]["level"] == "warning"
+    assert expect_fragment in events[0]["message"]
+
+
+def test_second_concurrent_import_is_recorded_as_a_warning(
+    client, monkeypatch, tmp_path, fresh_import_store, import_events
+):
+    """A 409 must be recorded, because a stuck import is why it happens.
+
+    Why this test exists: the concurrency guard rejects a retry while an earlier
+    import is still marked active. When that earlier import is wedged, the user
+    sees repeated "already in progress" errors with no way to tell that the guard
+    -- rather than their file -- is refusing them. The warning ties the rejected
+    retries to the import that never finished.
+
+    How the regression manifests: no warning is written and the log jumps from
+    the stalled import straight to silence, failing the single-event assertion.
+    """
+    monkeypatch.setattr("universalchess.paths.TMP_DIR", str(tmp_path))
+    fresh_import_store.start()
+    monkeypatch.setattr(webapp, "_start_centaur_import", lambda path: None)
+
+    resp = _upload(client)
+
+    assert resp.status_code == 409
+    events = import_events()
+    assert len(events) == 1
+    assert events[0]["level"] == "warning"
+    assert "already" in events[0]["message"]
+
+
+def test_failed_upload_save_is_recorded_with_the_os_error(
+    client, monkeypatch, tmp_path, fresh_import_store, import_events
+):
+    """A save that fails mid-stream must record the OS error behind the 500.
+
+    Why this test exists: the ~200 MB write is where a full or read-only tmp
+    directory shows up, and the route answers with a deliberately generic
+    "Internal server error" so no path leaks to the browser (CWE-209). Without an
+    event, the real reason existed only in the boot-truncated debug log, so the
+    most actionable upload failure was the least visible one.
+
+    How the regression manifests: the log holds no error record, so the
+    ENOSPC-message assertion fails even though the client still gets its 500.
+    """
+    monkeypatch.setattr("universalchess.paths.TMP_DIR", str(tmp_path))
+    started = []
+    monkeypatch.setattr(webapp, "_start_centaur_import", lambda path: started.append(path))
+
+    def failing_save(self, dst):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    monkeypatch.setattr(FileStorage, "save", failing_save)
+
+    resp = _upload(client)
+
+    assert resp.status_code == 500
+    # The generic body is intentional; the detail belongs in the log, not here.
+    assert json.loads(resp.data)["error"] == "Internal server error"
+    assert started == []
+    errors = [e for e in import_events() if e["level"] == "error"]
+    assert len(errors) == 1
+    assert "No space left on device" in errors[0]["message"]
+
+
+def test_unexpected_worker_failure_is_recorded_with_the_exception_type(
+    monkeypatch, tmp_path, fresh_import_store, import_events
+):
+    """An unexpected worker exception must name its type in the log.
+
+    Why this test exists: the worker's catch-all stores the bare string "Import
+    failed" for the UI (correctly -- an arbitrary exception's text can carry
+    paths) and previously wrote the real exception only to ~/debug.log, which is
+    truncated on every boot. By the time a user reports the failure and reboots,
+    the only surviving evidence said "Import failed".
+
+    How the regression manifests: the log has no error record for the crash, so
+    the exception-type assertion fails while the status poll still reports the
+    same generic failure.
+    """
+    fresh_import_store.start()
+    image = tmp_path / "centaur-sd.img.gz"
+    image.write_bytes(b"\x1f\x8bDATA")
+
+    def exploding_install(image_path, *a, **k):
+        raise MemoryError("cannot allocate decompression buffer")
+
+    monkeypatch.setattr(_centaur_import, "install_from_image", exploding_install)
+
+    webapp._run_centaur_import(image)
+
+    # The client-facing result stays generic; the log carries the diagnosis.
+    assert fresh_import_store.status_dict()["result"]["error"] == "Import failed"
+    errors = [e for e in import_events() if e["level"] == "error"]
+    assert len(errors) == 1
+    assert "MemoryError" in errors[0]["message"]
+    assert "cannot allocate decompression buffer" in errors[0]["message"]
+
+
+def test_interrupted_import_is_recorded_with_the_progress_it_reached(
+    tmp_path, fresh_import_store, import_events
+):
+    """An import killed by a restart must leave a warning with its last percent.
+
+    Why this test exists: a reboot (or a service restart triggered by the import's
+    own apt run) kills the worker thread, and the store reconciles the state to
+    "interrupted" on the next start. That recovery is silent in the log, so the
+    persistent record simply stopped mid-import with no explanation -- the user's
+    "it just stopped" with nothing to confirm it.
+
+    How the regression manifests: no warning is written, so the log still ends
+    abruptly at the last stage and the single-event assertion fails.
+    """
+    from universalchess.services.centaur_import.import_state import ImportStage
+
+    fresh_import_store.start()
+    fresh_import_store.update(ImportStage.INSTALLING_FILES, "Installing Centaur software...")
+    # A fresh process cannot hold the worker thread, which is what makes the
+    # persisted "active" state an interrupted import rather than a running one.
+    reconciled = webapp._centaur_import_store.__class__(
+        tmp_path / "centaur_import_state.json"
+    ).reconcile_interrupted()
+
+    webapp._log_interrupted_centaur_import(reconciled)
+
+    events = import_events()
+    assert len(events) == 1
+    assert events[0]["level"] == "warning"
+    assert "interrupted" in events[0]["message"]
+    # INSTALLING_FILES is the 45% band; the frozen percent is what tells the user
+    # how far it got before the restart.
+    assert "45%" in events[0]["message"]
 
 
 # --- Centaur engine proxy config ---------------------------------------------

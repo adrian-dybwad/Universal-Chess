@@ -763,7 +763,9 @@
       "categoryBluetooth": "Bluetooth",
       "categoryUpdate": "Update",
       "categorySystem": "System",
-      "categoryEngineInit": "Engine startup"
+      "categoryEngineInit": "Engine startup",
+      "categoryCentaurImport": "Centaur import",
+      "categoryCentaur": "Original Centaur"
     },
     "debug": {
       "title": "Debug",

@@ -770,7 +770,9 @@
       "categoryBluetooth": "Bluetooth",
       "categoryUpdate": "Actualización",
       "categorySystem": "Sistema",
-      "categoryEngineInit": "Inicio del motor"
+      "categoryEngineInit": "Inicio del motor",
+      "categoryCentaurImport": "Importación de Centaur",
+      "categoryCentaur": "Centaur original"
     },
     "debug": {
       "title": "Depuración",

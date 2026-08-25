@@ -67,6 +67,9 @@ from xml.sax.saxutils import escape  # nosec B406  # nosemgrep: python.lang.secu
 from universalchess.web.piece_svg import (
     get_piece_images,
 )
+# Shared with the import service so the upload endpoint, the background worker
+# and the installer all stamp the same Event Log category (Settings > System).
+from universalchess.services.centaur_import.events import format_bytes, log_import_event
 
 # Conditionally import crypt (removed in Python 3.13+, may not be available)
 try:
@@ -4488,6 +4491,11 @@ def _run_centaur_import(image_path):
     The CentaurImportError message is author-written and path-free, so it is safe
     to store for the client; an unexpected error is logged server-side and
     reported generically (no exception text leaks to the UI).
+
+    Both terminal failures are also recorded to the Event Log. The unexpected
+    branch used to write the real exception only to ~/debug.log, which is
+    truncated on every boot, so by the time a user reported the failure and
+    rebooted, the only surviving evidence was the words "Import failed".
     """
     from universalchess.services.centaur_import import (
         CentaurImportError,
@@ -4501,16 +4509,28 @@ def _run_centaur_import(image_path):
         )
         _centaur_import_store.finish(success=True)
     except CentaurImportError as e:
+        # The step that raised has already logged its own detail; this records
+        # the terminal outcome so the log ends with the reason the user saw.
+        log_import_event(f"Import failed: {e}", level="error")
         _centaur_import_store.finish(success=False, error=str(e))
     except Exception as e:
         app.logger.exception("Centaur import failed: %s", e)
+        log_import_event(
+            f"Import failed unexpectedly: {type(e).__name__}: {e}", level="error"
+        )
         _centaur_import_store.finish(success=False, error="Import failed")
     finally:
         try:
             if os.path.exists(str(image_path)):
                 os.remove(str(image_path))
-        except OSError:  # noqa: S110  # nosec B110 - best-effort tmp cleanup; failure is non-fatal
-            pass
+        except OSError as e:
+            # A tmp dir accumulating ~200 MB images is itself a cause of the next
+            # upload failing, so the leak is recorded rather than swallowed.
+            log_import_event(
+                f"Could not delete the uploaded image after the import: "
+                f"{type(e).__name__}: {e}",
+                level="warning",
+            )
 
 
 def _start_centaur_import(image_path):
@@ -4543,17 +4563,28 @@ def api_system_import_centaur():
     running, and 202 once the background install has started. Failures inside the
     install (e.g. a missing-files image) surface through the status endpoint's
     result, not this response.
+
+    Every outcome is recorded to the Event Log, including the rejections. A
+    rejection is invisible the moment the page closes, and the reported trouble
+    is "I uploaded it and nothing happened" -- whether the board received a file
+    at all, and whether it received the whole ~200 MB or a fragment cut short by
+    a proxy, is the first question and nothing answered it.
     """
     from universalchess.paths import TMP_DIR
 
     upload = request.files.get("image")
     if upload is None or not upload.filename:
+        log_import_event("Upload rejected: no image file in the request", level="warning")
         return jsonify({"success": False, "error": "No image file was uploaded."}), 400
 
+    # Logged rather than the raw filename: secure_filename strips path separators
+    # and control characters, and json.dumps escapes the rest, so a crafted name
+    # cannot forge a log line.
     safe = secure_filename(upload.filename)
     # Only the gzip image artifact is accepted; a wrong file is user error (400),
     # not a server fault.
     if not safe.endswith(".gz"):
+        log_import_event(f"Upload rejected: '{safe}' is not a .gz image", level="warning")
         return (
             jsonify({
                 "success": False,
@@ -4563,6 +4594,11 @@ def api_system_import_centaur():
         )
 
     if _centaur_import_store.status_dict()["active"]:
+        # Ties the rejected retries to the earlier import: repeated 409s are the
+        # symptom of one import that never finished, not of the file being sent.
+        log_import_event(
+            "Upload rejected: an import is already in progress", level="warning"
+        )
         return jsonify({"success": False, "error": "A Centaur import is already in progress."}), 409
 
     os.makedirs(TMP_DIR, exist_ok=True)
@@ -4570,6 +4606,7 @@ def api_system_import_centaur():
     # restricts images to, so a path that escapes it would be refused downstream.
     target = safe_under_base(TMP_DIR, safe)
     if target is None:
+        log_import_event(f"Upload rejected: '{safe}' is not a valid filename", level="warning")
         return jsonify({"success": False, "error": "Invalid image filename."}), 400
 
     try:
@@ -4577,9 +4614,17 @@ def api_system_import_centaur():
         # the ~200 MB image in memory. The background worker owns cleanup of the
         # saved file (it must outlive this request).
         upload.save(str(target))
+        saved_bytes = os.path.getsize(str(target))
     except OSError as e:
+        # The response stays generic (CWE-209); this is the only place the reason
+        # for a failed 200 MB write -- typically a full or read-only tmp dir --
+        # is preserved.
+        log_import_event(
+            f"Saving the uploaded image failed: {type(e).__name__}: {e}", level="error"
+        )
         return _internal_error(e)
 
+    log_import_event(f"Upload received: {safe} ({format_bytes(saved_bytes)})")
     _start_centaur_import(target)
     return jsonify({"success": True, "status": "started"}), 202
 
@@ -5754,7 +5799,30 @@ _record_resume_point(
 # re-imports).
 from universalchess.services.centaur_import import import_state as centaur_import_state
 _centaur_import_store = centaur_import_state.STORE
-_centaur_import_store.reconcile_interrupted()
+
+
+def _log_interrupted_centaur_import(state):
+    """Record an import a restart killed, so the Event Log explains the gap.
+
+    Reconciliation already flips the UI out of "in progress", but it did so
+    silently: the persistent log simply stopped mid-import with nothing to say
+    the worker had been killed. That is the user's "it just stopped" with no
+    evidence, and it is a real outcome here because the import's own apt run can
+    trigger the restart that kills it. The frozen percent is recorded because it
+    identifies the stage that was running when the process went away.
+
+    Null-safe: ``reconcile_interrupted`` returns None when there was nothing to
+    reconcile, which is every normal start.
+    """
+    if state is None:
+        return
+    percent = state.percent_snapshot if state.percent_snapshot is not None else 0
+    log_import_event(
+        f"A Centaur import was interrupted by a restart at {percent}%", level="warning"
+    )
+
+
+_log_interrupted_centaur_import(_centaur_import_store.reconcile_interrupted())
 
 
 # Custom (operator-added) engines: a binary uploaded from the browser or fetched

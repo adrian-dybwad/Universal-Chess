@@ -3769,6 +3769,8 @@ const EVENT_CATEGORY_LABEL_KEYS: Record<string, string> = {
   bluez_selfheal: 'settingsPage.eventLog.categoryBluetooth',
   update: 'settingsPage.eventLog.categoryUpdate',
   system: 'settingsPage.eventLog.categorySystem',
+  centaur_import: 'settingsPage.eventLog.categoryCentaurImport',
+  centaur: 'settingsPage.eventLog.categoryCentaur',
 };
 
 // Map a severity to a Badge variant. Unknown levels render as a neutral badge.

@@ -777,7 +777,9 @@
       "categoryBluetooth": "Bluetooth",
       "categoryUpdate": "Aktualizacja",
       "categorySystem": "System",
-      "categoryEngineInit": "Uruchomienie silnika"
+      "categoryEngineInit": "Uruchomienie silnika",
+      "categoryCentaurImport": "Import Centaura",
+      "categoryCentaur": "Oryginalny Centaur"
     },
     "debug": {
       "title": "Debug",

@@ -7,13 +7,17 @@ injected side-effect boundary; detection, validation, cruft-filtering, and the
 copy/exec-bit logic are exercised here through the public entry points.
 """
 
+import errno
+import gzip
 import os
 import shutil
+import subprocess
 import types
 from pathlib import Path
 
 import pytest
 
+from universalchess.services import event_log
 from universalchess.services.centaur_import import (
     CentaurImportError,
     InstallResult,
@@ -24,6 +28,7 @@ from universalchess.services.centaur_import import (
     install_from_image,
     validate_app_dir,
 )
+from universalchess.services.centaur_import.events import EVENT_CATEGORY
 from universalchess.services.centaur_import.installer import (
     ARMHF_SETUP_HELPER,
     MOUNT_HELPER,
@@ -240,13 +245,14 @@ def _install(tmp_path, **overrides):
     # no-op so the mount-focused tests are not perturbed by it (it has its own
     # dedicated tests). Tests that care pass their own ``ensure_runtime``.
     ensure_runtime = overrides.pop("ensure_runtime", lambda _runner: True)
+    decompress = overrides.pop("decompress", _fake_decompress)
     return runner, install_from_image(
         image,
         dest,
         tmp_dir=tmp_path / "tmp",
         mount_root=mount_root,
         runner=runner,
-        decompress=_fake_decompress,
+        decompress=decompress,
         ensure_runtime=ensure_runtime,
         **overrides,
     )
@@ -578,3 +584,384 @@ def test_ensure_factory_marker_is_idempotent_and_preserves_content(tmp_path):
 
     assert created is False
     assert marker.read_bytes() == b"preexisting"
+
+
+# ---------------------------------------------------------------------------
+# Event-log diagnostics
+# ---------------------------------------------------------------------------
+# Users who could not import their original Centaur left no diagnosable trail:
+# the mount/stage/armhf helpers ran with capture_output=True and their stderr was
+# thrown away, and any other failure reached only the root logger's ~/debug.log,
+# which is truncated on every boot. These tests pin the contract that every step
+# and every failure lands in the persistent event log the Settings > System
+# viewer reads, carrying the detail (argv, exit code, helper output) that
+# distinguishes a missing sudoers grant from a stale apt index from a full disk.
+
+
+@pytest.fixture
+def recorded_events(tmp_path, monkeypatch):
+    """Redirect the event log to a temp file and read it back on demand.
+
+    The real log lives at /var/lib/universalchess/logs/events.jsonl, which is
+    neither writable nor isolated in tests. Returns a callable (not a snapshot)
+    so each assertion reads the events written by the call it just made.
+    """
+    path = tmp_path / "events.jsonl"
+    monkeypatch.setenv("UC_EVENT_LOG_PATH", str(path))
+    # The module caches one logger per resolved path; a stale handler from an
+    # earlier test's tmp_path would send this test's records to a deleted file.
+    monkeypatch.setattr(event_log, "_loggers", {})
+    return lambda: event_log.read_events(path=path)
+
+
+def _errors(events):
+    """The messages of every error-level record, newest first."""
+    return [e["message"] for e in events if e["level"] == "error"]
+
+
+def _only_error(events):
+    """The single error-level message, asserting exactly one was recorded."""
+    errors = _errors(events)
+    assert len(errors) == 1, f"expected exactly one error event, got {errors}"
+    return errors[0]
+
+
+class _FailingHelper(_FakeMounter):
+    """A mount helper that fails one named verb with realistic helper output.
+
+    Extends the happy-path fake so the steps before the failing verb behave
+    normally (the image mounts, the app is detected), which is what makes the
+    failure land at the intended stage.
+    """
+
+    def __init__(self, mount_root, verb, *, returncode, stderr):
+        super().__init__(mount_root)
+        self.failing_verb = verb
+        self.returncode = returncode
+        self.stderr = stderr
+
+    def __call__(self, cmd, *args, **kwargs):
+        result = super().__call__(cmd, *args, **kwargs)
+        if self.calls[-1] == self.failing_verb:
+            return types.SimpleNamespace(returncode=self.returncode, stdout=b"", stderr=self.stderr)
+        return result
+
+
+@pytest.mark.parametrize(
+    "verb, returncode, stderr",
+    [
+        ("mount", 32, b"mount: /tmp/centaur-mnt: wrong fs type, bad option, bad superblock.\n"),
+        ("stage", 1, b"cp: cannot open 'engines/stockfish_pi' for reading: Permission denied\n"),
+        ("umount", 16, b"umount: /tmp/centaur-mnt: target is busy.\n"),
+    ],
+)
+def test_helper_failure_records_argv_exit_code_and_output(
+    tmp_path, recorded_events, verb, returncode, stderr
+):
+    """Every failing mount-helper verb must log its argv, exit code and stderr.
+
+    Why this test exists: the helper ran with capture_output=True and the result
+    was checked only for a non-zero returncode -- the captured stderr was
+    discarded, so "Failed to mount the uploaded image." was the entire record of
+    a failed import. The three causes users actually hit (a missing sudoers
+    grant, an unreadable app dir on the SD, a busy mountpoint) are only
+    distinguishable from that text.
+
+    How the regression manifests: dropping the stderr capture leaves an error
+    event with no helper output, so the stderr substring assertion fails; losing
+    the argv or exit code makes the corresponding assertion fail while the
+    import still reports the same generic message to the user.
+    """
+    runner = _FailingHelper(tmp_path / "mnt", verb, returncode=returncode, stderr=stderr)
+
+    with pytest.raises(CentaurImportError):
+        _install(tmp_path, runner=runner)
+
+    message = _only_error(recorded_events())
+    assert MOUNT_HELPER in message
+    assert f"sudo -n {MOUNT_HELPER} {verb}" in message
+    assert f"exit code {returncode}" in message
+    assert stderr.decode().strip() in message
+
+
+def test_helper_timeout_records_the_limit_it_exceeded(tmp_path, recorded_events):
+    """A helper that never returns must log the timeout, not vanish.
+
+    Why this test exists: a wedged loop-mount raises TimeoutExpired, which is not
+    an OSError and was caught by nothing in the installer. It surfaced as the web
+    worker's generic "Import failed" with the reason only in the boot-truncated
+    debug log, so a board that consistently times out looked identical to every
+    other failure.
+
+    How the regression manifests: without the TimeoutExpired branch the
+    exception escapes install_from_image as a bare SubprocessError, so the
+    pytest.raises(CentaurImportError) fails before the log is even read.
+    """
+    def runner(cmd, *args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"], output=b"", stderr=b"")
+
+    with pytest.raises(CentaurImportError):
+        _install(tmp_path, runner=runner)
+
+    message = _only_error(recorded_events())
+    assert "timed out" in message
+    assert "120s" in message
+
+
+def test_missing_sudo_binary_is_recorded_as_a_start_failure(tmp_path, recorded_events):
+    """A helper that cannot be started at all must say so, distinctly.
+
+    Why this test exists: when the sudoers grant or the helper file is missing
+    the subprocess raises OSError before any exit code exists. That is a
+    deployment fault with a different fix than a non-zero exit, so the log must
+    name the exception rather than report a fabricated exit code.
+
+    How the regression manifests: reporting "exit code None" (or letting the
+    OSError escape as an unexpected error) loses the distinction, and the
+    OSError-name assertion below fails.
+    """
+    def runner(cmd, *args, **kwargs):
+        raise FileNotFoundError(errno.ENOENT, "No such file or directory", "sudo")
+
+    with pytest.raises(CentaurImportError):
+        _install(tmp_path, runner=runner)
+
+    message = _only_error(recorded_events())
+    assert "could not be started" in message
+    assert "FileNotFoundError" in message
+    assert "exit code" not in message
+
+
+def test_armhf_helper_failure_records_the_apt_output(recorded_events):
+    """The armhf provisioning failure must carry the apt output that explains it.
+
+    Why this test exists: this step is the longest and the most failure-prone
+    (it runs apt on a board whose indexes are often stale), and its user-facing
+    message is a single fixed sentence. Without the helper's own output there is
+    nothing to distinguish "no network" from "unable to locate package" from
+    "dpkg was interrupted" -- three problems with three different fixes.
+
+    How the regression manifests: dropping the capture leaves the error event
+    without the apt line, so the "Unable to locate package" assertion fails
+    while the user-facing message is unchanged.
+    """
+    def runner(cmd, *args, **kwargs):
+        return types.SimpleNamespace(
+            returncode=100,
+            stdout=b"Reading package lists...\n",
+            stderr=b"E: Unable to locate package libc6:armhf\n",
+        )
+
+    with pytest.raises(CentaurImportError):
+        ensure_armhf_support(runner)
+
+    message = _only_error(recorded_events())
+    assert ARMHF_SETUP_HELPER in message
+    assert "exit code 100" in message
+    assert "E: Unable to locate package libc6:armhf" in message
+    # Both streams are kept: the helper reports progress on stdout and the
+    # reason on stderr, and which one carries the diagnosis varies by failure.
+    assert "Reading package lists..." in message
+
+
+def test_armhf_helper_timeout_is_recorded(recorded_events):
+    """A stuck apt run must be logged as a timeout with its limit.
+
+    Why this test exists: apt can block for the full ten-minute budget on a lock
+    or an unreachable mirror. That was indistinguishable from an instant failure
+    because neither the duration nor the timeout was recorded anywhere.
+
+    How the regression manifests: without the TimeoutExpired branch the
+    exception escapes as SubprocessError instead of CentaurImportError and the
+    raises assertion fails.
+    """
+    def runner(cmd, *args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd, kwargs["timeout"])
+
+    with pytest.raises(CentaurImportError):
+        ensure_armhf_support(runner)
+
+    message = _only_error(recorded_events())
+    assert "timed out" in message
+    assert "600s" in message
+
+
+def test_recorded_helper_output_is_one_bounded_line_keeping_the_tail(recorded_events):
+    """Verbose helper output must be collapsed, bounded, and tail-preserving.
+
+    Why this test exists: an apt run emits thousands of progress lines. Each
+    event is one JSON-lines record rendered on one row, and the file rotates at
+    1 MB, so logging the output verbatim would both break the viewer's layout
+    and evict the rest of the board's history. apt prints the reason for a
+    failure last, so the tail is the part worth keeping.
+
+    How the regression manifests: logging the raw stream leaves embedded
+    newlines (the single-line assertion fails) and an unbounded message (the
+    length assertion fails); truncating the tail instead of the head drops the
+    "E:" line the whole record exists for.
+    """
+    noise = b"Get:1 http://deb.debian.org/debian bookworm InRelease [151 kB]\n" * 500
+
+    def runner(cmd, *args, **kwargs):
+        return types.SimpleNamespace(
+            returncode=100, stdout=noise, stderr=b"E: dpkg was interrupted\n"
+        )
+
+    with pytest.raises(CentaurImportError):
+        ensure_armhf_support(runner)
+
+    message = _only_error(recorded_events())
+    assert "\n" not in message
+    assert len(message) < 1200
+    assert "E: dpkg was interrupted" in message
+    assert message.count("Get:1 http") < 20
+
+
+def test_corrupt_upload_records_the_decompress_failure_with_an_actionable_error(
+    tmp_path, recorded_events
+):
+    """A truncated or corrupt .img.gz must name decompression as the failure.
+
+    Why this test exists: an interrupted browser upload is the single most likely
+    cause of "I can't import my Centaur", and it lands in gzip. That exception
+    was caught only by the web worker's catch-all, which stored the word "Import
+    failed" and wrote the real reason to the boot-truncated debug log -- so the
+    most common failure was the least diagnosable one.
+
+    How the regression manifests: without the decompress guard the gzip error
+    propagates as a bare BadGzipFile (this raises-CentaurImportError assertion
+    fails) and nothing reaches the event log.
+    """
+    def bad_decompress(src, dst):
+        raise gzip.BadGzipFile("Not a gzipped file (b'\\x00\\x00')")
+
+    with pytest.raises(CentaurImportError) as exc:
+        _install(tmp_path, decompress=bad_decompress)
+
+    # The user gets a step-specific next action, not the old generic failure.
+    assert "decompress" in str(exc.value).lower()
+    message = _only_error(recorded_events())
+    assert "BadGzipFile" in message
+    assert "Not a gzipped file" in message
+
+
+def test_image_without_the_app_records_where_it_looked(tmp_path, recorded_events):
+    """An image with no Centaur program must log the detection failure.
+
+    Why this test exists: "could not find the Centaur software" is reported to
+    the user but was never recorded, so a support request about a wrongly-imaged
+    SD card (the boot partition instead of the root partition) left nothing to
+    confirm the image really was searched and really was empty.
+
+    How the regression manifests: no error event is written, so _only_error
+    raises on an empty list.
+    """
+    mount_root = tmp_path / "mnt"
+
+    def runner(cmd, *args, **kwargs):
+        if "mount" in cmd and "umount" not in cmd:
+            (mount_root / "etc").mkdir(parents=True, exist_ok=True)
+        return types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    with pytest.raises(CentaurImportError):
+        _install(tmp_path, mount_root=mount_root, runner=runner)
+
+    message = _only_error(recorded_events())
+    assert "no centaur program found" in message.lower()
+    assert str(mount_root) in message
+
+
+def test_incomplete_image_records_each_missing_entry(tmp_path, recorded_events):
+    """An image missing engines/fonts must log exactly which entries were absent.
+
+    Why this test exists: validation already names the missing entries to the
+    user, but that message disappears with the page. Recording it is what lets a
+    later support request confirm the SD card itself was incomplete rather than
+    the import being at fault.
+
+    How the regression manifests: the error event omits the entry names, so the
+    "fonts" assertion fails even though the import still fails correctly.
+    """
+    mount_root = tmp_path / "mnt"
+
+    def runner(cmd, *args, **kwargs):
+        if "mount" in cmd and "umount" not in cmd:
+            app = mount_root / "home" / "pi" / "centaur"
+            (app / "engines").mkdir(parents=True, exist_ok=True)
+            binary = app / "centaur"
+            binary.write_text("#!fake centaur\n")
+            binary.chmod(0o755)
+        return types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    with pytest.raises(CentaurImportError):
+        _install(tmp_path, mount_root=mount_root, runner=runner)
+
+    # fonts is the only absent entry, so it must be named and engines must not:
+    # a record that listed every required entry would not distinguish a partial
+    # card from an empty one.
+    message = _only_error(recorded_events())
+    assert "fonts" in message
+    assert "engines" not in message
+
+
+def test_full_disk_during_the_copy_records_the_errno_and_free_space(tmp_path, recorded_events):
+    """A failed copy into CENTAUR_HOME must log the OS error and the space left.
+
+    Why this test exists: the import writes a ~2 GB raw image and then a full
+    copy of the app, so ENOSPC is a real outcome on a small card. It surfaced as
+    the generic "Import failed" with no hint that the board was simply out of
+    room. Recording the free space alongside the errno is what turns that into a
+    one-line diagnosis.
+
+    How the regression manifests: without the copy guard the OSError reaches the
+    web worker's catch-all (this raises-CentaurImportError assertion fails); with
+    the guard but no disk-usage detail, the "free space" assertion fails.
+    """
+    def failing_copytree(src, dst, **kwargs):
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    with pytest.raises(CentaurImportError):
+        _install(tmp_path, copytree=failing_copytree)
+
+    message = _only_error(recorded_events())
+    assert "No space left on device" in message
+    assert "free space" in message
+
+
+def test_successful_import_records_each_stage_and_a_timed_completion(tmp_path, recorded_events):
+    """A successful import must leave an ordered, timed record of every stage.
+
+    Why this test exists: live progress is lost the moment the page closes or the
+    process restarts, so an import that stalls (or one a user says "did nothing")
+    could not be placed at a stage after the fact. The persistent timeline is
+    what identifies the step that hung; the completion record is the baseline a
+    slow import is compared against.
+
+    How the regression manifests: dropping the event write from a stage removes
+    that entry and shifts the list, failing the equality assertion; omitting the
+    completion record fails the duration/file-count assertions. All records must
+    carry the centaur_import category, which is what the viewer badges on.
+    """
+    _, result = _install(tmp_path)
+
+    events = recorded_events()
+    assert [e["category"] for e in events] == [EVENT_CATEGORY] * len(events)
+    assert [e["level"] for e in events] == ["info"] * len(events)
+
+    # read_events returns newest first; the pipeline order reads oldest first.
+    oldest_first = list(reversed(events))
+    assert [e["message"] for e in oldest_first[:8]] == [
+        "Decompressing image...",
+        "Mounting SD image...",
+        "Validating Centaur files...",
+        "Reading image contents...",
+        "Installing Centaur software...",
+        "Installing 32-bit support...",
+        "Configuring engine proxy...",
+        "Finalizing...",
+    ]
+
+    completion = events[0]
+    assert completion["duration_ms"] >= 0
+    assert str(result.file_count) in completion["message"]
+    assert len(events) == 9
