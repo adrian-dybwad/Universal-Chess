@@ -75,12 +75,17 @@ def test_mount_uses_readonly_loop_with_hardening_options(env_and_log):
     # The core safety contract: an allowed image is mounted ro + loop and with
     # nodev/nosuid/noexec. Losing 'ro' would let a corrupt image be written back;
     # losing noexec/nosuid would let the mounted tree carry exec/setuid payloads.
+    # 'noload' is part of the contract too: an SD image captured from a Centaur
+    # that was not cleanly unmounted has a dirty ext4 journal, and without noload
+    # the kernel refuses the mount outright ("write access unavailable, cannot
+    # proceed") because journal replay cannot write to a read-only loop device.
+    # Dropping it makes every unclean image fail with mount exit 32.
     env, _log, img_dir, mnt = env_and_log
     img = img_dir / "centaur-sd.img"
     img.write_bytes(b"\x00")
     proc, calls = _run(env, "mount", str(img))
     assert proc.returncode == 0, proc.stderr
-    assert calls == [f"mount -o ro,loop,nodev,nosuid,noexec {img} {mnt}"]
+    assert calls == [f"mount -o ro,noload,loop,nodev,nosuid,noexec {img} {mnt}"]
 
 
 def test_umount_releases_the_fixed_mountpoint(env_and_log):
@@ -143,7 +148,11 @@ def test_stage_copies_app_subtree_and_makes_it_readable(env_and_log):
     (src / "engines").mkdir(parents=True)
     (src / "engines" / "stockfish_pi").write_text("#!engine\n")
     (src / "centaur").write_text("#!fake\n")
-    os.chmod(src / "engines", 0o700)
+    # The rule reads 0o700 as over-permissive, which is backwards here: this is
+    # the restrictive mode the SD card actually carries, and reproducing it is
+    # the whole point of the test. Relaxing it would remove the EPERM that
+    # 'stage' exists to work around, leaving the test passing on any helper.
+    os.chmod(src / "engines", 0o700)  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
 
     staging = Path(env["CENTAUR_IMPORT_IMG_DIR"]) / "centaur-stage"
     proc, _calls = _run(env, "stage", str(src), str(staging))

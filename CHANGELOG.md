@@ -1201,6 +1201,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   band. Timed games now always show the clock. Show Clock still hides the turn
   indicator in untimed games, and its help names the exception.
 
+- **Original Centaur import rejected any SD card that was not cleanly shut
+  down**: the image is loop-mounted read-only, and a card pulled from a board
+  that lost power rather than being shut down carries uncommitted ext4 journal
+  entries. ext4 will not mount such a filesystem at all until it has replayed
+  them, and replaying is a write, which a read-only loop device cannot accept --
+  so the mount failed with "write access unavailable, cannot proceed" and the
+  import stopped at "Failed to mount the uploaded image." The mount now passes
+  `noload`, which skips the replay. Files written in the moments before power
+  loss can therefore read as stale, which does not affect the long-installed
+  engines, fonts and books the import copies; the option only removes a write,
+  so the image is still never modified.
+
 - **A failed Original Centaur import left almost nothing to diagnose it with**:
   the privileged mount, stage, unmount and armhf helpers all ran with their
   output captured and then discarded once the exit code was read, so a missing
