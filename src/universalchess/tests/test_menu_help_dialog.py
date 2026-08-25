@@ -319,7 +319,7 @@ def test_the_idle_timeout_restarts_on_a_page_turn():
     )
 
 
-@pytest.mark.parametrize("language", ["en", "es", "fr", "de", "nl"])
+@pytest.mark.parametrize("language", ["en", "es", "fr", "de", "nl", "pl"])
 def test_the_longest_shipped_help_text_is_readable_page_by_page(language):
     """Every catalog tip and option description must render within the panel.
 

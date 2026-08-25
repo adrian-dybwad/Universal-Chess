@@ -208,7 +208,7 @@ def test_missing_overlay_falls_back_to_english(base_menu):
 # -- real overlays: drift guard ----------------------------------------------
 
 
-@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl"])
+@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl", "pl"])
 def test_overlay_keys_reference_real_catalog_entries(base_menu, locale):
     """Every id/name in translations/<locale>.json resolves to a real catalog entry.
 
@@ -316,6 +316,25 @@ def test_get_localized_catalog_dutch_reflects_overlay_without_mutating_base():
     dutch = get_localized_catalog("nl")
     assert dutch.get_node("power.shutdown")["label"] == "Afsluiten"
     assert dutch.option_label("player_type", "human") == "Mens"
+
+    assert get_localized_catalog("en").get_node("power.shutdown")["label"] == "Shutdown"
+    assert english.option_label("player_type", "human") == english_players_before == "Human"
+
+
+def test_get_localized_catalog_polish_reflects_overlay_without_mutating_base():
+    """get_localized_catalog("pl") is Polish; the English base is unaffected.
+
+    Why: Polish is registered in the language service and given an overlay, the
+    same two halves Dutch needed. A regression in either half (an unregistered
+    code, or an overlay the loader never applies) shows English on a Polish
+    device while every other locale here still passes.
+    """
+    english = load_catalog()
+    english_players_before = english.option_label("player_type", "human")
+
+    polish = get_localized_catalog("pl")
+    assert polish.get_node("power.shutdown")["label"] == "Wyłącz"
+    assert polish.option_label("player_type", "human") == "Człowiek"
 
     assert get_localized_catalog("en").get_node("power.shutdown")["label"] == "Shutdown"
     assert english.option_label("player_type", "human") == english_players_before == "Human"

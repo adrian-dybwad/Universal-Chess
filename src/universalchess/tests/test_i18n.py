@@ -97,6 +97,20 @@ def test_returns_dutch_when_locale_is_dutch(monkeypatch):
     assert i18n.t("game_over.result.white_wins") == "Wit wint"
 
 
+def test_returns_polish_when_locale_is_polish(monkeypatch):
+    """t() returns the Polish string when the active locale is Polish.
+
+    Why: Polish is the second locale added to the selector as well as given a
+    bundle, and the first with a language whose plural/case endings differ from
+    every locale already shipped. A regression in the registration (a code
+    missing from the supported set, or a bundle the loader cannot find) shows up
+    here as English text.
+    """
+    _set_locale(monkeypatch, "pl")
+    assert i18n.t("common.enabled") == "Włączone"
+    assert i18n.t("game_over.result.white_wins") == "Białe wygrywają"
+
+
 def test_interpolates_named_placeholders():
     """t() fills {name} placeholders from kwargs via str.format.
 
@@ -130,7 +144,7 @@ def test_missing_key_returns_key_itself():
     assert i18n.t("does.not.exist") == "does.not.exist"
 
 
-@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl"])
+@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl", "pl"])
 def test_translated_bundle_covers_every_english_key(locale):
     """Every key in en.json has a translation in each shipped locale bundle.
 

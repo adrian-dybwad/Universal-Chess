@@ -1,0 +1,754 @@
+{
+  "_comment": "Polish (pl) translation overlay for menu.json. Keyed by node id / optionSet name / section id. Only translated strings are listed; anything omitted falls back to the English source in menu.json. Language names in the 'ui_language' optionSet are intentionally left untranslated (endonyms). The register is informal second person singular (ty/twój), matching i18n/locale/pl.json and Lichess's own Polish UI; boardLabel values are broken with an explicit newline rather than abbreviated, so a long Polish word does not shrink its row on the 128px panel, and a word that still does not fit on one line is hyphen-broken across the newline.",
+  "sections": {
+    "players": "Gracze",
+    "game": "Partia",
+    "agents": "Agenci",
+    "display": "Ekran",
+    "sound": "Dźwięk",
+    "connectivity": "Łączność",
+    "accounts": "Konta",
+    "engines": "Silniki",
+    "system": "System"
+  },
+  "optionSets": {
+    "color": {
+      "white": "Białe",
+      "black": "Czarne"
+    },
+    "player_type": {
+      "human": "Człowiek",
+      "engine": "Silnik",
+      "hand_brain": "Ręka + Mózg",
+      "lichess": "Lichess"
+    },
+    "hand_brain_mode": {
+      "normal": "Normalny (silnik = mózg)",
+      "reverse": "Odwrotny (człowiek = mózg)"
+    },
+    "time_control": {
+      "1": "1 min (Bullet)",
+      "3": "3 min (Blitz)",
+      "5": "5 min (Blitz)",
+      "10": "10 min (Rapid)",
+      "15": "15 min (Rapid)",
+      "30": "30 min (Klasyczne)",
+      "60": "60 min (Klasyczne)",
+      "90": "90 min (Klasyczne)"
+    },
+    "tc_increment": {
+      "0": "Brak",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "tc_delay": {
+      "0": "Brak",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s"
+    },
+    "tc_delay_mode": {
+      "none": "Brak",
+      "simple": "Proste (USA)",
+      "bronstein": "Bronstein"
+    },
+    "engine_move_delay": {
+      "0": "Brak",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s"
+    },
+    "think_time": {
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "20": "20 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "update_channel": {
+      "stable": "Stabilny (zalecany)",
+      "nightly": "Nightly (rozwojowy)"
+    },
+    "sleep_timer": {
+      "0": "Wyłączony",
+      "300": "5 min",
+      "600": "10 min",
+      "900": "15 min",
+      "1800": "30 min",
+      "3600": "1 godz."
+    },
+    "usb_gadget_mode": {
+      "off": {
+        "label": "Off",
+        "description": "USB Ethernet jest wyłączony.{wifi_or_ethernet_reach: Szachownica jest wtedy dostępna tylko przez Wi-Fi lub Ethernet.}"
+      },
+      "auto": {
+        "label": "Auto",
+        "description": "Szachownica sama wybiera Client albo Shared — Client, gdy komputer udostępnia sieć przez kabel, Shared, gdy tego nie robi — i przełącza się, gdy to się zmieni. Client i Shared pozostają natomiast stałe. W obu przypadkach szachownica jest dostępna pod {mdns_url}, a w trybie Shared także pod http://10.12.194.1/. Ponieważ tryb może zmienić się sam, zwykły internet komputera (Wi-Fi lub Ethernet) może przestać działać za każdym razem, gdy szachownica przejdzie w Shared."
+      },
+      "client": {
+        "label": "Client",
+        "description": "Komputer udostępnia szachownicy swój internet przez USB. Szachownica jest dostępna pod {mdns_url}. Wymaga włączonego udostępniania internetu (lub ICS) na komputerze."
+      },
+      "shared": {
+        "label": "Shared",
+        "description": "Szachownica zarządza siecią USB. Otwórz http://10.12.194.1/ albo {mdns_url}. Wyłącz udostępnianie internetu na komputerze — w macOS wyłącz też przełącznik przy „Universal Chess USB Gadget” na liście Udostępnianie (sam główny przełącznik nie wystarczy; inaczej Mac zachowa adres przypisany samoczynnie). Ostrzeżenie: gdy kabel jest podłączony, zwykły internet komputera (Wi-Fi lub Ethernet) może przestać działać. Szachownica udostępni komputerowi swoje połączenie z internetem, jeśli sama jest już online przez Wi-Fi."
+      }
+    },
+    "analysis_time": {
+      "quick": "Szybka (0,3 s)",
+      "standard": "Standardowa (0,8 s)",
+      "deep": "Głęboka (2 s)"
+    },
+    "coach_multipv": {
+      "1": "1 (wył.)"
+    },
+    "notation": {
+      "figurine": "Figurowa (♘f3)",
+      "san": "Standardowa (Nf3)",
+      "lan": "Długa (Ng1-f3)",
+      "uci": "Współrzędne (g1f3)"
+    },
+    "text_size": {
+      "small": "Mały",
+      "medium": "Średni",
+      "large": "Duży"
+    },
+    "timezones_common": {
+      "Europe/London": "Londyn",
+      "Europe/Paris": "Paryż",
+      "Europe/Berlin": "Berlin",
+      "Europe/Moscow": "Moskwa",
+      "America/New_York": "Nowy Jork",
+      "America/Los_Angeles": "Los Angeles",
+      "Asia/Dubai": "Dubaj",
+      "Asia/Kolkata": "Kalkuta",
+      "Asia/Shanghai": "Szanghaj",
+      "Asia/Tokyo": "Tokio",
+      "Australia/Sydney": "Sydney"
+    }
+  },
+  "accountTypes": {
+    "lichess": {
+      "fields": {
+        "api_token": {
+          "label": "Token API",
+          "help": "Utwórz token na wybranym serwerze Lichess z uprawnieniami board:play, challenge:read i challenge:write"
+        },
+        "range": {
+          "label": "Zakres rankingu",
+          "help": "Preferowany zakres rankingu przeciwnika przy szukaniu partii"
+        }
+      }
+    }
+  },
+  "nodes": {
+    "main": {
+      "label": "Menu główne"
+    },
+    "main.play": {
+      "label": "GRAJ",
+      "label_in_progress": "WZNÓW",
+      "help": "Rozpocznij nową partię. Gdy partia jest wstrzymana, widnieje tu WZNÓW i partia jest kontynuowana."
+    },
+    "main.positions": {
+      "label": "Pozycje",
+      "help": "Ustaw na szachownicy gotową pozycję, aby poćwiczyć lub przeanalizować."
+    },
+    "main.centaur": {
+      "label": "Oryginalny\nCentaur",
+      "help": "Wróć do oryginalnego oprogramowania DGT Centaur."
+    },
+    "main.settings": {
+      "label": "Ustawienia",
+      "help": "Skonfiguruj graczy, tempo gry, ekran, łączność i opcje systemowe."
+    },
+    "settings": {
+      "label": "Ustawienia"
+    },
+    "settings.players": {
+      "label": "Gracze",
+      "help": "Skonfiguruj nazwy graczy, typy graczy, silniki i Lichess."
+    },
+    "players.player1": {
+      "label": "Gracz 1\n{fn:player1_summary}",
+      "help": "Skonfiguruj gracza 1 (gracza, który prowadzi wybrany kolor)."
+    },
+    "players.player2": {
+      "label": "Gracz 2\n{fn:player2_summary}",
+      "help": "Skonfiguruj gracza 2."
+    },
+    "players.accounts": {
+      "label": "Konta",
+      "help": "Połącz token Lichess. Każde konto jest wypisane jako serwer:użytkownik."
+    },
+    "players.lichess": {
+      "label": "Lobby Lichess",
+      "boardLabel": "Lichess\nLobby",
+      "help": "Dane Lichess i gra online. Każde logowanie to serwer i użytkownik (lichess.org lub lichess.dev). Otwiera wybór konta, Rankingowa, trwające partie, wyzwania i Szukaj nowej partii."
+    },
+    "lichess.account": {
+      "label": "Konto",
+      "boardLabel": "Konto",
+      "help": "Którym zapisanym logowaniem Lichess ta szachownica gra i przegląda, niezależnie od tego, co jest ustawione w Graczach. Konta na końcu dodaje logowania albo je usuwa."
+    },
+    "lichess.ongoing": {
+      "label": "Trwające partie",
+      "boardLabel": "Trwające\npartie",
+      "help": "Kontynuuj partię na Lichess, którą to konto już rozpoczęło — na tej szachownicy, na stronie albo na innym urządzeniu.\n\nWybierz partię, aby podjąć ją tutaj. Zegar i twój kolor pochodzą z tamtej partii.\n\nJeśli lista jest pusta, to konto nie ma niezakończonych partii. Użyj Szukaj nowej partii, aby znaleźć nowego przeciwnika."
+    },
+    "lichess.challenges": {
+      "label": "Wyzwania",
+      "boardLabel": "Wyzwania",
+      "help": "Wyzwanie to partia zaproponowana temu kontu albo zaproponowana przez to konto komuś innemu.\n\nPrzychodzące: wybierz jedno, aby przyjąć je na tej szachownicy. Wyzwanie, które przyjdzie w trakcie szukania partii, pokazuje też Przyjmij i Odrzuć.\n\nWychodzące: czekają jeszcze na drugiego gracza. Wybierz jedno, aby poczekać tutaj; partia otworzy się na tej szachownicy, gdy przeciwnik ją przyjmie.\n\nSzukaj nowej partii wystawia publiczne ogłoszenie, zamiast wyzywać jedną osobę."
+    },
+    "lichess.new_game": {
+      "label": "Szukaj nowej partii",
+      "boardLabel": "Szukaj\npartii",
+      "help": "Znajdź na Lichess nowego przeciwnika dla tego konta, niezależnie od tego, co jest ustawione w Graczach. Rankingowa to wiersz powyżej, a tempo gry pochodzi z ustawień Partii; wybrany kolor obowiązuje tylko wtedy, gdy gracz jest ustawiony na Lichess."
+    },
+    "players.start": {
+      "label": "Rozpocznij\nnową partię",
+      "help": "Rozpocznij nową partię z obecną konfiguracją graczy. Kończy partię, która właśnie trwa."
+    },
+    "settings.player_detail": {
+      "label": "Gracz",
+      "help": "Skonfiguruj jednego gracza."
+    },
+    "settings.game": {
+      "label": "Partia",
+      "help": "Tempo gry i analiza pozycji na żywo."
+    },
+    "settings.agents": {
+      "label": "Agenci",
+      "help": "Skonfiguruj agentów AI (usługi), które napędzają funkcje takie jak trener: klucz API, model i endpoint."
+    },
+    "settings.notation": {
+      "label": "Notacja ruchów",
+      "boardLabel": "Notacja\n{value}",
+      "help": "Notacja szachowa używana na liście ruchów na szachownicy i w przeglądarce."
+    },
+    "settings.chess960": {
+      "help": "Rozpocznij każdą nową partię z losowej pozycji Chess960 (Fischer Random). Pozycja docelowa jest pokazana na ekranie; ustaw bierki tak samo."
+    },
+    "settings.timecontrol": {
+      "label": "Minuty bazowe",
+      "boardLabel": "Minuty bazowe\n{fn:time_control}",
+      "help": "Minuty na gracza przy prostym zegarze bez dodatków (bez incrementu i bez opóźnienia)."
+    },
+    "settings.timecontrol.engine_move_delay": {
+      "label": "Opóźnienie ruchu silnika",
+      "boardLabel": "Opóźnienie\nsilnika {value}",
+      "help": "W partiach na czas przeciw silnikowi, gdy silnik pokazuje swój ruch, jego zegar się zatrzymuje, a twój startuje po tym opóźnieniu (w czasie, gdy przestawiasz jego bierkę)."
+    },
+    "settings.timecontrol.preset": {
+      "label": "Szablon",
+      "boardLabel": "Szablon\n{fn:time_control_preset_label}",
+      "help": "Wybierz gotowe tempo gry: bez dodatków, z incrementem, z opóźnieniem albo tempo turniejowe. Wybierz Custom, aby użyć własnych ustawień zegara poniżej."
+    },
+    "timecontrol.custom.base": {
+      "label": "Czas bazowy",
+      "boardLabel": "Czas bazowy\n{value}",
+      "help": "Czas początkowy na zegarze każdego gracza."
+    },
+    "timecontrol.custom.increment": {
+      "label": "Increment",
+      "boardLabel": "Increment\n{value}",
+      "help": "Sekundy dodawane do zegara gracza po każdym jego ruchu (increment Fischera)."
+    },
+    "timecontrol.custom.delay": {
+      "label": "Opóźnienie",
+      "boardLabel": "Opóźnienie\n{value}",
+      "help": "Sekundy opóźnienia na każdy ruch, stosowane zgodnie z ustawieniem Tryb opóźnienia."
+    },
+    "timecontrol.custom.mode": {
+      "label": "Tryb opóźnienia",
+      "boardLabel": "Tryb\n{value}",
+      "help": "Brak: bez opóźnienia. Proste: zegar czeka, zanim zacznie odliczać. Bronstein: zużyty czas jest zwracany, najwyżej do wysokości opóźnienia."
+    },
+    "timecontrol.custom.asymmetric": {
+      "label": "Inny dla każdej strony",
+      "boardLabel": "Asymetria\n{value}",
+      "help": "Daje białym i czarnym różne czasy (fora czasowa). Gdy to jest włączone, ustaw poniżej czas bazowy i increment czarnych."
+    },
+    "timecontrol.custom.black_base": {
+      "label": "Czas bazowy czarnych",
+      "boardLabel": "Czas czarnych\n{value}",
+      "help": "Czas początkowy na zegarze czarnych, gdy strony mają różne czasy."
+    },
+    "timecontrol.custom.black_increment": {
+      "label": "Increment czarnych",
+      "boardLabel": "Increment\nczarnych {value}",
+      "help": "Sekundy dodawane do zegara czarnych po każdym ich ruchu, gdy strony mają różne czasy."
+    },
+    "settings.display": {
+      "label": "Ekran",
+      "help": "Decyduje, co pojawia się na ekranie e-paper i na diodach LED."
+    },
+    "settings.sound": {
+      "label": "Dźwięk",
+      "help": "Decyduje o sygnałach dźwiękowych i piknięciach."
+    },
+    "settings.connectivity": {
+      "label": "Łączność",
+      "help": "Sieć, urządzenia peryferyjne, USB Ethernet i dublowanie ekranu."
+    },
+    "settings.engines": {
+      "label": "Silniki",
+      "help": "Instaluj silniki szachowe do gry i analizy oraz nimi zarządzaj."
+    },
+    "settings.system": {
+      "label": "System",
+      "help": "Konserwacja, aktualizacje oprogramowania i zasilanie."
+    },
+    "connectivity": {
+      "label": "Łączność"
+    },
+    "connectivity.wifi": {
+      "help": "Połącz szachownicę z siecią bezprzewodową."
+    },
+    "connectivity.bluetooth": {
+      "help": "Sparuj klawiaturę Bluetooth z szachownicą."
+    },
+    "connectivity.usb_gadget": {
+      "label": "Gadżet USB",
+      "boardLabel": "Gadżet USB\n{value}",
+      "help": "USB Ethernet przez kabel do komputera. Kabel wchodzi do portu danych USB układu Pi Zero wewnątrz szachownicy, a nie do portu ładowania Centaura. Zmiana trybu przy podłączonym kablu może zerwać sesję. Aby połączyć kabel ponownie, odłącz go przy szachownicy (albo przy złączu USB-A): ponowne wpięcie do portu USB-C komputera nie zawsze przywraca łącze, a komputer może wtedy nie widzieć żadnego urządzenia."
+    },
+    "connectivity.chromecast": {
+      "help": "Dubluj obraz szachownicy na urządzeniu Chromecast."
+    },
+    "wifi": {
+      "label": "WiFi",
+      "help": "Stan WiFi, szukanie sieci i włączanie lub wyłączanie radia."
+    },
+    "wifi.scan": {
+      "label": "Szukaj",
+      "help": "Poszukaj dostępnych sieci bezprzewodowych i połącz się."
+    },
+    "wifi.networks": {
+      "label": "Sieci",
+      "help": "Sieci bezprzewodowe znalezione przy ostatnim szukaniu."
+    },
+    "wifi.networks.list": {
+      "help": "Wybierz sieć, aby się połączyć; sieci zabezpieczone poproszą o hasło."
+    },
+    "wifi.status": {
+      "help": "Obecny stan połączenia WiFi i siła sygnału."
+    },
+    "wifi.enabled": {
+      "help": "Stan połączenia WiFi. Wybierz, aby włączyć lub wyłączyć radio WiFi."
+    },
+    "bluetooth": {
+      "label": "Bluetooth",
+      "help": "Stan Bluetooth, rozgłaszanie i sparowane urządzenia."
+    },
+    "bluetooth.status": {
+      "help": "Obecny stan połączenia Bluetooth i rozgłaszania BLE."
+    },
+    "bluetooth.enabled": {
+      "help": "Stan połączenia Bluetooth i rozgłaszania. Wybierz, aby włączyć lub wyłączyć radio Bluetooth."
+    },
+    "bluetooth.devices": {
+      "label": "Urządzenia",
+      "help": "Sparuj nową klawiaturę oraz przejrzyj sparowane urządzenia Bluetooth lub nimi zarządzaj."
+    },
+    "bluetooth.pair": {
+      "label": "Sparuj klawiaturę",
+      "help": "Poszukaj klawiatury Bluetooth i sparuj ją."
+    },
+    "bluetooth.devices.list": {
+      "label": "Urządzenia",
+      "help": "Wybierz sparowane urządzenie, aby je połączyć, rozłączyć lub zapomnieć, albo sparuj nową klawiaturę."
+    },
+    "bluetooth.devices.list.items": {
+      "help": "Wybierz sparowane urządzenie, aby nim zarządzać."
+    },
+    "bluetooth.device.detail": {
+      "label": "Urządzenie",
+      "help": "Połącz, rozłącz lub zapomnij wybrane urządzenie Bluetooth."
+    },
+    "bluetooth.device.info": {
+      "help": "Wybrane urządzenie i stan jego połączenia."
+    },
+    "bluetooth.device.connect": {
+      "label": "Połącz",
+      "help": "Połącz się z tym urządzeniem."
+    },
+    "bluetooth.device.disconnect": {
+      "label": "Rozłącz",
+      "help": "Rozłącz to urządzenie."
+    },
+    "bluetooth.device.forget": {
+      "label": "Zapomnij",
+      "help": "Usuń sparowanie tego urządzenia."
+    },
+    "bluetooth.device.stale": {
+      "label": "Sparowanie odrzucone",
+      "help": "Urządzenie odrzuciło zapisane sparowanie; usuń je albo zachowaj."
+    },
+    "bluetooth.device.stale.remove": {
+      "label": "Usuń\nsparowanie",
+      "help": "Zapomnij odrzucone sparowanie, aby dało się sparować ponownie."
+    },
+    "bluetooth.device.stale.keep": {
+      "label": "Zachowaj\nsparowanie",
+      "help": "Zachowaj istniejące sparowanie i wróć."
+    },
+    "bluetooth.keyboards": {
+      "label": "Sparuj klawiaturę",
+      "help": "Znalezione klawiatury Bluetooth; wybierz jedną, aby ją sparować."
+    },
+    "bluetooth.keyboards.list": {
+      "help": "Wybierz klawiaturę do sparowania; jeśli trzeba, pokaże się kod parowania."
+    },
+    "system": {
+      "label": "System"
+    },
+    "group.system.device": {
+      "label": "Urządzenie",
+      "help": "Ustawienia uśpienia, zegara i języka tej szachownicy."
+    },
+    "system.inactivity": {
+      "label": "Licznik uśpienia",
+      "boardLabel": "Licznik\nuśpienia {value}",
+      "help": "Automatycznie usypia szachownicę po okresie bezczynności."
+    },
+    "system.timezone": {
+      "label": "Strefa czasowa",
+      "boardLabel": "Strefa czasowa\n{value}",
+      "help": "Ustawia strefę czasową zegara urządzenia. Zapisane czasy partii pozostają w UTC; to dotyczy zegara pokazywanego na szachownicy."
+    },
+    "system.ntp": {
+      "label": "Czas sieciowy",
+      "boardLabel": "Czas sieciowy",
+      "help": "Automatycznie utrzymuje poprawny czas z internetu. Szachownica nie ma zegara z baterią, więc gdy to jest wyłączone -- albo gdy nie ma sieci -- jej czas się rozjeżdża i trzeba go ustawić ręcznie w Ustawieniach w przeglądarce."
+    },
+    "system.language": {
+      "label": "Język",
+      "boardLabel": "Język\n{value}",
+      "help": "Język menu szachownicy, ekranu i aplikacji internetowej. Trener AI pisze swoje uwagi również w tym języku; nie ma osobnego ustawienia języka trenera."
+    },
+    "system.updates": {
+      "label": "Aktualizacje",
+      "boardLabel": "Aktualizacje\n{fn:updates_status}",
+      "help": "Sprawdź i zainstaluj aktualizacje oprogramowania."
+    },
+    "system.reset": {
+      "label": "Przywróć\nustawienia",
+      "help": "Przywróć wszystkim ustawieniom wartości domyślne."
+    },
+    "system.about": {
+      "label": "Informacje",
+      "help": "Informacje o wersji i wsparciu."
+    },
+    "system.power": {
+      "label": "Zasilanie",
+      "help": "Wyłącz szachownicę albo uruchom ją ponownie."
+    },
+    "system.reset.confirm": {
+      "label": "Przywróć ustawienia",
+      "help": "Potwierdź przywrócenie wszystkich ustawień do wartości domyślnych."
+    },
+    "system.reset.confirm.yes": {
+      "label": "Przywrócić\nustawienia?",
+      "help": "Wyczyść wszystkie ustawienia partii i graczy oraz przywróć domyślne."
+    },
+    "system.reset.confirm.no": {
+      "label": "Anuluj",
+      "help": "Wróć bez zmiany ustawień."
+    },
+    "analysis.enabled": {
+      "label": "Analiza na żywo",
+      "help": "Pokazuje ocenę obecnej pozycji przez silnik w trakcie gry."
+    },
+    "analysis.engine": {
+      "label": "Silnik analizy",
+      "boardLabel": "Silnik\n{value}",
+      "help": "Silnik używany do analizy pozycji (najlepiej zmieniać między partiami)."
+    },
+    "analysis.time": {
+      "label": "Czas analizy",
+      "boardLabel": "Analiza\n{value}",
+      "help": "Jak długo silnik szachownicy analizuje każdą pozycję na potrzeby oceny. Dłużej znaczy dokładniej (bliżej wyniku z przeglądarki), ale zużywa więcej procesora i baterii."
+    },
+    "analysis.deep": {
+      "label": "Głęboka analiza (przeglądarka)",
+      "help": "Analizuje oglądaną pozycję w twojej przeglądarce silnikiem Stockfish 16 NNUE, znacznie mocniejszym niż ten na szachownicy. Za pierwszym razem pobiera około 39 MB."
+    },
+    "coach.id": {
+      "label": "Trener",
+      "boardLabel": "Trener\n{fn:coach_selected_label}",
+      "help": "Osobowość i styl trenera. Automatycznie dobiera trenera do rankingu przeciwnika; niezależne od agenta, który go napędza."
+    },
+    "coach.provider": {
+      "label": "Agent",
+      "boardLabel": "Agent\n{value}",
+      "help": "Który agent AI napędza trenera. Wypisani są tylko agenci z kluczem API i wszystkimi wymaganymi ustawieniami; skonfiguruj ich w Ustawienia > Agenci. Wyszarzone, dopóki trener jest wyłączony."
+    },
+    "coach.multipv": {
+      "label": "Warianty kandydujące",
+      "boardLabel": "Warianty\n{value}",
+      "help": "Liczba kandydujących ruchów silnika, które trener bierze pod uwagę przy jednym ruchu. Wyższe wartości pozwalają mu proponować alternatywy, ale kosztują dodatkową analizę; 1 wyłącza alternatywy."
+    },
+    "game.ponder": {
+      "label": "Stałe myślenie",
+      "boardLabel": "Stałe\nmyślenie",
+      "help": "Pozwala silnikom myśleć w twoim czasie. Poprawia grę silnika, ale bez przerwy utrzymuje osobny proces silnika i zużywa więcej procesora i prądu (najlepiej gdy szachownica jest na zasilaniu sieciowym, nie na baterii)."
+    },
+    "alerts.queen_threat": {
+      "label": "Ostrzeżenie o hetmanie",
+      "boardLabel": "Twój hetman",
+      "help": "Ostrzega, gdy twój własny hetman jest atakowany: TWÓJ HETMAN na ekranie, błysk diod LED od atakującej bierki do twojego hetmana i ostrzeżenie na szachownicy w przeglądarce. Szach jest pokazywany zawsze i nie da się tego wyłączyć."
+    },
+    "group.game.clock": {
+      "label": "Zegar szachowy"
+    },
+    "group.game.variant": {
+      "label": "Wariant"
+    },
+    "group.game.alerts": {
+      "label": "Ostrzeżenia w partii"
+    },
+    "group.game.analysis": {
+      "label": "Analiza"
+    },
+    "group.game.pondering": {
+      "label": "Stałe myślenie"
+    },
+    "group.game.history": {
+      "label": "Lista ruchów"
+    },
+    "group.game.coach": {
+      "label": "Trener"
+    },
+    "group.display.epaper": {
+      "label": "Ekran e-paper"
+    },
+    "group.display.leds": {
+      "label": "Diody LED"
+    },
+    "agents.list.items": {
+      "help": "Wybierz agenta, aby ustawić jego klucz API, model i endpoint."
+    },
+    "agents.detail": {
+      "label": "Agent",
+      "help": "Skonfiguruj wybranego agenta: klucz API, model i endpoint."
+    },
+    "agents.detail.clear_key": {
+      "label": "Usuń klucz API",
+      "boardLabel": "Usuń klucz\nAPI",
+      "help": "Usuwa zapisany klucz API tego agenta. Pokazywane tylko wtedy, gdy klucz jest ustawiony."
+    },
+    "agents.detail.api_key": {
+      "label": "Klucz API",
+      "boardLabel": "Klucz API\n{fn:agent_key_status}",
+      "help": "Klucz API tego agenta AI."
+    },
+    "agents.detail.model": {
+      "label": "Model",
+      "boardLabel": "Model\n{fn:agent_model_label}",
+      "help": "Model dla tego agenta (pobierany na bieżąco; puste używa domyślnego dla agenta)."
+    },
+    "agents.detail.model_custom": {
+      "label": "Model",
+      "boardLabel": "Model\n{fn:agent_model_label}",
+      "help": "Identyfikator modelu dla tego endpointu (puste używa domyślnego dla agenta)."
+    },
+    "agents.detail.base_url": {
+      "label": "Bazowy adres URL",
+      "boardLabel": "Bazowy URL\n{fn:agent_base_url_label}",
+      "help": "Bazowy adres URL dla tego endpointu agenta zgodnego z OpenAI."
+    },
+    "power": {
+      "label": "Zasilanie"
+    },
+    "power.shutdown": {
+      "label": "Wyłącz",
+      "help": "Wyłącz szachownicę."
+    },
+    "power.reboot": {
+      "label": "Uruchom\nponownie",
+      "help": "Uruchom szachownicę ponownie."
+    },
+    "about": {
+      "label": "Informacje",
+      "help": "Wersja i telemetria systemu na żywo."
+    },
+    "about.version": {
+      "label": "Wersja",
+      "boardLabel": "Wersja\n{value}",
+      "valueDefault": "Nieznana",
+      "help": "Zainstalowana wersja oprogramowania."
+    },
+    "about.telemetry": {
+      "help": "Telemetria systemu na żywo (procesor, pamięć, dysk, czas pracy)."
+    },
+    "updates": {
+      "label": "Aktualizacje",
+      "help": "Automatyczne pobieranie, kanał wydań i instalowanie aktualizacji."
+    },
+    "updates.auto": {
+      "label": "Pobieraj aktualizacje automatycznie",
+      "boardLabel": "Auto pobieranie\n{fn:auto_update_state}",
+      "help": "Automatycznie pobiera nowe wersje w tle, aby były gotowe do instalacji. Aktualizacje nigdy nie instalują się same; ty wybierasz, kiedy je zainstalować."
+    },
+    "updates.channel": {
+      "label": "Kanał aktualizacji",
+      "boardLabel": "Kanał\n{value}",
+      "help": "Zalecane są wydania stabilne. Wersje nightly mogą zawierać błędy."
+    },
+    "updates.check": {
+      "label": "Sprawdź\naktualizacje",
+      "help": "Sprawdź teraz na serwerze aktualizacji, czy jest nowsza wersja."
+    },
+    "updates.install_pending": {
+      "label": "Zainstaluj\npobraną aktualizację",
+      "boardLabel": "Zainstaluj\nv{value}",
+      "help": "Instaluje pobraną aktualizację; szachownica uruchamia się ponownie z nową wersją."
+    },
+    "updates.download": {
+      "label": "Pobierz aktualizację",
+      "boardLabel": "Pobierz\nv{value}",
+      "help": "Pobiera dostępną aktualizację."
+    },
+    "updates.install_local": {
+      "label": "Zainstaluj\nlokalny .deb",
+      "help": "Instaluje pakiet .deb znaleziony w katalogu domowym."
+    },
+    "updates.install_local.confirm": {
+      "label": "Zainstaluj lokalny .deb",
+      "help": "Potwierdź instalację znalezionego pakietu .deb."
+    },
+    "updates.install_local.confirm.yes": {
+      "label": "Zainstalować {value}?",
+      "boardLabel": "Zainstalować\n{value}?",
+      "help": "Instaluje znaleziony pakiet; szachownica uruchamia się ponownie z nową wersją."
+    },
+    "updates.install_local.confirm.no": {
+      "label": "Anuluj",
+      "help": "Wróć bez instalowania."
+    },
+    "field.player.color": {
+      "label": "Kolor",
+      "boardLabel": "Kolor\n{value}",
+      "help": "Którym kolorem gra ten gracz"
+    },
+    "field.player.type": {
+      "label": "Typ gracza",
+      "boardLabel": "Typ\n{value}",
+      "help": "Człowiek, Silnik, Ręka+Mózg albo Lichess"
+    },
+    "field.player.name": {
+      "label": "Nazwa gracza",
+      "boardLabel": "Nazwa\n{fn:player_name}",
+      "help": "Opcjonalna nazwa do nagłówków PGN"
+    },
+    "field.player.hand_brain_mode": {
+      "label": "Tryb Ręka+Mózg",
+      "boardLabel": "Odwrotny",
+      "help": "Jak człowiek i silnik współpracują"
+    },
+    "field.player.engine": {
+      "label": "Silnik",
+      "boardLabel": "Silnik\n{value}",
+      "help": "Silnik szachowy, którego użyć"
+    },
+    "field.player.think_time": {
+      "label": "Czas myślenia",
+      "boardLabel": "Myślenie\n{value}",
+      "help": "Jak długo silnik może myśleć nad jednym ruchem"
+    },
+    "field.player.elo": {
+      "label": "ELO / styl",
+      "boardLabel": "ELO\n{value}",
+      "help": "Siła lub osobowość silnika"
+    },
+    "field.display.show_board": {
+      "label": "Pokaż szachownicę",
+      "help": "Pokazuje szachownicę na ekranie"
+    },
+    "field.display.sprites": {
+      "label": "Zestaw bierek",
+      "help": "Zestaw grafik, którymi rysowane są bierki na ekranie e-paper"
+    },
+    "field.display.text_size": {
+      "label": "Rozmiar tekstu",
+      "boardLabel": "Rozmiar tekstu\n{value}",
+      "help": "Rozmiar tekstu na ekranie e-paper: menu, wypowiedzi trenera, lista ruchów, zegar oraz ekrany końca partii, ustawiania pozycji i pomocy. Większy tekst mieści na ekranie mniej wierszy i rzędów."
+    },
+    "field.display.show_clock": {
+      "label": "Pokaż zegar",
+      "boardLabel": "Zegar",
+      "help": "Pokazuje zegar partii i wskaźnik, kto jest na posunięciu. W partiach na czas zegar jest pokazywany zawsze, aby pozostały czas był widoczny."
+    },
+    "field.display.show_analysis": {
+      "label": "Pokaż analizę",
+      "help": "Pokazuje okno analizy silnika"
+    },
+    "field.display.show_graph": {
+      "label": "Pokaż wykres oceny",
+      "boardLabel": "Pokaż wykres",
+      "help": "Pokazuje wykres przebiegu oceny"
+    },
+    "field.display.led_brightness": {
+      "label": "Jasność diod LED",
+      "boardLabel": "LED: {value}",
+      "help": "Poziom jasności diod LED szachownicy"
+    },
+    "field.display.pegasus_override_brightness": {
+      "label": "Nadpisz jasność Pegasusa",
+      "help": "Aplikacja DGT Chess wysyła stałą jasność diod LED. Gdy to jest włączone, dla diod Pegasusa obowiązuje ustawienie Jasność diod LED powyżej."
+    },
+    "field.sound.enabled": {
+      "label": "Dźwięk włączony",
+      "help": "Główny przełącznik wszystkich efektów dźwiękowych"
+    },
+    "field.sound.piece_events": {
+      "label": "Zdarzenia bierek",
+      "help": "Piknięcie przy podniesieniu lub postawieniu bierki"
+    },
+    "field.sound.game_events": {
+      "label": "Zdarzenia partii",
+      "help": "Piknięcie przy szachu, macie i innych zdarzeniach w partii"
+    },
+    "field.sound.errors": {
+      "label": "Błędy",
+      "help": "Piknięcie przy błędach"
+    },
+    "field.sound.key_press": {
+      "label": "Naciśnięcie przycisku",
+      "help": "Piknięcie przy naciśnięciu przycisków"
+    },
+    "field.lichess.rated": {
+      "label": "Rankingowa",
+      "boardLabel": "Rankin-\ngowa",
+      "help": "Partie rankingowe liczą się do rankingu Lichess tego konta; towarzyskie nie.\n\nDotyczy każdego ogłoszenia wystawionego przez tę szachownicę, także tego z lobby, gdy żaden gracz nie jest ustawiony na Lichess."
+    },
+    "field.lichess.api_token": {
+      "label": "Token API",
+      "help": "Utwórz token na wybranym serwerze Lichess z uprawnieniami board:play, challenge:read i challenge:write"
+    },
+    "field.lichess.range": {
+      "label": "Zakres rankingu",
+      "help": "Preferowany zakres rankingu przeciwnika przy szukaniu partii"
+    },
+    "field.system.database_uri": {
+      "label": "URI bazy danych",
+      "help": "Pozostaw puste, aby użyć domyślnego SQLite. Obsługuje każdy URI zgodny z SQLAlchemy."
+    }
+  }
+}

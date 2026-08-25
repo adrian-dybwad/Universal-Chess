@@ -164,7 +164,8 @@
       { "value": "pt", "label": "Portugu\u00eas" },
       { "value": "de", "label": "Deutsch" },
       { "value": "ja", "label": "\u65e5\u672c\u8a9e" },
-      { "value": "nl", "label": "Nederlands" }
+      { "value": "nl", "label": "Nederlands" },
+      { "value": "pl", "label": "Polski" }
     ],
     "timezones_common": [
       { "value": "UTC", "label": "UTC" },

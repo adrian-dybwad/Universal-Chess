@@ -1,9 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import de from './locales/de.json';
-import en from './locales/en.json';
-import es from './locales/es.json';
-import fr from './locales/fr.json';
-import nl from './locales/nl.json';
+
+import type { Bundle } from '../test/localeBundles';
+import {
+  LOCALES,
+  PLURAL_SUFFIX,
+  SHIPPED,
+  TRANSLATED,
+  baseKey,
+  leafKeys,
+  requiredCategories,
+} from '../test/localeBundles';
 
 /**
  * Holds the shipped locale bundles to the same key set.
@@ -17,17 +23,12 @@ import nl from './locales/nl.json';
  *
  * How a regression manifests: the offending keys are listed by name below, on
  * whichever side is short.
+ *
+ * Counted strings are compared by base key rather than by full key, because how
+ * many plural forms a counted string needs is a property of the language and not
+ * of English. Demanding English's two forms of every bundle is what made every
+ * Polish count except one fall back to English.
  */
-
-type Bundle = { [key: string]: string | Bundle };
-
-/** Every leaf key in a bundle, dotted -- `settingsPage.deviceClock.title`. */
-function leafKeys(bundle: Bundle, prefix = ''): string[] {
-  return Object.entries(bundle).flatMap(([key, value]) => {
-    const path = prefix ? `${prefix}.${key}` : key;
-    return typeof value === 'string' ? [path] : leafKeys(value, path);
-  });
-}
 
 // Interpolation placeholders, e.g. {{amount}}. A translation that drops or
 // renames one silently renders the braces to the user.
@@ -43,15 +44,10 @@ function placeholdersOf(bundle: Bundle, path: string): Set<string> {
   );
 }
 
-const LOCALES = {
-  en: en as Bundle, es: es as Bundle, fr: fr as Bundle, de: de as Bundle, nl: nl as Bundle,
-};
-const TRANSLATED = ['es', 'fr', 'de', 'nl'] as const;
-
 describe('shipped locale bundles', () => {
   it.each(TRANSLATED)('translate exactly the same set of keys as English (%s)', (code) => {
-    const english = new Set(leafKeys(LOCALES.en));
-    const other = new Set(leafKeys(LOCALES[code]));
+    const english = new Set(leafKeys(LOCALES.en).map(baseKey));
+    const other = new Set(leafKeys(LOCALES[code]).map(baseKey));
 
     // Reported as sorted names rather than a count so a failure says which keys
     // to add and to which file.
@@ -61,13 +57,49 @@ describe('shipped locale bundles', () => {
     expect({ untranslated, orphaned }).toEqual({ untranslated: [], orphaned: [] });
   });
 
+  it.each(SHIPPED)('spell out every plural form the language needs (%s)', (code) => {
+    // A counted string missing one of its language's categories is not a missing
+    // key to the reader: i18next finds nothing for that category and falls back,
+    // so a Polish page reads "3 positions" between two Polish sentences. Polish
+    // needs four forms (1, 2-4, 5 and up, fractions) where English needs two, so
+    // the shortfall only shows on languages needing more than the source.
+    const required = requiredCategories(code);
+
+    const categoriesByBase = new Map<string, string[]>();
+    for (const path of leafKeys(LOCALES[code])) {
+      const match = PLURAL_SUFFIX.exec(path);
+      if (!match) continue;
+      const base = baseKey(path);
+      categoriesByBase.set(base, [...(categoriesByBase.get(base) ?? []), match[1]]);
+    }
+
+    // Bases absent altogether are reported by the key-parity test above; this
+    // one reports the shape of the families that are present. `required` is
+    // asserted alongside so a failure shows what was expected of this language.
+    const wrongShape = [...categoriesByBase.entries()]
+      .map(([base, categories]) => ({ base, categories: [...categories].sort() }))
+      .filter(({ categories }) => categories.join() !== required.join())
+      .sort((a, b) => a.base.localeCompare(b.base));
+
+    expect({ required, wrongShape }).toEqual({ required, wrongShape: [] });
+  });
+
   it.each(TRANSLATED)('keep the same interpolation placeholders in every translated string (%s)', (code) => {
     // A key can be present and still broken: `{{amount}}` renamed or dropped in
     // translation renders the literal braces, or an empty gap, to the user.
-    const mismatched = leafKeys(LOCALES.en)
+    // Driven off the translated bundle's own keys so that plural forms English
+    // does not have, such as Polish `_few`, are checked too; each is matched
+    // against an English form of the same base, whose categories differ by
+    // language but whose placeholders must not.
+    const englishByBase = new Map<string, Set<string>>();
+    for (const path of leafKeys(LOCALES.en)) {
+      englishByBase.set(baseKey(path), placeholdersOf(LOCALES.en, path));
+    }
+
+    const mismatched = leafKeys(LOCALES[code])
       .map((path) => ({
         path,
-        en: [...placeholdersOf(LOCALES.en, path)].sort(),
+        en: [...(englishByBase.get(baseKey(path)) ?? [])].sort(),
         other: [...placeholdersOf(LOCALES[code], path)].sort(),
       }))
       .filter(({ en: e, other }) => e.join() !== other.join());

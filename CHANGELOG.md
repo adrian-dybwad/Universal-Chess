@@ -198,6 +198,29 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   byline or the hint is dropped -- the check that would have caught all three,
   and which fails without this fix.
 
+- **Counted strings in the web app fell back to English**: the test holding the
+  translation bundles to one key set compared them key for key, which for a
+  counted string means demanding English's plural shape -- `_one` and `_other`
+  and nothing else -- of every language. How many plural forms a counted string
+  needs is a property of the language, not of the language it was written in:
+  i18next asks CLDR for the category of the count and reads the key for that
+  category, so any form English does not distinguish had no key to find and fell
+  through to English. Spanish and French were mildly affected, both splitting off
+  a category at exactly a million, which none of the seven counted strings here
+  reaches. Polish was affected at every count: it distinguishes 1 from the 2-4
+  band from 5-and-up, so a Polish page read "3 positions" and "12 packages can be
+  upgraded" in the middle of Polish prose, and only a count of exactly 1 came out
+  Polish. Nothing about the bundles looked wrong, because the bundles matched --
+  which is why the parity test could not see it and reported them clean. The
+  parity check now compares counted strings by their base key and asks
+  `Intl.PluralRules` -- the same CLDR data i18next consults -- which forms each
+  language owes, and a second test renders every counted string in every shipped
+  language at a count from each of its categories and requires the result to come
+  from that language's own bundle rather than any fallback. The Polish forms are
+  spelt out in the test as well, since a check that selects the category the same
+  way i18next does would still pass with `_few` and `_many` written into each
+  other's slots.
+
 - **The BlueZ self-heal runs only on a Raspberry Pi**: the workaround targets
   a BCM43430 firmware fault and was gated on nothing more than the presence of
   an hci device. Orange Pi carries a uwe5622, an unrelated part the workaround
@@ -455,6 +478,52 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   Mode, which also gives the radio group an accessible name that describes what
   it sets rather than repeating the heading. The board's menu is unaffected --
   it has never shown both.
+
+- **Polish UI**: Polski is now offered in Settings > Language and translates the
+  board menus, e-paper widgets, and the web app. Like Dutch, Polish was not
+  already on the list, so adding it meant registering the locale itself -- the
+  supported set, the selector label, and the plain-English name the AI coach is
+  instructed with -- as well as writing all three bundles: the 338 board strings,
+  the menu-catalog overlay, and the 981-key web bundle. It sits after Dutch at
+  the end of the selector, on the same basis: neither language is in the ten
+  most-spoken the list opens with.
+  - The copy is informal (ty, not Pan/Pani), matching Lichess's own Polish
+    interface and Polish consumer software, and uses the chess vocabulary a
+    Polish player expects: hetman for the queen, goniec for the bishop, skoczek
+    for the knight, bierki for the pieces, remis, pat and szach mat.
+  - Polish inflects where none of the languages before it did, and two board
+    strings substitute a colour label that is fixed in the nominative ("Białe"),
+    which no Polish verb governs. Rather than ship broken grammar, the Lichess
+    start message and the king-lift resign prompt label the side instead of
+    governing it ("Twój kolor: Białe"). Counted seconds on the board use the `s`
+    symbol, because the board's own `t()` is a flat key lookup with no plural
+    mechanism at all, so there is nowhere to put the three endings Polish needs
+    for 1, for 2-4 and for 5 or more.
+  - The web app does have a plural mechanism, and Polish is the first shipped
+    language to need more of it than English: four forms where English has two.
+    The seven counted strings now carry all four, so "1 pozycja", "3 pozycje"
+    and "5 pozycji" each read correctly, and a fraction takes the genitive
+    singular the same way a Polish reader writes "1,5 pozycji". Package counts
+    were reordered to "Można zaktualizować {{count}} pakiety", which is where a
+    Polish sentence puts the verb.
+  - RESUME on the Play tile reads WZNÓW. It sets at 29pt in the tile's 32pt slot,
+    which is what English RESUME already does at 30pt, so the accurate word was
+    kept rather than traded for a shorter, vaguer one; KONTYNUUJ would have been
+    shrunk to 20pt, much as FORTSETZEN is to 19pt. The tile's help quotes the
+    word the tile shows.
+  - Lengths were measured rather than judged by eye, through the widgets that
+    draw them: `scripts/measure_locale_fit.py` reported five board strings that
+    fit in English and not in Polish, four of which were changed to fit at full
+    size and read at least as well. The fifth, `splash.starting`, keeps
+    "Uruchamianie..." at 16pt, because the alternative that fits at 18pt is not
+    the word a Polish reader expects for a system starting, and shrinking loses
+    nothing. The bundled font draws all eighteen characters Polish adds, and the
+    „...” quotes its typography uses.
+  - The exemption list recording which catalog strings need no translation was
+    re-read against Polish rather than inherited: `min` stays exempt because it
+    is the SI symbol for minute in Polish too, and the four place names spelt
+    identically stay exempt, while the cities Polish renames (Moscow becomes
+    Moskwa, London Londyn, Kolkata Kalkuta) are translated like any other string.
 
 - **Dutch UI**: Nederlands is now offered in Settings > Language and translates
   the board menus, e-paper widgets, and the web app. Unlike the four languages
