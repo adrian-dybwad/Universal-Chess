@@ -63,15 +63,30 @@ jobs:
             exit 0
           fi
 
-          echo "Pins changed:"
-          git diff --unified=0 -- "$LOCK" | grep -E '^[+-][a-z]' || true
+          # The message is built by a script rather than inline here because what
+          # has to be right about it cannot be seen by reading it: the
+          # `Changelog: none` declaration counts only as a git trailer in the last
+          # paragraph, and a lock diff's --hash backslashes join the lines naming
+          # the versions if they reach a heredoc. Both are covered by
+          # src/universalchess/tests/test_pinned_refresh_workflow.py.
+          #
+          # A refusal (the lock changed but no pin moved) fails this step through
+          # pipefail, which is the intent: that means the generated header was
+          # edited without the lock being regenerated, and calling it a refresh
+          # would misdescribe it.
+          MESSAGE=/tmp/refresh-commit-message.md
+          git diff --unified=0 -- "$LOCK" \
+            | ./scripts/pinned-refresh-commit-message.sh > "$MESSAGE"
+
+          echo "Commit message:"
+          cat "$MESSAGE"
 
           BRANCH="deps/refresh-pinned-requirements"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$BRANCH"
           git add "$LOCK"
-          git commit -m "Refresh the pinned Python closure"
+          git commit -F "$MESSAGE"
 
           # Force-push the branch: a superseded proposal is noise, and the branch
           # holds nothing but generated output that this job just reproduced.
@@ -92,6 +107,12 @@ jobs:
           the versions and hashes are coherent with each other. `--verify` built
           the wheelhouse from this lock and resolved `requirements.txt` against it
           offline, the way the postinst does, before this pull request was opened.
+
+          The commit declares `Changelog: none`, which holds for routine version
+          drift: a board cannot observe which version of a vendored library it
+          runs. If a pin here resolves an advisory or changes behaviour a board
+          can show, write a changelog entry before merging -- the generator cannot
+          tell those apart.
 
           Pushed with `GITHUB_TOKEN`, so the usual checks did not start on their
           own. Close and reopen the pull request to run them.
