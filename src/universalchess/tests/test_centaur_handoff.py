@@ -121,6 +121,64 @@ def test_release_hardware_continues_when_panel_settle_fails():
 
 
 # ---------------------------------------------------------------------------
+# Manager.reacquire_hardware()
+# ---------------------------------------------------------------------------
+
+def test_reacquire_hardware_forces_reinit_before_restarting_the_scheduler():
+    """Taking the panel back must arm a re-init, and do it before the thread runs.
+
+    Why this test exists: direct mode hands the panel to centaur and needs it
+    back to draw the "Returning..." splash when centaur exits. ``force_reinit``
+    is what makes that possible. ``release_hardware`` closed the SPI fd and freed
+    the GPIO lines through ``module_exit(cleanup=True)``, but it settled the
+    panel by calling ``epd.idle_sleep()`` directly rather than through the
+    scheduler, so the scheduler's own ``_deep_asleep``/``_in_partial_mode`` state
+    does not record that the hardware went away. Without the forced re-init the
+    next refresh reads that stale state, skips ``epd.init()`` -- the call that
+    re-runs ``module_init()`` and reopens SPI and GPIO -- and writes to a closed
+    device.
+
+    The ordering matters because ``start`` launches the refresh thread: a
+    re-init armed after it could lose the race against the first refresh.
+
+    How the regression manifests: ``force_reinit`` missing from the order (the
+    splash never reaches the panel and the refresh fails on closed hardware), or
+    appearing after ``start``.
+    """
+    manager, epd = _make_manager_with_mock_epd()
+    order = []
+    manager._scheduler.force_reinit.side_effect = lambda: order.append("force_reinit")
+    manager._scheduler.start.side_effect = lambda: order.append("start")
+
+    manager.reacquire_hardware()
+
+    assert order == ["force_reinit", "start"]
+
+
+def test_reacquire_hardware_lets_the_panel_accept_updates_again():
+    """The shutdown gate raised by release_hardware must be lowered again.
+
+    Why this test exists: ``release_hardware`` sets ``_shutting_down``, and
+    ``update()`` short-circuits to a "not-initialized" future while it is set. If
+    the re-acquire restarted the hardware but left that flag raised, every draw
+    would be silently dropped -- no exception, no log, just a panel that never
+    changes, which is the hardest kind of failure to spot.
+
+    How the regression manifests: the flag stays True, so the splash is discarded
+    before it ever reaches the scheduler.
+    """
+    manager, epd = _make_manager_with_mock_epd()
+
+    with patch("universalchess.epaper.framework.manager.epdconfig.module_exit"):
+        manager.release_hardware()
+    assert manager._shutting_down is True
+
+    manager.reacquire_hardware()
+
+    assert manager._shutting_down is False
+
+
+# ---------------------------------------------------------------------------
 # perform_centaur_handoff()
 # ---------------------------------------------------------------------------
 

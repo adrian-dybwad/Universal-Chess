@@ -7,9 +7,10 @@ the panel held whatever was last drawn -- Centaur's final frame -- with nothing
 to say the exit had registered. Observed on hardware, that reads as the board
 having crashed and powered itself off, which is exactly how it was reported.
 
-Translate mode never gives the panel away (that is the difference from direct
-mode), so UC can still draw on it the moment Centaur exits. e-ink holds an image
-with no power, so the splash painted here survives the restart and stays up until
+Translate mode never gives the panel away, so UC can draw on it the moment
+Centaur exits. Direct mode does give it away, so it must take the hardware back
+first -- the difference the two sets of tests below pin. e-ink holds an image
+with no power, so the splash survives the restart either way and stays up until
 UC's own startup splash replaces it.
 
 The splash belongs only on the path that actually restarts. When the binary is
@@ -27,6 +28,7 @@ from universalchess.app import board_app
 RETURNING_KEY = "splash.returning"
 SPLASH = "splash"
 RESTART = "restart"
+REACQUIRE = "reacquire"
 
 
 @pytest.fixture
@@ -121,3 +123,95 @@ def test_no_returning_splash_when_the_centaur_binary_is_missing(translate_handof
 
     assert result is False
     assert calls == []
+
+
+@pytest.fixture
+def direct_handoff(monkeypatch):
+    """Run ``_run_centaur`` with the panel faked and centaur never executed.
+
+    The handoff stand-in keeps the real contract -- release the panel, then run
+    the exit hook -- because the splash lives inside that hook, so mocking the
+    handoff away entirely would test nothing. ``launch_fn`` is deliberately not
+    called: starting centaur is not what these tests are about.
+
+    Returns the ordered call log.
+    """
+    from universalchess.services import power
+
+    calls = []
+
+    fake_board = MagicMock()
+    fake_board.display_manager.reacquire_hardware.side_effect = (
+        lambda: calls.append((REACQUIRE, None))
+    )
+    monkeypatch.setattr(board_app, "board", fake_board)
+    monkeypatch.setattr(board_app, "SplashScreen", MagicMock())
+    monkeypatch.setattr(board_app.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(board_app, "t", lambda key, **kw: key)
+
+    def _splash(manager, message, **kwargs):
+        calls.append((SPLASH, message))
+        return True
+
+    monkeypatch.setattr(board_app, "show_fullscreen_splash", _splash)
+
+    def _handoff(display_manager, software_path, launch_fn, on_centaur_exit_fn, **kw):
+        display_manager.release_hardware()
+        on_centaur_exit_fn()
+        return True
+
+    monkeypatch.setattr(power, "perform_centaur_handoff", _handoff)
+    monkeypatch.setattr(power, "return_to_universal_chess",
+                        lambda **kw: calls.append((RESTART, None)))
+
+    return calls, fake_board
+
+
+def test_direct_mode_takes_the_panel_back_before_painting_the_splash(direct_handoff):
+    """Direct mode must re-acquire the hardware, then splash, then restart.
+
+    Why this test exists: direct mode releases the panel so centaur can drive it
+    natively -- SPI closed, GPIO lines freed, scheduler stopped. Drawing without
+    taking that back first writes to closed hardware and the splash never
+    appears, so the ordering is the whole behaviour. The restart must come last
+    for the same reason as translate mode: it kills the process that would draw.
+
+    How the regression manifests: the re-acquire is missing (nothing renders, on
+    the mode where the panel was genuinely given away), or the splash is ordered
+    after the restart and never reaches the panel.
+    """
+    calls, _ = direct_handoff
+
+    with pytest.raises(SystemExit):
+        board_app._run_centaur()
+
+    assert calls == [
+        (REACQUIRE, None),
+        (SPLASH, RETURNING_KEY),
+        (RESTART, None),
+    ]
+
+
+def test_a_failed_panel_reacquire_still_restarts_the_service(direct_handoff):
+    """Losing the panel must not cost the user their board.
+
+    Why this test exists: the splash is cosmetic, the restart is not. Taking the
+    panel back re-opens SPI and the GPIO lines, which can fail on hardware that
+    centaur left in an odd state. If that exception escaped the exit hook,
+    ``return_to_universal_chess`` would never run and the unit would sit stopped
+    with a dead board -- the precise outcome that function exists to avoid, and a
+    far worse trade than a missing message. The same reasoning as the
+    best-effort panel settle in ``release_hardware``.
+
+    How the regression manifests: the restart is absent from ``calls`` because
+    the error propagated, so Universal Chess never comes back after Centaur.
+    """
+    calls, fake_board = direct_handoff
+    fake_board.display_manager.reacquire_hardware.side_effect = RuntimeError(
+        "SPI busy"
+    )
+
+    with pytest.raises(SystemExit):
+        board_app._run_centaur()
+
+    assert (RESTART, None) in calls

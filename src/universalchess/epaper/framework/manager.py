@@ -728,3 +728,27 @@ class Manager:
             log.debug(f"Panel settle before centaur handoff failed (continuing): {e}")
 
         epdconfig.module_exit(cleanup=True)
+
+    def reacquire_hardware(self) -> None:
+        """Take the panel back after :meth:`release_hardware` gave it away.
+
+        The counterpart of the handoff release, used when the original Centaur
+        software exits and Universal Chess must draw again -- the "Returning..."
+        splash -- before the service restarts.
+
+        The forced re-init is the load-bearing part. ``release_hardware`` settled
+        the panel by calling ``epd.idle_sleep()`` directly rather than through
+        the scheduler, so the scheduler's own ``_deep_asleep`` /
+        ``_in_partial_mode`` state does not record that SPI and the GPIO lines
+        were closed. Left alone, the next refresh would read that stale state,
+        skip ``epd.init()`` -- the call that re-runs ``module_init()`` and
+        reopens the device -- and write to closed hardware. Arming it before the
+        scheduler thread starts avoids racing the first refresh.
+
+        Lowering ``_shutting_down`` matters just as much: ``update()`` drops
+        every draw while it is set, silently, so the panel would simply never
+        change.
+        """
+        self._scheduler.force_reinit()
+        self._scheduler.start()
+        self._shutting_down = False

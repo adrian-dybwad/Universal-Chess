@@ -5918,6 +5918,23 @@ def _run_centaur():
         _run_centaur_binary(["sudo", "./centaur"], cwd=centaur_dir)  # noqa: S607
 
     def _return_to_universal() -> None:
+        # Take the panel back before drawing: unlike translate mode, direct mode
+        # released the hardware to centaur, so SPI and the GPIO lines are closed
+        # and the scheduler is stopped. Then say the exit was registered, before
+        # the restart is asked for -- it kills this process, so a splash after it
+        # would never render, and the panel would otherwise sit on centaur's last
+        # frame for the settle plus a full service start, which reads as a crash.
+        # Best-effort, like the panel settle in release_hardware(): re-opening SPI
+        # and the GPIO lines can fail on hardware centaur left in an odd state,
+        # and the splash is cosmetic while the restart below is not. Letting this
+        # escape would skip return_to_universal_chess and leave the unit stopped
+        # with a dead board -- the exact outcome that call exists to avoid.
+        try:
+            board.display_manager.reacquire_hardware()
+        except Exception as e:  # noqa: BLE001 - the board must come back regardless
+            log.warning(f"Could not reacquire the panel after centaur exited: {e}")
+        show_fullscreen_splash(board.display_manager, t("splash.returning"))
+
         # Centaur has exited; restart this service so Universal Chess comes back
         # (a plain `stop` would leave the board dead -- see return_to_universal_chess).
         return_to_universal_chess(

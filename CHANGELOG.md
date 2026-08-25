@@ -135,9 +135,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   would never render, since the restart kills the process that would draw it).
   Translate mode still owns the panel at that point, and e-ink holds an image
   with no power, so the splash stays up across the restart until the startup
-  splash replaces it. It is not drawn when the Centaur binary is missing: nothing
-  was handed over, nothing restarts, and the live menu must not be replaced by a
-  message about a return that did not happen.
+  splash replaces it. Direct mode gave the panel away, so it takes the hardware
+  back first through a new `Manager.reacquire_hardware()`, the counterpart of the
+  release the handoff performs: it forces the next refresh to re-run the panel's
+  `init()`, because the release settled the panel outside the scheduler and left
+  its state saying the hardware was still open, so without that the refresh would
+  write to a closed device. That re-acquire is best-effort, like the panel settle
+  in the release -- an exception there would otherwise skip the restart and leave
+  the unit stopped with a dead board, which is far worse than a missing message.
+  The splash is not drawn when the Centaur binary is missing: nothing was handed
+  over, nothing restarts, and the live menu must not be replaced by a message
+  about a return that did not happen.
 
 - **The BlueZ self-heal runs only on a Raspberry Pi**: the workaround targets
   a BCM43430 firmware fault and was gated on nothing more than the presence of
