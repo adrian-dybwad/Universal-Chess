@@ -125,6 +125,20 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   not a bus to drive. Whether to substitute is decided per open by testing for
   the node, so a board whose panel really is on SPI keeps driving its own bus.
 
+- **Leaving the original Centaur says so on the panel**: returning is not a quick
+  swap. The restart settles for three seconds and Universal Chess needs roughly
+  another fifteen to import and paint its startup splash, and across that whole
+  gap the panel held Centaur's last frame with nothing to say the exit had
+  registered -- on hardware that reads as the board having crashed and powered
+  itself off, and was reported as exactly that. A "Returning..." splash is now
+  painted the moment Centaur exits, before the restart is requested (afterwards
+  would never render, since the restart kills the process that would draw it).
+  Translate mode still owns the panel at that point, and e-ink holds an image
+  with no power, so the splash stays up across the restart until the startup
+  splash replaces it. It is not drawn when the Centaur binary is missing: nothing
+  was handed over, nothing restarts, and the live menu must not be replaced by a
+  message about a return that did not happen.
+
 - **The BlueZ self-heal runs only on a Raspberry Pi**: the workaround targets
   a BCM43430 firmware fault and was gated on nothing more than the presence of
   an hci device. Orange Pi carries a uwe5622, an unrelated part the workaround

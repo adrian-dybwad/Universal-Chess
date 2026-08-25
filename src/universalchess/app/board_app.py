@@ -6142,6 +6142,15 @@ def _run_centaur_translate():
         log.error(f"Centaur executable not found at {CENTAUR_SOFTWARE}")
         return False
 
+    # Say on the panel that the exit was registered, before the restart is asked
+    # for -- it kills this process, so a splash after it would never render.
+    # Coming back takes the settle pause plus a full service start, and the panel
+    # would otherwise hold centaur's last frame throughout, which reads as the
+    # board having crashed. Translate mode still owns the panel here (it never
+    # released it), and e-ink holds the image with no power, so this stays up
+    # across the restart until UC's own startup splash replaces it.
+    show_fullscreen_splash(board.display_manager, t("splash.returning"))
+
     # centaur has exited; restart this service so Universal Chess comes back (a
     # plain `stop` would leave the board dead -- see return_to_universal_chess).
     return_to_universal_chess(
