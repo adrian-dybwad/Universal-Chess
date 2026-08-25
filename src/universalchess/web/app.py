@@ -2752,26 +2752,29 @@ def _read_notation():
 
 
 def _read_player_dicts():
-    """Read both players' type/color/elo from centaur.ini for coach selection.
+    """Read both players' type/color/engine/elo from centaur.ini for coach selection.
 
     Returns two mappings shaped like the board's player settings dicts so the
     shared coach helpers (:func:`resolve_human_color`, :func:`resolve_opponent_elo`)
-    resolve identically on web and board.
+    resolve identically on web and board. ``engine`` is part of that shape because
+    ``elo`` names a profile in *that engine's* config, and the opponent's rating
+    is read out of the profile rather than out of its identity.
     """
     from universalchess.board.settings import Settings
     from universalchess.players.settings import PLAYER1_SECTION, PLAYER2_SECTION
 
-    player1 = {
-        "type": Settings.read(PLAYER1_SECTION, "type", "human"),
-        "color": Settings.read(PLAYER1_SECTION, "color", "white"),
-        "elo": Settings.read(PLAYER1_SECTION, "elo", "Default"),
-    }
-    player2 = {
-        "type": Settings.read(PLAYER2_SECTION, "type", "engine"),
-        "color": Settings.read(PLAYER2_SECTION, "color", "black"),
-        "elo": Settings.read(PLAYER2_SECTION, "elo", "Default"),
-    }
-    return player1, player2
+    def slot(section, default_type, default_color):
+        return {
+            "type": Settings.read(section, "type", default_type),
+            "color": Settings.read(section, "color", default_color),
+            "engine": Settings.read(section, "engine", "stockfish"),
+            "elo": Settings.read(section, "elo", "Default"),
+        }
+
+    return (
+        slot(PLAYER1_SECTION, "human", "white"),
+        slot(PLAYER2_SECTION, "engine", "black"),
+    )
 
 
 def _read_coach_persona(side_to_move: str, *, is_potential_move: bool):
@@ -5049,7 +5052,13 @@ def api_get_sprite_image(sheet):
 # holds the selectable sections the engine player loads at game start. Editing
 # reads/writes that file (the [DEFAULT] section is preserved), so edits take
 # effect on the next game.
-from universalchess.services import engine_bootstrap, engine_failure_record, engine_profiles, uci_schema
+from universalchess.services import (
+    engine_bootstrap,
+    engine_failure_record,
+    engine_profiles,
+    profile_references,
+    uci_schema,
+)
 from universalchess.services.engine_registry import (
     LOAD_FAILURE_BINARY_MISSING,
     sanitize_detail,
@@ -5193,21 +5202,22 @@ def api_get_engine_uci_schema(engine_name):
         # Enrich with the same display labels the Elo picker uses
         # (Default (Unlimited) / Default (1500 ELO)) so the profile editor list
         # never drifts from Players/board strength rows.
-        "profiles": _profiles_with_labels(config_path),
+        "profiles": _profiles_with_labels(engine_name, config_path),
         "case_collisions": _case_collisions(config_path),
     })
 
 
-def _profiles_with_labels(config_path):
-    """Return read_profiles rows plus a ``label`` matching strength_level_choices."""
-    labels = {
-        row["value"]: row["label"]
-        for row in engine_profiles.strength_level_choices(config_path)
-    }
-    return [
-        {**profile, "label": labels.get(profile["name"], profile["name"])}
-        for profile in engine_profiles.read_profiles(config_path)
-    ]
+def _profiles_with_labels(engine_name, config_path):
+    """Return the engine's profiles as ``{id, name, label, values}`` rows.
+
+    ``id`` is the profile's identity and the value stored as a player's
+    strength; ``name`` is the user-authored name, empty when unnamed; ``label``
+    is projected from the values by the same builder the strength pickers use, so
+    the editor's list cannot drift from them.
+    """
+    return engine_profiles.profile_rows(
+        config_path, uci_schema.projection_for_engine(engine_name, config_path)
+    )
 
 
 def _case_collisions(config_path):
@@ -5217,12 +5227,44 @@ def _case_collisions(config_path):
     )
 
 
+def _repointed_payload(references):
+    """Serialize repointed profile references for a mutation response.
+
+    Every profile mutation reports what it moved so the consequence is visible at
+    the moment of the action. Silence was the original defect: a slot left naming
+    a deleted section falls back to the engine-wide ``[DEFAULT]`` at game start
+    with no error, so the strength change was only discoverable by playing.
+    """
+    return [
+        {
+            "setting": reference.description,
+            "from": reference.profile,
+            "to": reference.repointed_to,
+        }
+        for reference in references
+    ]
+
+
+def _repair_profile_references(engine_name, config_path):
+    """Repoint settings that name a profile this engine no longer has.
+
+    Used after a delete or a re-seed. Compares the stored references against the
+    profiles that exist now, so a reset that re-derives the same ladder moves
+    nothing.
+    """
+    return profile_references.repair_dangling(
+        engine_name,
+        engine_profiles.read_profile_names(config_path),
+        resolve_options=_resolve_centaur_engine_options,
+    )
+
+
 # Profile mutations use POST, not PUT/DELETE: the app's WebDAV before_request
 # (handle_preflight) intercepts every PUT/DELETE app-wide and demands WebDAV
 # auth, so REST routes cannot use those verbs. All engine endpoints (install,
 # uninstall, resume, cancel) already use POST for the same reason.
-# ``profiles/reset`` is registered before ``profiles/<profile_name>`` so the
-# literal path is not captured as a profile name.
+# ``profiles/reset`` is registered before ``profiles/<profile_id>`` so the
+# literal path is not captured as a profile id.
 @app.route("/api/engines/<engine_name>/profiles/reset", methods=["POST"])
 @requires_auth
 def api_reset_engine_profiles(engine_name):
@@ -5260,7 +5302,52 @@ def api_reset_engine_profiles(engine_name):
         "engine": engine_name,
         "editable": True,
         "schema": engine_profiles.schema_to_json(groups),
-        "profiles": _profiles_with_labels(config_path),
+        "profiles": _profiles_with_labels(engine_name, config_path),
+        "case_collisions": _case_collisions(config_path),
+        # Reset discards custom profiles and re-derives the ladder from a fresh
+        # probe, so a stored reference to a discarded profile -- or to a rung this
+        # engine version no longer advertises -- would dangle.
+        "repointed": _repointed_payload(
+            _repair_profile_references(engine_name, config_path)
+        ),
+    })
+
+
+@app.route("/api/engines/<engine_name>/profiles", methods=["POST"])
+@requires_auth
+def api_create_engine_profile(engine_name):
+    """Create a profile under a freshly generated id. Body: ``{"values": {...}}``.
+
+    Creation is its own endpoint because the identity does not exist yet, and the
+    server mints it: an id has to be unique within the file, and a client that
+    proposed one would be racing every other client. It is what lets a profile be
+    created without naming it -- editing the reserved ``Default`` forks a new
+    profile here, where it used to demand a name up front and use it as the
+    identity.
+
+    A user-authored label travels as ``Name`` inside ``values``, validated as
+    metadata like any other key, so it is editable afterwards and no reference
+    depends on it.
+    """
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
+        return jsonify({"success": False, "error": "Invalid engine"}), 400
+    try:
+        groups = _seed_and_probe_schema(engine_name, config_path)
+    except uci_schema.EngineProbeError:
+        return jsonify({"success": False, "error": "Engine is not installed"}), 404
+    values = (request.get_json(silent=True) or {}).get("values", {})
+    value_error = engine_profiles.validation_error(groups, values)
+    if value_error is not None:
+        return jsonify({"success": False, "error": value_error}), 400
+    profile_id = engine_profiles.new_profile_id(
+        engine_profiles.read_profile_names(config_path)
+    )
+    engine_profiles.write_profile(config_path, profile_id, values, groups)
+    return jsonify({
+        "success": True,
+        "id": profile_id,
+        "profiles": _profiles_with_labels(engine_name, config_path),
         "case_collisions": _case_collisions(config_path),
     })
 
@@ -5305,22 +5392,32 @@ def api_reconcile_engine_profile_case(engine_name):
         "success": True,
         "keep": keep,
         "removed": removed,
-        "profiles": _profiles_with_labels(config_path),
+        "profiles": _profiles_with_labels(engine_name, config_path),
         "case_collisions": _case_collisions(config_path),
     })
 
 
-@app.route("/api/engines/<engine_name>/profiles/<profile_name>", methods=["POST"])
+@app.route("/api/engines/<engine_name>/profiles/<profile_id>", methods=["POST"])
 @requires_auth
-def api_save_engine_profile(engine_name, profile_name):
-    """Create or replace a profile. Body: ``{"values": {key: value}}``.
+def api_save_engine_profile(engine_name, profile_id):
+    """Replace an existing profile's values. Body: ``{"values": {key: value}}``.
 
-    Optional ``rename_to`` writes under a new section name and removes
-    ``profile_name`` (Elo-rung rename when ``UCI_Elo`` drifts). Values are
-    validated against the probed engine schema (unknown keys and out-of-range
-    values are rejected, not clamped, because engines apply them verbatim)
-    before the section is written atomically. The whole section is replaced, so
-    the client must submit the complete set of keys to retain.
+    Edits only: a profile that does not exist is a 404, because an identity is
+    minted by the server and creation has its own endpoint (``POST /profiles``).
+    That is what keeps a client-supplied string from ever becoming a section
+    header -- the trap that let a profile be created under a name no route could
+    address afterwards.
+
+    Values are validated against the probed engine schema (unknown keys and
+    out-of-range values are rejected, not clamped, because engines apply them
+    verbatim) before the section is written atomically. The whole section is
+    replaced, so the client must submit the complete set of option keys to
+    retain; metadata it does not mention (the user-authored ``Name``) is carried
+    over by ``write_profile``.
+
+    There is no rename: the id is the identity and never changes, and a
+    user-facing rename is an ordinary ``Name`` value in ``values``, which no
+    stored reference depends on.
     """
     config_path = _config_uci_path(engine_name)
     if config_path is None:
@@ -5335,103 +5432,29 @@ def api_save_engine_profile(engine_name, profile_name):
     # ProfileValidationError and returning str(e) would route a caught
     # exception's text into the response (CodeQL py/stack-trace-exposure); the
     # value-based checks below carry the same user-facing messages without that.
-    if not engine_profiles.is_valid_profile_name(profile_name):
-        # Default is reserved (seed-owned); name it so the UI can prompt save-as.
+    if not engine_profiles.is_valid_profile_name(profile_id):
+        # Default is reserved (seed-owned); name it so the editor can fork instead.
         # Match case-insensitively so "default" / "DeFaUlT" cannot bypass the guard.
         if (
-            isinstance(profile_name, str)
-            and profile_name.casefold() == engine_profiles.SEEDED_DEFAULT_PROFILE.casefold()
+            isinstance(profile_id, str)
+            and profile_id.casefold() == engine_profiles.SEEDED_DEFAULT_PROFILE.casefold()
         ):
             return jsonify({
                 "success": False,
-                "error": "Default is reserved; save under a new profile name",
+                "error": "Default is reserved; save your changes as a new profile",
             }), 400
-        return jsonify({"success": False, "error": "Invalid profile name"}), 400
+        return jsonify({"success": False, "error": "Invalid profile id"}), 400
     value_error = engine_profiles.validation_error(groups, values)
     if value_error is not None:
         return jsonify({"success": False, "error": value_error}), 400
-    rename_to = body.get("rename_to")
+
     names = engine_profiles.read_profile_names(config_path)
-
-    if rename_to is not None:
-        if not isinstance(rename_to, str) or not rename_to.strip():
-            return jsonify({"success": False, "error": "rename_to must be a non-empty string"}), 400
-        rename_to = rename_to.strip()
-        if not engine_profiles.is_valid_profile_name(rename_to):
-            if (
-                rename_to.casefold()
-                == engine_profiles.SEEDED_DEFAULT_PROFILE.casefold()
-            ):
-                return jsonify({
-                    "success": False,
-                    "error": "Default is reserved; save under a new profile name",
-                }), 400
-            return jsonify({"success": False, "error": "Invalid rename_to name"}), 400
-        if profile_name not in names:
-            matches = engine_profiles.casefold_matches(names, profile_name)
-            if len(matches) > 1:
-                return jsonify({
-                    "success": False,
-                    "error": (
-                        f"Ambiguous profile name: case variants {matches} exist. "
-                        "Keep one spelling first."
-                    ),
-                    "case_collisions": _case_collisions(config_path),
-                }), 409
-            if not matches:
-                return jsonify({"success": False, "error": "Profile not found"}), 404
-        if rename_to not in names:
-            matches = engine_profiles.casefold_matches(names, rename_to)
-            if len(matches) > 1:
-                return jsonify({
-                    "success": False,
-                    "error": (
-                        f"Ambiguous profile name: case variants {matches} exist. "
-                        "Keep one spelling first."
-                    ),
-                    "case_collisions": _case_collisions(config_path),
-                }), 409
-        written = engine_profiles.rename_profile(
-            config_path, profile_name, rename_to, values, groups,
-        )
-        return jsonify({"success": True, "name": written})
-
-    # Ambiguous case twins: refuse rather than overwriting the wrong section.
-    if profile_name not in names:
-        matches = engine_profiles.casefold_matches(names, profile_name)
-        if len(matches) > 1:
-            return jsonify({
-                "success": False,
-                "error": (
-                    f"Ambiguous profile name: case variants {matches} exist. "
-                    "Keep one spelling first."
-                ),
-                "case_collisions": _case_collisions(config_path),
-            }), 409
-    engine_profiles.write_profile(config_path, profile_name, values, groups)
-    return jsonify({"success": True})
-
-
-@app.route("/api/engines/<engine_name>/profiles/<profile_name>/delete", methods=["POST"])
-@requires_auth
-def api_delete_engine_profile(engine_name, profile_name):
-    """Delete a profile section.
-
-    400 if the name is reserved (``DEFAULT``) or invalid; 404 if the profile does
-    not exist. Deletion operates on the writable config directly and does not
-    require probing the engine.
-    """
-    config_path = _config_uci_path(engine_name)
-    if config_path is None:
-        return jsonify({"success": False, "error": "Invalid engine"}), 400
-    # Reject the reserved section by value rather than catching the exception
-    # delete_profile would raise and echoing it back (CodeQL py/stack-trace-exposure).
-    blocked = engine_profiles.delete_blocked_reason(profile_name)
-    if blocked is not None:
-        return jsonify({"success": False, "error": blocked}), 400
-    names = engine_profiles.read_profile_names(config_path)
-    if profile_name not in names:
-        matches = engine_profiles.casefold_matches(names, profile_name)
+    written = profile_id
+    if profile_id not in names:
+        # Legacy configs hold sections named before identities were generated, so
+        # a case-insensitive match is still honoured -- but ambiguous twins are
+        # refused rather than overwriting the wrong one.
+        matches = engine_profiles.casefold_matches(names, profile_id)
         if len(matches) > 1:
             return jsonify({
                 "success": False,
@@ -5443,10 +5466,60 @@ def api_delete_engine_profile(engine_name, profile_name):
             }), 409
         if not matches:
             return jsonify({"success": False, "error": "Profile not found"}), 404
-    removed = engine_profiles.delete_profile(config_path, profile_name)
+        written = matches[0]
+    engine_profiles.write_profile(config_path, written, values, groups)
+    # The written id is echoed, not the requested one: a legacy reference reaching
+    # a section by case-insensitive match must leave the editor holding the
+    # spelling that is actually on disk.
+    return jsonify({
+        "success": True,
+        "id": written,
+        "profiles": _profiles_with_labels(engine_name, config_path),
+        "case_collisions": _case_collisions(config_path),
+    })
+
+
+@app.route("/api/engines/<engine_name>/profiles/<profile_id>/delete", methods=["POST"])
+@requires_auth
+def api_delete_engine_profile(engine_name, profile_id):
+    """Delete a profile section.
+
+    400 if the id is reserved (``Default``, ``DEFAULT``); 404 if the profile does
+    not exist. Deletion operates on the writable config directly and does not
+    require probing the engine. The settings that referenced the deleted profile
+    are repointed to ``Default`` and reported as ``repointed``.
+    """
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
+        return jsonify({"success": False, "error": "Invalid engine"}), 400
+    # Reject the reserved section by value rather than catching the exception
+    # delete_profile would raise and echoing it back (CodeQL py/stack-trace-exposure).
+    blocked = engine_profiles.delete_blocked_reason(profile_id)
+    if blocked is not None:
+        return jsonify({"success": False, "error": blocked}), 400
+    names = engine_profiles.read_profile_names(config_path)
+    if profile_id not in names:
+        matches = engine_profiles.casefold_matches(names, profile_id)
+        if len(matches) > 1:
+            return jsonify({
+                "success": False,
+                "error": (
+                    f"Ambiguous profile name: case variants {matches} exist. "
+                    "Keep one spelling first."
+                ),
+                "case_collisions": _case_collisions(config_path),
+            }), 409
+        if not matches:
+            return jsonify({"success": False, "error": "Profile not found"}), 404
+    removed = engine_profiles.delete_profile(config_path, profile_id)
     if not removed:
         return jsonify({"success": False, "error": "Profile not found"}), 404
-    return jsonify({"success": True})
+    return jsonify({
+        "success": True,
+        "repointed": _repointed_payload(
+            _repair_profile_references(engine_name, config_path)
+        ),
+    })
 
 
 @app.route("/api/engines/<engine_name>/levels", methods=["GET"])
@@ -5454,11 +5527,12 @@ def api_get_engine_levels(engine_name):
     """Return the selectable strength sections for an engine.
 
     Mirrors the on-device picker: seeds the writable config by probing the
-    binary, then returns its sections as ``{"value", "label"}`` rows (via
+    binary, then returns its profiles as ``{"value", "label"}`` rows (via
     ``strength_level_choices``), always including ``Default``. ``value`` is the
-    section name persisted as the player's ``elo``; ``label`` is the display text
-    (an uncapped ``Default`` shows as ``"Default (Unlimited)"``). Falls back to a single
-    ``Default`` row when the engine cannot be probed or the name is invalid.
+    profile id persisted as the player's ``elo``; ``label`` is projected from the
+    profile's own values (an uncapped ``Default`` shows as
+    ``"Default (Unlimited)"``). Falls back to a single ``Default`` row when the
+    engine cannot be probed or the name is invalid.
     """
     default_only = [{"value": "Default", "label": "Default"}]
     config_path = _config_uci_path(engine_name)
@@ -5466,7 +5540,9 @@ def api_get_engine_levels(engine_name):
         return jsonify(default_only)
     try:
         uci_schema.seed_config(engine_name, config_path=config_path)
-        levels = engine_profiles.strength_level_choices(config_path)
+        levels = engine_profiles.strength_level_choices(
+            config_path, uci_schema.projection_for_engine(engine_name, config_path)
+        )
     except uci_schema.EngineProbeError:
         levels = default_only
     if not any(level["value"] == "Default" for level in levels):

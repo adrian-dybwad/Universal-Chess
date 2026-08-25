@@ -33,8 +33,7 @@ import importlib
 import importlib.util
 import os
 import pkgutil
-import re
-from typing import Dict, List, Mapping, Optional, Tuple
+from typing import Callable, Dict, List, Mapping, Optional, Tuple
 
 from universalchess.coaches.base import Coach, CoachingSituation, MoveContext
 
@@ -191,33 +190,39 @@ def get_coach(coach_id: str) -> Optional[Coach]:
     return get_registry().get(coach_id)
 
 
-# First run of digits in a section name. The engine strength selection is stored
-# as a section name, not a bare number (there are no shipped .uci files); the
-# seeded ELO ladder names them "<n> ELO" and a Maia net level is named from its
-# filename (e.g. "maia-1500..."), so the strength is the embedded number.
-_ELO_IN_TEXT = re.compile(r"\d+")
-
-
 def _parse_elo(value: object) -> Optional[int]:
-    """Derive a numeric Elo from a strength selection, or None when unknown.
+    """Return ``value`` as an Elo when it is a number, else None.
 
-    Accepts a bare number and also the section-name form the app actually stores
-    (e.g. ``"1200 ELO"`` from the seeded ladder, or a Maia net level whose name
-    carries the strength). Names without a number (e.g. ``"Default"`` or a custom
-    personality like ``"Attacker"``) return None, so Auto coach selection falls
-    back to :data:`DEFAULT_TARGET_ELO` rather than guessing.
+    Deliberately does NOT dig a number out of a non-numeric string. It used to,
+    because a strength selection is stored as a profile identity rather than a
+    bare number and the seeded ladder spelled the Elo into that identity
+    ("1200 ELO"). Identities are now generated, so digits inside one are not an
+    Elo: pointed at ``Profile-1`` the old behaviour returned 1 and Auto sized the
+    coach against a 1-rated opponent, silently and with no error. The Elo now
+    comes from the profile's own values (see
+    :func:`resolve_profile_elo_from_engine`); anything unresolvable is reported as
+    unknown so callers fall back to :data:`DEFAULT_TARGET_ELO` instead of acting
+    on a number that means nothing.
     """
     if value is None:
         return None
-    text = str(value).strip()
     try:
-        # A bare number (or numeric string) is the Elo directly.
-        return int(float(text))
+        return int(float(str(value).strip()))
     except (TypeError, ValueError):
-        # Not a plain number: fall back to the first digits embedded in the name
-        # (e.g. "1200 ELO", "maia-1100.pb.gz"), else unknown.
-        match = _ELO_IN_TEXT.search(text)
-        return int(match.group()) if match else None
+        return None
+
+
+def resolve_profile_elo_from_engine(engine: str, selection: str) -> Optional[int]:
+    """Look up the Elo an engine's strength profile plays, or None when unknown.
+
+    The default resolver injected into :func:`resolve_opponent_elo`. Kept as a
+    thin lazy indirection so this module stays importable without pulling in the
+    engine services, and so tests can substitute a resolver instead of seeding a
+    ``.uci`` file.
+    """
+    from universalchess.services.uci_schema import strength_elo_for_engine
+
+    return strength_elo_for_engine(engine, selection)
 
 
 def resolve_coach(coach_id_setting: str, opponent_elo: object) -> Optional[Coach]:
@@ -274,29 +279,65 @@ def resolve_human_color(
     return None
 
 
-def resolve_opponent_elo(
+def resolve_opponent_slot(
     player1: Mapping[str, object], player2: Mapping[str, object]
-) -> Optional[object]:
-    """Return the opponent (non-human) player's strength selection for Auto coach.
+) -> Optional[Mapping[str, object]]:
+    """Return the opponent (non-human) player's settings, or None.
 
     With one human, the opponent is the other player. With two engines, player two
-    is used. With two humans there is no engine opponent, so None is returned and
-    Auto falls back to the default target Elo.
-
-    The returned value is the stored strength *selection* (a section name such as
-    ``"1200 ELO"``, not a bare number). :func:`_parse_elo` -- the single place
-    that turns a selection into a number -- derives the numeric Elo from it, so
-    the seeded ELO ladder and Maia net levels both resolve to a target strength.
+    is used. With two humans there is no engine opponent.
     """
     p1_human = str(player1.get("type", "")) == "human"
     p2_human = str(player2.get("type", "")) == "human"
     if p1_human and not p2_human:
-        return player2.get("elo")
+        return player2
     if p2_human and not p1_human:
-        return player1.get("elo")
+        return player1
     if not p1_human and not p2_human:
-        return player2.get("elo")
+        return player2
     return None
+
+
+def resolve_opponent_elo(
+    player1: Mapping[str, object],
+    player2: Mapping[str, object],
+    *,
+    profile_elo: Optional[Callable[[str, str], Optional[int]]] = None,
+) -> Optional[int]:
+    """Return the opponent's numeric Elo for Auto coach matching, or None.
+
+    A slot stores its strength as a profile identity, not a rating, so the rating
+    has to be read out of that profile's own values -- which is why both the
+    engine and the selection are needed, and why the lookup is a dependency
+    (``profile_elo(engine, selection)``, defaulting to
+    :func:`resolve_profile_elo_from_engine`) rather than an import.
+
+    Returns None when there is no engine opponent, when the slot names no engine
+    or strength, or when the profile plays uncapped -- all cases where no rating
+    is known. Auto then falls back to :data:`DEFAULT_TARGET_ELO`; a number is
+    never invented from the identity.
+
+    Args:
+        player1: Player one's settings mapping (``type``, ``engine``, ``elo``).
+        player2: Player two's settings mapping.
+        profile_elo: ``(engine, selection) -> Optional[int]`` lookup override.
+
+    Returns:
+        The opponent's Elo, or None when it cannot be determined.
+    """
+    slot = resolve_opponent_slot(player1, player2)
+    if slot is None:
+        return None
+    selection = slot.get("elo")
+    # A slot that stores a bare number (legacy configs, tests) needs no lookup.
+    numeric = _parse_elo(selection)
+    if numeric is not None:
+        return numeric
+    engine = str(slot.get("engine") or "").strip()
+    if not engine or not str(selection or "").strip():
+        return None
+    lookup = profile_elo or resolve_profile_elo_from_engine
+    return lookup(engine, str(selection).strip())
 
 
 def select_move_context(
@@ -367,7 +408,9 @@ __all__ = [
     "resolve_coach",
     "resolve_coach_info",
     "resolve_human_color",
+    "resolve_opponent_slot",
     "resolve_opponent_elo",
+    "resolve_profile_elo_from_engine",
     "select_move_context",
     "resolve_persona",
 ]

@@ -10,7 +10,6 @@
 # Licensed under the GNU General Public License v3.0 or later.
 # See LICENSE.md for details.
 
-import configparser
 import os
 import pathlib
 import threading
@@ -21,6 +20,7 @@ import chess
 import chess.engine
 
 from universalchess.board.logging import log
+from universalchess.services import engine_profiles
 from universalchess.services.engine_registry import get_engine_registry, EngineHandle
 from .base import Player, PlayerConfig, PlayerState, PlayerType
 
@@ -700,41 +700,21 @@ class EnginePlayer(Player):
         return None
     
     def _load_uci_options(self, uci_file_path: str) -> None:
-        """Load UCI options from configuration file.
-        
+        """Load the UCI options for the configured strength profile.
+
+        The read (profile resolution, engine-wide ``[DEFAULT]`` merge, dropping
+        this app's metadata) belongs to ``engine_profiles``, which owns the file
+        format; the same call serves the Hand+Brain player and assistant.
+
         Args:
             uci_file_path: Path to the .uci config file.
         """
-        if not os.path.exists(uci_file_path):
-            log.warning(f"[EnginePlayer] UCI file not found: {uci_file_path}")
-            return
-        
-        config = configparser.ConfigParser()
-        config.optionxform = str  # Preserve case for UCI option names
-        config.read(uci_file_path)
-        
         section = self._engine_config.elo_section
-        
-        if config.has_section(section):
-            log.info(f"[EnginePlayer] Loading UCI options from section: {section}")
-            for key, value in config.items(section):
-                self._uci_options[key] = value
-            
-            # Filter out non-UCI metadata fields
-            non_uci_fields = ['Description']
-            self._uci_options = {
-                k: v for k, v in self._uci_options.items()
-                if k not in non_uci_fields
-            }
-            log.info(f"[EnginePlayer] UCI options: {self._uci_options}")
-        else:
-            log.warning(f"[EnginePlayer] Section '{section}' not found in {uci_file_path}")
-            # Fall back to DEFAULT section
-            if config.has_section("DEFAULT"):
-                for key, value in config.items("DEFAULT"):
-                    if key not in ['Description']:
-                        self._uci_options[key] = value
-        
+        self._uci_options.update(
+            engine_profiles.uci_options_for_section(uci_file_path, section)
+        )
+        log.info(f"[EnginePlayer] UCI options for '{section}': {self._uci_options}")
+
         # Merge with explicitly configured options (override file settings)
         self._uci_options.update(self._engine_config.uci_options)
 

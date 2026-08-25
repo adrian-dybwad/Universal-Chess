@@ -28,6 +28,7 @@ import chess.engine
 
 from universalchess.board.logging import log
 from universalchess.board.settings import Settings
+from universalchess.services import engine_profiles
 from universalchess.services.engine_registry import get_engine_registry, EngineHandle
 from .base import HelpKeyResult, Player, PlayerConfig, PlayerState, PlayerType
 
@@ -1372,38 +1373,17 @@ class HandBrainPlayer(Player):
         return None
     
     def _load_uci_options(self, uci_file_path: str) -> None:
-        """Load UCI options from configuration file."""
-        import configparser
-        import os
-        
-        if not os.path.exists(uci_file_path):
-            log.warning(f"[HandBrain] UCI file not found: {uci_file_path}")
-            return
-        
-        config = configparser.ConfigParser()
-        config.optionxform = str  # Preserve case for UCI option names
-        config.read(uci_file_path)
-        
+        """Load the UCI options for the configured strength profile.
+
+        Delegates to ``engine_profiles``, which owns profile resolution and the
+        engine-wide ``[DEFAULT]`` merge for every engine-backed player.
+        """
         section = self._hb_config.elo_section
-        
-        if config.has_section(section):
-            log.info(f"[HandBrain] Loading UCI options from section: {section}")
-            for key, value in config.items(section):
-                self._uci_options[key] = value
-            
-            # Filter out non-UCI metadata fields
-            non_uci_fields = ['Description']
-            self._uci_options = {
-                k: v for k, v in self._uci_options.items()
-                if k not in non_uci_fields
-            }
-        else:
-            log.warning(f"[HandBrain] Section '{section}' not found in {uci_file_path}")
-            if config.has_section("DEFAULT"):
-                for key, value in config.items("DEFAULT"):
-                    if key not in ['Description']:
-                        self._uci_options[key] = value
-        
+        self._uci_options.update(
+            engine_profiles.uci_options_for_section(uci_file_path, section)
+        )
+        log.info(f"[HandBrain] UCI options for '{section}': {self._uci_options}")
+
         # Merge with explicitly configured options
         self._uci_options.update(self._hb_config.uci_options)
 

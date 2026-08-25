@@ -10,7 +10,6 @@
 # Licensed under the GNU General Public License v3.0 or later.
 # See LICENSE.md for details.
 
-import configparser
 import os
 import pathlib
 import threading
@@ -21,6 +20,7 @@ import chess
 import chess.engine
 
 from universalchess.board.logging import log
+from universalchess.services import engine_profiles
 from universalchess.services.engine_registry import get_engine_registry
 from .base import Assistant, AssistantConfig, Suggestion, SuggestionType
 
@@ -384,33 +384,16 @@ class HandBrainAssistant(Assistant):
         return None
     
     def _load_uci_options(self, uci_file_path: str) -> None:
-        """Load UCI options from configuration file."""
-        if not os.path.exists(uci_file_path):
-            log.warning(f"[HandBrain] UCI file not found: {uci_file_path}")
-            return
-        
-        config = configparser.ConfigParser()
-        config.optionxform = str
-        config.read(uci_file_path)
-        
+        """Load the UCI options for the configured strength profile.
+
+        Delegates to ``engine_profiles``, which owns profile resolution and the
+        engine-wide ``[DEFAULT]`` merge for every engine-backed player.
+        """
         section = self._brain_config.elo_section
-        
-        if config.has_section(section):
-            log.info(f"[HandBrain] Loading UCI options from section: {section}")
-            for key, value in config.items(section):
-                self._uci_options[key] = value
-            
-            non_uci_fields = ['Description']
-            self._uci_options = {
-                k: v for k, v in self._uci_options.items()
-                if k not in non_uci_fields
-            }
-        else:
-            log.warning(f"[HandBrain] Section '{section}' not found")
-            if config.has_section("DEFAULT"):
-                for key, value in config.items("DEFAULT"):
-                    if key not in ['Description']:
-                        self._uci_options[key] = value
+        self._uci_options.update(
+            engine_profiles.uci_options_for_section(uci_file_path, section)
+        )
+        log.info(f"[HandBrain] UCI options for '{section}': {self._uci_options}")
 
 
 def create_hand_brain_assistant(

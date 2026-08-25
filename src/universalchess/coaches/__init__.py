@@ -26,7 +26,9 @@ from universalchess.coaches.registry import (
     resolve_coach_info,
     resolve_human_color,
     resolve_opponent_elo,
+    resolve_opponent_slot,
     resolve_persona,
+    resolve_profile_elo_from_engine,
     select_move_context,
     user_coaches_dir,
 )
@@ -44,7 +46,9 @@ __all__ = [
     "resolve_coach_info",
     "resolve_human_color",
     "resolve_opponent_elo",
+    "resolve_opponent_slot",
     "resolve_persona",
+    "resolve_profile_elo_from_engine",
     "select_move_context",
     "user_coaches_dir",
 ]

@@ -992,9 +992,23 @@ _FAKE_OPTIONS = [
     _FakeOption("Threads", "spin", 1, 1, 32),
 ]
 
-# Sections seed_config derives from _FAKE_OPTIONS (Default at max strength plus the
-# rounded ELO ladder within [1400, 1800]).
-_SEEDED_NAMES = {"Default", "1400 ELO", "1600 ELO", "1800 ELO"}
+# What seed_config derives from _FAKE_OPTIONS: Default at max strength plus the
+# rounded ELO ladder within [1400, 1800]. Identities are generated, so the seeded
+# ladder is recognized by its labels -- which is the point of the projection: the
+# rung means 1400 because it stores 1400, not because something named it that.
+_SEEDED_LABELS = {"Default (Unlimited)", "1400 ELO", "1600 ELO", "1800 ELO"}
+
+
+def _labels_to_ids(profiles):
+    """Map each profile's label to its id, for addressing a seeded rung."""
+    return {p["label"]: p["id"] for p in profiles}
+
+
+def _profile_ids(client, engine=None):
+    """Return the engine's ``{label: id}`` map as the profiles endpoint reports it."""
+    engine = engine or PROFILES_ENGINE
+    data = client.get(f"/api/engines/{engine}/profiles").get_json()
+    return _labels_to_ids(data["profiles"])
 
 
 @pytest.fixture
@@ -1022,12 +1036,16 @@ def profile_paths(tmp_path, monkeypatch):
 
 
 def test_get_profiles_returns_schema_and_seeded_profiles(client, profile_paths):
-    """GET profiles returns editable=true, the probed schema, and seeded sections.
+    """GET profiles returns the schema and the ladder as id/name/label rows.
 
-    The editor cannot render without the schema; on first open (no config yet)
-    the endpoint probes and seeds, so the response must carry a non-empty schema
-    and the derived ELO ladder. A regression in probe->schema or probe->seed
-    wiring would drop the schema or the sections.
+    Why this exists: the editor cannot render without the schema, and it now
+    addresses a profile by its generated ``id`` while showing the ``label``
+    projected from the values. Keeping the three apart is what lets a profile be
+    renamed or relabelled without stranding the settings that reference it.
+
+    How a regression manifests: the schema or the ladder is missing (a break in
+    the probe->schema or probe->seed wiring), an id carries display text again, or
+    a seeded rung arrives with a user ``name`` it was never given.
     """
     resp = client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
     assert resp.status_code == 200
@@ -1035,12 +1053,15 @@ def test_get_profiles_returns_schema_and_seeded_profiles(client, profile_paths):
 
     assert data["editable"] is True
     assert data["schema"] and isinstance(data["schema"], list)
-    names = {p["name"] for p in data["profiles"]}
-    assert names == _SEEDED_NAMES
-    default = next(p for p in data["profiles"] if p["name"] == "Default")
-    assert default["label"] == "Default (Unlimited)"
-    rung = next(p for p in data["profiles"] if p["name"] == "1600 ELO")
-    assert rung["label"] == "1600 ELO"
+    labels = _labels_to_ids(data["profiles"])
+    assert set(labels) == _SEEDED_LABELS
+    assert labels["Default (Unlimited)"] == "Default"
+    # Seeded rungs carry no user name, and their ids say nothing about strength.
+    assert all(p["name"] == "" for p in data["profiles"])
+    assert all(
+        p["id"].startswith("Profile-") for p in data["profiles"] if p["id"] != "Default"
+    )
+    rung = next(p for p in data["profiles"] if p["label"] == "1600 ELO")
     # Section-local values only -- no inherited Threads from [DEFAULT]; the rung
     # both sets the target Elo and enables the limit (else the engine ignores it).
     assert rung["values"] == {"UCI_LimitStrength": "true", "UCI_Elo": "1600"}
@@ -1063,38 +1084,104 @@ def test_get_profiles_non_editable_engine_hides_editor(client, profile_paths):
     assert data["profiles"] == []
 
 
-def test_put_creates_profile_and_persists(client, profile_paths):
-    """POST creates a profile that a subsequent GET returns alongside the ladder.
+def test_creating_a_profile_mints_its_id_and_keeps_the_ladder(client, profile_paths):
+    """POST /profiles creates a profile under a server-generated id.
 
-    Verifies the create path end-to-end and that seeding preserved the derived
-    sections (the file is not just the one new section). Values are coerced to
-    their .uci string forms.
+    Why this exists: a new profile has no identity yet, and letting the client
+    choose one would race every other client for uniqueness within the file. The
+    server mints it and reports it back, which is also what lets a profile be
+    created without being named. The seeded ladder must survive, since the file is
+    not replaced by the one new section.
+
+    How a regression manifests: the response carries no id (the editor cannot
+    select what it just created), the name is used as the identity again, or the
+    ladder is lost.
     """
     resp = client.post(
-        f"/api/engines/{PROFILES_ENGINE}/profiles/Tactical",
-        data=json.dumps({"values": {"Description": "Sharp", "OwnAttack": 140}}),
+        f"/api/engines/{PROFILES_ENGINE}/profiles",
+        data=json.dumps({
+            "values": {"Name": "Tactical", "Description": "Sharp", "OwnAttack": 140},
+        }),
         content_type="application/json",
     )
     assert resp.status_code == 200
-    assert resp.get_json()["success"] is True
+    body = resp.get_json()
+    assert body["success"] is True
+    created = body["id"]
+    assert created.startswith("Profile-")
 
     data = client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()
-    names = {p["name"] for p in data["profiles"]}
-    assert names == _SEEDED_NAMES | {"Tactical"}
-    tactical = next(p for p in data["profiles"] if p["name"] == "Tactical")
-    assert tactical["values"] == {"Description": "Sharp", "OwnAttack": "140"}
+    by_id = {p["id"]: p for p in data["profiles"]}
+    assert set(_labels_to_ids(data["profiles"])) == _SEEDED_LABELS | {"Tactical"}
+    assert by_id[created]["name"] == "Tactical"
+    assert by_id[created]["label"] == "Tactical"
+    assert by_id[created]["values"] == {
+        "Name": "Tactical", "Description": "Sharp", "OwnAttack": "140",
+    }
 
 
-def test_put_rejects_out_of_range_value_with_400(client, profile_paths):
-    """An out-of-range value is rejected with 400 and no such profile is written.
+def test_a_created_profile_gets_an_id_of_its_own(client, profile_paths):
+    """Two creations with identical values are two profiles, not one.
+
+    Why this exists: ids are generated per creation, so nothing about a profile's
+    content can make it collide with an existing one -- which is what makes
+    "editing Default forks a new profile" safe to repeat.
+
+    How a regression manifests: the second creation returns the first id and
+    overwrites it, so one of the two profiles the user made silently disappears.
+    """
+    payload = json.dumps({"values": {"OwnAttack": 140}})
+    first = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles",
+        data=payload, content_type="application/json",
+    ).get_json()
+    second = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles",
+        data=payload, content_type="application/json",
+    ).get_json()
+
+    assert first["id"] != second["id"]
+    ids = {p["id"] for p in second["profiles"]}
+    assert {first["id"], second["id"]} <= ids
+
+
+def test_creating_a_profile_rejects_an_out_of_range_value(client, profile_paths):
+    """A creation carrying an invalid value writes nothing.
+
+    Why this exists: engines apply out-of-range values verbatim rather than
+    clamping, so the server is the only guard. How a regression manifests: the
+    profile is created with the bad value and the engine plays wrong with no error.
+    """
+    before = {p["id"] for p in client.get(
+        f"/api/engines/{PROFILES_ENGINE}/profiles"
+    ).get_json()["profiles"]}
+
+    resp = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles",
+        data=json.dumps({"values": {"UCI_Elo": 99999}}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 400
+    assert "UCI_Elo" in resp.get_json()["error"]
+    after = {p["id"] for p in client.get(
+        f"/api/engines/{PROFILES_ENGINE}/profiles"
+    ).get_json()["profiles"]}
+    assert after == before
+
+
+def test_saving_an_out_of_range_value_leaves_the_profile_untouched(client, profile_paths):
+    """An out-of-range value is rejected with 400 and nothing is written.
 
     The engine does not clamp, so the server is the only guard; the error message
-    names the offending parameter for the UI. The endpoint seeds the config
-    before validating, so the file may exist (with the ladder) -- but the invalid
-    profile must NOT be among the sections.
+    names the offending parameter for the UI. How a regression manifests: the
+    edited profile now holds an Elo outside the range the binary advertised, and
+    the engine plays wrong with no error at any layer.
     """
+    target = _profile_ids(client)["1600 ELO"]
+
     resp = client.post(
-        f"/api/engines/{PROFILES_ENGINE}/profiles/Tactical",
+        f"/api/engines/{PROFILES_ENGINE}/profiles/{target}",
         data=json.dumps({"values": {"UCI_Elo": 99999}}),
         content_type="application/json",
     )
@@ -1103,24 +1190,53 @@ def test_put_rejects_out_of_range_value_with_400(client, profile_paths):
     assert body["success"] is False
     assert "UCI_Elo" in body["error"]
 
-    names = {
-        p["name"]
+    after = {
+        p["id"]: p["values"]
         for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
     }
-    assert "Tactical" not in names
+    assert after[target] == {"UCI_LimitStrength": "true", "UCI_Elo": "1600"}
+
+
+def test_saving_to_an_unknown_id_is_not_a_creation(client, profile_paths):
+    """A save addressed to an id that does not exist is a 404, not a new profile.
+
+    Why this exists: identities are minted by the server, so the only way a
+    section header can appear is through the creation endpoint. Letting a save
+    create one is how a client-supplied string became a header -- the route that
+    produced profiles no endpoint could address afterwards.
+
+    How a regression manifests: 200 and a new section named after whatever the
+    client put in the path.
+    """
+    before = {p["id"] for p in client.get(
+        f"/api/engines/{PROFILES_ENGINE}/profiles"
+    ).get_json()["profiles"]}
+
+    resp = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles/Profile-ffffff",
+        data=json.dumps({"values": {"OwnAttack": 120}}),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 404
+    assert resp.get_json()["error"] == "Profile not found"
+    after = {p["id"] for p in client.get(
+        f"/api/engines/{PROFILES_ENGINE}/profiles"
+    ).get_json()["profiles"]}
+    assert after == before
 
 
 def test_put_rejects_overwrite_of_default_profile(client, profile_paths):
     """POST to the seeded Default profile is rejected; Default values stay intact.
 
-    Why: editing Default (e.g. Maia WeightsFile) and saving under that name would
-    leave a section that still claims to be Default but is no longer the seeded
-    default. The UI must save-as under a new name; the API enforces the same.
-    How regression shows: Default's values change after POST while the name stays
-    Default.
+    Why: editing Default (e.g. Maia WeightsFile) and saving over it would leave a
+    section that still claims to be Default but is no longer the seeded default --
+    and Default is the strength every unconfigured slot falls back to. The editor
+    forks a new profile instead; the API enforces the same. How regression shows:
+    Default's values change after POST.
     """
     before = {
-        p["name"]: p["values"]
+        p["id"]: p["values"]
         for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
     }
     resp = client.post(
@@ -1134,7 +1250,7 @@ def test_put_rejects_overwrite_of_default_profile(client, profile_paths):
     assert "Default" in body["error"]
 
     after = {
-        p["name"]: p["values"]
+        p["id"]: p["values"]
         for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
     }
     assert after["Default"] == before["Default"]
@@ -1154,11 +1270,11 @@ def test_put_rejects_case_variant_of_default_profile(client, profile_paths):
     )
     assert resp.status_code == 400
     assert "Default" in resp.get_json()["error"]
-    names = {
-        p["name"]
+    ids = {
+        p["id"]
         for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
     }
-    assert "default" not in names
+    assert "default" not in ids
 
 
 def test_delete_rejects_seeded_default_profile(client, profile_paths):
@@ -1174,11 +1290,11 @@ def test_delete_rejects_seeded_default_profile(client, profile_paths):
     assert body["success"] is False
     assert "Default" in body["error"]
 
-    names = {
-        p["name"]
+    ids = {
+        p["id"]
         for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
     }
-    assert "Default" in names
+    assert "Default" in ids
 
 
 def test_reset_profiles_reseeds_ladder_from_probe(client, profile_paths):
@@ -1196,7 +1312,7 @@ def test_reset_profiles_reseeds_ladder_from_probe(client, profile_paths):
         "[DEFAULT]\nThreads = 1\n\n[Default]\nUCI_LimitStrength = false\n",
         encoding="utf-8",
     )
-    assert {p["name"] for p in client.get(
+    assert {p["id"] for p in client.get(
         f"/api/engines/{PROFILES_ENGINE}/profiles"
     ).get_json()["profiles"]} == {"Default"}
 
@@ -1204,10 +1320,7 @@ def test_reset_profiles_reseeds_ladder_from_probe(client, profile_paths):
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["success"] is True
-    names = {p["name"] for p in body["profiles"]}
-    assert names == _SEEDED_NAMES
-    default = next(p for p in body["profiles"] if p["name"] == "Default")
-    assert default["label"] == "Default (Unlimited)"
+    assert set(_labels_to_ids(body["profiles"])) == _SEEDED_LABELS
 
 
 def test_reset_profiles_non_editable_engine_returns_404(client, profile_paths):
@@ -1216,20 +1329,34 @@ def test_reset_profiles_non_editable_engine_returns_404(client, profile_paths):
     assert resp.status_code == 404
 
 
+def _write_legacy_case_twins(config):
+    """Write a config whose sections are legacy names, two differing only by case.
+
+    Case twins can only arise from configs written before identities were
+    generated (``[Attacker]`` and ``[attacker]`` were both reachable when the name
+    was the identity), so the reconcile path has to be exercised against that
+    shape rather than against a freshly seeded file.
+    """
+    config.write_text(
+        "[DEFAULT]\nThreads = 1\n\n"
+        "[Default]\nUCI_LimitStrength = false\n\n"
+        "[Attacker]\nUCI_LimitStrength = true\nUCI_Elo = 1400\n\n"
+        "[attacker]\nUCI_LimitStrength = true\nUCI_Elo = 1600\n",
+        encoding="utf-8",
+    )
+
+
 def test_uci_schema_reports_case_collisions(client, profile_paths):
     """GET uci-schema includes case_collisions when twin sections exist.
 
     Why: the editor needs the list to show the reconcile banner. How regression
     shows: case_collisions missing or empty while both Attacker/attacker exist.
     """
-    client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
-    # Seed first, then append a case twin (write_profile remaps sole matches).
-    with open(profile_paths, "a", encoding="utf-8") as handle:
-        handle.write("\n[1400 elo]\nUCI_LimitStrength = true\nUCI_Elo = 1400\n")
+    _write_legacy_case_twins(profile_paths)
     resp = client.get(f"/api/engines/{PROFILES_ENGINE}/uci-schema")
     assert resp.status_code == 200
     body = resp.get_json()
-    assert any(set(g) == {"1400 ELO", "1400 elo"} for g in body["case_collisions"])
+    assert any(set(g) == {"Attacker", "attacker"} for g in body["case_collisions"])
 
 
 def test_reconcile_case_keeps_chosen_spelling(client, profile_paths):
@@ -1238,21 +1365,19 @@ def test_reconcile_case_keeps_chosen_spelling(client, profile_paths):
     Why: operator escape hatch for silent overwrite of case duplicates.
     How regression shows: both spellings remain after reconcile.
     """
-    client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
-    with open(profile_paths, "a", encoding="utf-8") as handle:
-        handle.write("\n[1400 elo]\nUCI_LimitStrength = true\nUCI_Elo = 1400\n")
+    _write_legacy_case_twins(profile_paths)
     resp = client.post(
         f"/api/engines/{PROFILES_ENGINE}/profiles/reconcile-case",
-        data=json.dumps({"keep": "1400 ELO"}),
+        data=json.dumps({"keep": "Attacker"}),
         content_type="application/json",
     )
     assert resp.status_code == 200
     body = resp.get_json()
     assert body["success"] is True
-    assert body["removed"] == ["1400 elo"]
-    names = {p["name"] for p in body["profiles"]}
-    assert "1400 ELO" in names
-    assert "1400 elo" not in names
+    assert body["removed"] == ["attacker"]
+    ids = {p["id"] for p in body["profiles"]}
+    assert "Attacker" in ids
+    assert "attacker" not in ids
     assert body["case_collisions"] == []
 
 
@@ -1280,43 +1405,241 @@ def test_delete_removes_profile(client, profile_paths):
     success.
     """
     # Seed the config so there are real sections to delete.
-    client.get(f"/api/engines/{PROFILES_ENGINE}/profiles")
+    target = _profile_ids(client)["1600 ELO"]
 
-    first = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/1600 ELO/delete")
+    first = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/{target}/delete")
     assert first.status_code == 200
     assert first.get_json()["success"] is True
 
-    names = {
-        p["name"]
+    assert target not in {
+        p["id"]
         for p in client.get(f"/api/engines/{PROFILES_ENGINE}/profiles").get_json()["profiles"]
     }
-    assert "1600 ELO" not in names
 
-    again = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/1600 ELO/delete")
+    again = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/{target}/delete")
     assert again.status_code == 404
+
+
+def test_a_slash_in_a_profiles_name_never_reaches_the_section_header(
+    client, profile_paths
+):
+    """A name containing a slash is stored as metadata, not as a section header.
+
+    Why this test exists: the name used to be the section header and the REST path
+    segment at once, and ``[a/b]`` is a perfectly good INI header -- but no route
+    matches ``/profiles/a/b`` (Flask's default string converter excludes ``/``),
+    so such a profile was listed in the editor with Save and Delete buttons that
+    could never reach it, and the only way out was editing the file by hand. The
+    fix is structural: the header is a server-minted id and the name is a value
+    inside the section, so a slash is now merely a character in a label.
+
+    How a regression manifests: the created profile's id is the submitted name
+    again, and the second half of this test shows what that costs -- the request
+    to address it does not even reach the handler.
+    """
+    created = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles",
+        data=json.dumps({"values": {"Name": "a/b", "OwnAttack": 120}}),
+        content_type="application/json",
+    ).get_json()
+
+    assert created["id"].startswith("Profile-")
+    by_id = {p["id"]: p for p in created["profiles"]}
+    assert by_id[created["id"]]["name"] == "a/b"
+    # Addressable by its id, which is the whole point of minting one.
+    saved = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles/{created['id']}",
+        data=json.dumps({"values": {"OwnAttack": 130}}),
+        content_type="application/json",
+    )
+    assert saved.status_code == 200
+
+    # And a slash in the path still matches no profile route, which is why it must
+    # never become an identity. Both the raw and the percent-encoded spelling are
+    # decoded to the same path.
+    for segment in ("a/b", "a%2Fb"):
+        unreachable = client.post(
+            f"/api/engines/{PROFILES_ENGINE}/profiles/{segment}",
+            data=json.dumps({"values": {}}),
+            content_type="application/json",
+        )
+        assert unreachable.status_code in (404, 405)
+
+
+@pytest.fixture
+def player_settings(tmp_path, monkeypatch):
+    """Isolate ``centaur.ini`` so the profile-reference repair is observable.
+
+    The repair reads and writes the real settings store, which defaults to
+    ``/opt``. Pointing it at a temp file (and clearing the parsed-defaults cache
+    the class memoises per path) lets a test bind a player slot to a profile and
+    then assert what the mutation did to that binding. Returns a
+    ``(bind, stored)`` pair over that file.
+    """
+    from universalchess.board.settings import Settings
+
+    config = tmp_path / "settings" / "centaur.ini"
+    config.parent.mkdir(parents=True)
+    config.write_text("", encoding="utf-8")
+    monkeypatch.setattr(Settings, "configfile", str(config))
+    monkeypatch.setattr(Settings, "defconfigfile", str(tmp_path / "settings" / "absent.ini"))
+    Settings._defaults_cache.clear()
+
+    def bind(section, engine, profile):
+        Settings.write(section, "engine", engine)
+        Settings.write(section, "elo", profile)
+
+    def stored(section, key):
+        return Settings.read(section, key, "")
+
+    return bind, stored
+
+
+def test_deleting_a_profile_repoints_the_slots_that_used_it(
+    client, profile_paths, player_settings
+):
+    """Deleting a profile moves the slots referencing it onto Default.
+
+    Why this test exists: a player slot's ``elo`` names a .uci section, and
+    nothing enforced that reference. Deleting the section left the slot naming a
+    section that no longer existed, and _load_uci_options silently fell back to
+    the engine-wide [DEFAULT] at game start -- so the board played at a strength
+    nobody chose with no error at any layer.
+
+    How the regression manifests: the slot still stores "1600 ELO" after the
+    delete, and ``repointed`` is empty, so the UI cannot tell the user either.
+    """
+    bind, stored = player_settings
+    ids = _profile_ids(client)
+    deleted, kept = ids["1600 ELO"], ids["1400 ELO"]
+    bind("PlayerTwo", PROFILES_ENGINE, deleted)
+    bind("PlayerOne", PROFILES_ENGINE, kept)
+
+    resp = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/{deleted}/delete")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["repointed"] == [
+        {"setting": "PlayerTwo.elo", "from": deleted, "to": "Default"}
+    ]
+    assert stored("PlayerTwo", "elo") == "Default"
+    # The other slot's profile survived the delete, so its reference must not move.
+    assert stored("PlayerOne", "elo") == kept
+
+
+def test_deleting_a_profile_leaves_another_engines_slot_alone(
+    client, profile_paths, player_settings
+):
+    """A slot on a different engine is untouched by this engine's delete.
+
+    Why: profile names are only unique within an engine, so a repair that ignored
+    the stored engine would repoint an unrelated slot. How the regression shows:
+    the other engine's slot drops to Default even though its own .uci never
+    changed.
+    """
+    bind, stored = player_settings
+    deleted = _profile_ids(client)["1600 ELO"]
+    # The other engine's slot happens to name the same id, which is possible
+    # because ids are unique only within an engine's own config.
+    bind("PlayerTwo", SYSTEM_ENGINE, deleted)
+
+    resp = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/{deleted}/delete")
+
+    assert resp.status_code == 200
+    assert resp.get_json()["repointed"] == []
+    assert stored("PlayerTwo", "elo") == deleted
+
+
+def test_naming_a_profile_moves_no_reference(client, profile_paths, player_settings):
+    """Renaming a profile is an ordinary edit: nothing that referenced it moves.
+
+    Why this test exists: the reason a rename used to strand the settings that
+    referenced a profile is that the name *was* the reference. Now the name is a
+    value in the section and the id is the identity, so there is no rename
+    endpoint and nothing to repair -- the slot keeps playing the same profile
+    under its new label.
+
+    How a regression manifests: the identity follows the name again, so the stored
+    reference either changes or dangles, and the slot's strength moves without the
+    user touching it.
+    """
+    bind, stored = player_settings
+    renamed = _profile_ids(client)["1600 ELO"]
+    bind("PlayerTwo", PROFILES_ENGINE, renamed)
+
+    resp = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles/{renamed}",
+        data=json.dumps({
+            "values": {"Name": "Club Player", "UCI_LimitStrength": True, "UCI_Elo": 1800},
+        }),
+        content_type="application/json",
+    )
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert body["id"] == renamed
+    by_id = {p["id"]: p for p in body["profiles"]}
+    # The name is what changed; the label follows it and the id does not move.
+    assert by_id[renamed]["name"] == "Club Player"
+    assert by_id[renamed]["label"] == "Club Player"
+    assert stored("PlayerTwo", "elo") == renamed
+
+
+def test_resetting_profiles_repoints_slots_on_discarded_profiles(
+    client, profile_paths, player_settings
+):
+    """Reset repoints slots whose custom profile it discarded, and only those.
+
+    Why: reset deletes the writable .uci and re-derives the ladder from a fresh
+    probe, so every custom profile is gone -- it dangled every reference to one.
+    How the regression shows: the slot on the custom profile still names it after
+    the reset (silent [DEFAULT] fallback at game start), or the slot on a
+    re-derived rung is needlessly reset to Default.
+    """
+    bind, stored = player_settings
+    custom = client.post(
+        f"/api/engines/{PROFILES_ENGINE}/profiles",
+        data=json.dumps({"values": {"Name": "Tactical", "OwnAttack": 140}}),
+        content_type="application/json",
+    ).get_json()["id"]
+    # A legacy reference by name: reset re-derives the ladder under new ids, so a
+    # reference to a rung can only survive if it is one the old config also named.
+    bind("PlayerTwo", PROFILES_ENGINE, custom)
+    bind("PlayerOne", PROFILES_ENGINE, "Default")
+
+    resp = client.post(f"/api/engines/{PROFILES_ENGINE}/profiles/reset")
+
+    assert resp.status_code == 200
+    body = resp.get_json()
+    assert custom not in {p["id"] for p in body["profiles"]}
+    assert body["repointed"] == [
+        {"setting": "PlayerTwo.elo", "from": custom, "to": "Default"}
+    ]
+    assert stored("PlayerTwo", "elo") == "Default"
+    # Default is re-derived by the reset, so that reference still resolves.
+    assert stored("PlayerOne", "elo") == "Default"
 
 
 def test_levels_endpoint_seeds_and_returns_labeled_sections(client, profile_paths):
     """GET /levels seeds the config and returns {value,label} rows for the picker.
 
-    The picker (web and on-device) reads this. It must probe/seed on first use
-    and return the derived ladder with Default first. Because this engine
-    advertises UCI_LimitStrength, its Default runs uncapped, so its display label
-    is "Default (Unlimited)" while its persisted value stays "Default" (existing
-    configs keep resolving). A regression that stopped seeding would return only
-    the single Default row; one that dropped the Default prefix or changed the
-    stored value would break config matching / list uniformity with Maia.
+    The picker (web and on-device) reads this. It must probe/seed on first use and
+    return the derived ladder with Default first. ``value`` is the profile id
+    written into the player's settings; ``label`` is projected from the profile's
+    values, so this engine's uncapped Default reads "Default (Unlimited)" while
+    the stored value stays "Default".
+
+    How a regression manifests: only the single Default row comes back (seeding
+    stopped), or ``value`` carries the label -- which would store display text as
+    the strength and strand it on the next edit.
     """
     resp = client.get(f"/api/engines/{PROFILES_ENGINE}/levels")
     assert resp.status_code == 200
     levels = resp.get_json()
     assert levels[0] == {"value": "Default", "label": "Default (Unlimited)"}
-    assert {level["value"] for level in levels} == _SEEDED_NAMES
-    # Only Default is annotated; the numbered rungs show their value verbatim.
+    assert {level["label"] for level in levels} == _SEEDED_LABELS
     assert all(
-        level["label"] == level["value"]
+        level["value"] == "Default" or level["value"].startswith("Profile-")
         for level in levels
-        if level["value"] != "Default"
     )
 
 

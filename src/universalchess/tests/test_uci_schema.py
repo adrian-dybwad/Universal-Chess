@@ -431,13 +431,333 @@ def test_elo_ladder_empty_when_range_unusable(minimum, maximum):
     ("/x/weights_1900.pb.gz", "1900 ELO"),
     ("/x/strong.pb.gz", "strong"),        # no number -> stem
 ])
-def test_file_level_name(path, expected):
-    """File levels are named by embedded ELO when present, else the stem.
+def test_a_file_backed_section_is_named_by_the_label_renderer(path, expected):
+    """The file naming rule has one implementation, the label projection's.
 
-    The name is what the ELO picker shows; a wrong name would mislabel a net's
-    strength.
+    Why this exists: the seeder used to name file sections with its own copy of
+    this rule (``_file_level_name``). With labels projected from values, a second
+    copy could disagree -- a section seeded ``1100 ELO`` but labelled
+    ``maia-1100`` reads as two different profiles between the picker and the game
+    card. The names the seeder produces through this renderer are asserted by
+    ``test_derive_sections_file_levels_take_precedence``.
     """
-    assert us._file_level_name(path) == expected
+    assert us.profile_labels.file_term(path) == expected
+
+
+# ---------------------------------------------------------------------------
+# Option registry: dependencies and units
+# ---------------------------------------------------------------------------
+
+
+def test_the_elo_field_carries_the_gate_the_engine_never_advertises():
+    """UCI_Elo's dependency on UCI_LimitStrength reaches consumers via the field.
+
+    Why this exists: the UCI handshake describes each option alone and never says
+    that the engine ignores UCI_Elo while the cap is off. That rule is declared
+    once in this module's registry and carried on the field, so the label
+    projection (and anything else asking what the engine is actually applying)
+    reads one declaration instead of hardcoding the pair.
+
+    How a regression manifests: an uncapped profile keeps a leftover UCI_Elo
+    value, and with no gate on the field it is labelled and reported as playing
+    at that rating while the engine plays at full strength.
+    """
+    elo = us.option_to_field(FakeOption("UCI_Elo", "spin", 1500, 800, 2850))
+    assert (elo.requires, elo.unit) == ("UCI_LimitStrength", "ELO")
+
+
+@pytest.mark.parametrize("option", [
+    FakeOption("Hash", "spin", 16, 1, 1024),
+    FakeOption("UCI_LimitStrength", "check", False),
+    FakeOption("Personality", "combo", "Default", var=["Default", "Tal"]),
+    FakeOption("Comment", "string", "hello"),
+])
+def test_an_option_with_no_declared_dependency_or_unit_carries_neither(option):
+    # Nothing may be invented: a fabricated unit would label Hash's 256 as a
+    # rating, and a fabricated gate would silently drop a term from every label.
+    field = us.option_to_field(option)
+    assert (field.requires, field.unit) == ("", "")
+
+
+# ---------------------------------------------------------------------------
+# Label keys
+# ---------------------------------------------------------------------------
+
+
+def test_label_keys_are_the_axes_the_ladder_is_seeded_from(tmp_path):
+    """The label projects the same axes seeding varies, for the same engine.
+
+    Why this exists: if the two disagree, seeded sections get labels that do not
+    distinguish them -- an engine laddered by net would label every rung by its
+    Elo option (unset, so blank), or an Elo-laddered engine would label by a book
+    filename. Deriving the keys from the same schema is what keeps them together;
+    this pins it for both engine shapes.
+
+    How a regression manifests: the picker shows several identically labelled
+    rows, which is indistinguishable to a user from the ladder having collapsed.
+    """
+    for elo in ("1100", "1500"):
+        (tmp_path / f"net-{elo}.pb.gz").write_text("x")
+    file_options = [FakeOption("WeightsFile", "string", str(tmp_path / "net-1100.pb.gz"))]
+    elo_options = [
+        FakeOption("UCI_LimitStrength", "check", False),
+        FakeOption("UCI_Elo", "spin", 1500, 1400, 1800),
+        FakeOption("Hash", "spin", 16, 1, 1024),
+    ]
+
+    file_groups = us.build_groups(
+        file_options, engine_name="eng", engines_dir=str(tmp_path)
+    )
+    elo_groups = us.build_groups(elo_options, engine_name="eng")
+
+    assert us.default_label_keys(file_groups) == ("WeightsFile",)
+    assert us.default_label_keys(elo_groups) == ("UCI_Elo",)
+
+    # The keys name exactly the options the seeded sections set, gates aside.
+    for options, groups, engines_dir in (
+        (file_options, file_groups, str(tmp_path)),
+        (elo_options, elo_groups, str(tmp_path / "no-files")),
+    ):
+        keys = set(us.default_label_keys(groups))
+        seeded = us.derive_sections(
+            options, engine_name="eng", engines_dir=engines_dir
+        )
+        varied = {
+            key
+            for name, values in seeded
+            for key in values
+            if name != "Default" and key != "UCI_LimitStrength"
+        }
+        assert varied == keys
+
+
+def test_a_gate_option_is_never_a_label_key():
+    # UCI_LimitStrength is in the strength group and is writable, but on its own
+    # it says nothing: the option it gates reports its own suppression. Including
+    # it would label every capped profile "Limit strength: 1400 ELO".
+    groups = us.build_groups(
+        [
+            FakeOption("UCI_LimitStrength", "check", False),
+            FakeOption("UCI_Elo", "spin", 1500, 1400, 1800),
+        ],
+        engine_name="eng",
+    )
+    assert us.default_label_keys(groups) == ("UCI_Elo",)
+
+
+def test_a_catalog_declaration_chooses_between_ambiguous_file_axes(tmp_path, monkeypatch):
+    """A declared axis wins over the probe order, which cannot know the axis.
+
+    Why this exists: an engine can advertise several file-backed options, and the
+    derived default takes them in handshake order. Labelling a profile by its
+    opening book instead of its playing style is wrong in a way no user can
+    correct, so the catalog can name the axis.
+
+    How a regression manifests: the declaration is ignored (labels follow probe
+    order again) or trusted blindly, so an engine update that removed the option
+    leaves profiles labelled by a key with no value.
+    """
+    (tmp_path / "Defender.txt").write_text("x")
+    (tmp_path / "Attacker.txt").write_text("x")
+    (tmp_path / "book.bin").write_text("x")
+    (tmp_path / "gm.bin").write_text("x")
+    options = [
+        FakeOption("BookFile", "string", str(tmp_path / "book.bin")),
+        FakeOption("PersonalityFile", "string", str(tmp_path / "Defender.txt")),
+    ]
+    groups = us.build_groups(options, engine_name="rodentIV", engines_dir=str(tmp_path))
+
+    # Derived: handshake order, which puts the book first.
+    assert us.default_label_keys(groups)[0] == "BookFile"
+
+    monkeypatch.setattr(
+        us, "catalog_label_keys", lambda name: ("PersonalityFile",)
+    )
+    assert us.profile_label_keys("rodentIV", groups) == ("PersonalityFile",)
+
+    # A declaration the installed engine cannot satisfy falls back to the probe
+    # rather than leaving the profile with no label at all.
+    monkeypatch.setattr(us, "catalog_label_keys", lambda name: ("GoneInV5",))
+    assert us.profile_label_keys("rodentIV", groups) == us.default_label_keys(groups)
+
+
+def _rodent_options():
+    """The options Rodent IV advertises once its personalities are installed.
+
+    Taken from a handshake against a built binary with ``personalities/`` beside
+    it, which is how the installer lays it out. Rodent reads
+    ``personalities/basic.ini`` relative to its own executable, and that file
+    turns the aliases it defines into a ``Personality`` combo (hiding the
+    ``PersonalityFile`` string it offers otherwise) while suppressing the book
+    options entirely, because it takes books from the personality.
+    """
+    return [
+        FakeOption("Hash", "spin", 16, 1, 4096),
+        FakeOption("UCI_LimitStrength", "check", True),
+        FakeOption("UCI_Elo", "spin", 2800, 800, 2800),
+        FakeOption(
+            "Personality", "combo", "---", var=["---", "Defender", "Fischer", "Tal"]
+        ),
+        FakeOption("Contempt", "spin", 0, -500, 500),
+    ]
+
+
+def test_rodents_playing_style_is_part_of_its_profile_labels():
+    """Rodent's strength axis is a combo, so the catalog has to declare it.
+
+    Why this exists: the derived keys are the axes seeding varies -- file-backed
+    selectors and ``UCI_Elo`` -- and Rodent's 30-odd playing styles are neither.
+    They arrive as a ``Personality`` combo, so without the catalog declaration
+    two profiles differing only in style would carry the same label, and the
+    picker would offer several rows a user cannot tell apart.
+
+    How a regression manifests: the declaration is dropped or misspelled, and the
+    style disappears from the label -- leaving "1700 ELO" for a profile that also
+    chose Defender, or an empty label for an uncapped one that only chose a style.
+    """
+    groups = us.build_groups(_rodent_options(), engine_name="rodentIV")
+
+    assert us.profile_label_keys("rodentIV", groups) == ("Personality", "UCI_Elo")
+
+    # The style belongs beside the Elo in the form, not among the tuning knobs:
+    # for this engine it is how strength is chosen.
+    strength = {
+        field.key for group in groups if group.id == "strength" for field in group.fields
+    }
+    assert strength == {"UCI_LimitStrength", "UCI_Elo", "Personality"}
+
+    projection = us.profile_labels.LabelProjection(
+        keys=us.profile_label_keys("rodentIV", groups),
+        fields=tuple(field for group in groups for field in group.fields),
+    )
+    assert projection.label(
+        {"Personality": "Defender", "UCI_LimitStrength": "true", "UCI_Elo": "1700"}
+    ) == "Defender: 1700 ELO"
+    # Uncapped: the Elo term is suppressed by its own gate, and the style is all
+    # that is left to say about the profile.
+    assert projection.label(
+        {"Personality": "Defender", "UCI_LimitStrength": "false", "UCI_Elo": "1700"}
+    ) == "Defender"
+
+
+def test_rodent_without_its_personalities_is_labelled_by_elo_alone():
+    """A declaration the binary cannot satisfy degrades to the derived axes.
+
+    Why this exists: Rodent only advertises ``Personality`` when it finds its
+    ``personalities`` directory. If the declaration were trusted rather than
+    resolved against the probe, an install missing those files would project
+    every profile through a key that has no field, producing an empty label for
+    every row of the picker.
+
+    How a regression manifests: the labels come back empty (no term renders) and
+    the strength picker shows blank rows.
+    """
+    options = [o for o in _rodent_options() if o.name != "Personality"]
+    groups = us.build_groups(options, engine_name="rodentIV")
+
+    assert us.profile_label_keys("rodentIV", groups) == ("UCI_Elo",)
+
+
+def _elo_groups():
+    """Schema of an engine with a capped Elo, a gate, and an engine-wide option."""
+    return us.build_groups(
+        [
+            FakeOption("UCI_LimitStrength", "check", False),
+            FakeOption("UCI_Elo", "spin", 1500, 1400, 1800),
+            FakeOption("Hash", "spin", 16, 1, 1024),
+            FakeOption("Contempt", "spin", 0, -100, 100),
+        ],
+        engine_name="eng",
+    )
+
+
+def _write_uci(tmp_path, selection=None, body="[Default]\n"):
+    """Write a .uci carrying an optional ``[DEFAULT] ProfileLabel`` selection."""
+    path = tmp_path / "eng.uci"
+    default = "[DEFAULT]\nHash = 16\n"
+    if selection is not None:
+        default += f"ProfileLabel = {selection}\n"
+    path.write_text(f"{default}\n{body}", encoding="utf-8")
+    return str(path)
+
+
+def test_this_installs_selection_outranks_the_catalog_and_the_probe(tmp_path):
+    """The per-install selection is the most specific answer, so it wins.
+
+    Why this exists: which options identify a profile depends on the install --
+    the engine build, the files present -- and the operator is the only one who
+    can know. Without this the selection is stored and ignored, which is worse
+    than not offering it.
+
+    How a regression manifests: labels keep following the catalog/derived keys
+    after the file is edited, with nothing to indicate the selection was read.
+    """
+    groups = _elo_groups()
+    path = _write_uci(tmp_path, selection="Contempt")
+    projection = us.label_projection("eng", groups, path)
+
+    assert projection.keys == ("Contempt",)
+    assert projection.label({"Contempt": "25"}) == "25"
+
+
+@pytest.mark.parametrize("selection", ["Gibberish", "UCI_EngineAbout", ""])
+def test_a_selection_the_probe_cannot_confirm_is_dropped(tmp_path, selection):
+    # Unknown keys (an engine update removed the option, or the file was
+    # hand-edited with a typo) and display-only options cannot label anything.
+    # A regression renders them as empty terms, so every label reads as a stray
+    # separator or is blank.
+    groups = _elo_groups()
+    projection = us.label_projection("eng", groups, _write_uci(tmp_path, selection))
+    assert projection.keys == us.profile_label_keys("eng", groups)
+
+
+def test_a_selection_that_describes_no_profile_falls_back_rather_than_blank(tmp_path):
+    """Hash is a real option, but it never appears in a profile section.
+
+    Why this exists: the guard the plan calls for. ``Hash`` and ``Threads`` are
+    engine-wide and live in the shared ``[DEFAULT]`` section, so a profile's own
+    values never contain them: a selection of ``Hash`` alone resolves against the
+    probe, renders nothing for every profile, and would leave the strength picker
+    a list of identical blank rows with nothing to choose between.
+
+    How a regression manifests: exactly that -- blank picker rows and a blank
+    strength in the game card and the PGN.
+    """
+    groups = _elo_groups()
+    projection = us.label_projection("eng", groups, _write_uci(tmp_path, "Hash"))
+    capped = {"UCI_LimitStrength": "true", "UCI_Elo": "1600"}
+
+    assert projection.keys == ("Hash",)
+    assert projection.fallback == ("UCI_Elo",)
+    assert projection.label(capped) == "1600 ELO"
+    # Nothing to fall back to for an uncapped profile: it is genuinely unlabelled
+    # on the strength axis, and the caller names it (Unlimited).
+    assert projection.label({"UCI_LimitStrength": "false", "UCI_Elo": "1600"}) == ""
+
+
+def test_an_install_with_no_selection_uses_the_catalog_or_derived_keys(tmp_path):
+    # The common case, and the one that must not depend on the file existing at
+    # all: a fresh install has no .uci until the engine is first probed.
+    groups = _elo_groups()
+    derived = us.profile_label_keys("eng", groups)
+    assert us.label_projection("eng", groups, _write_uci(tmp_path)).keys == derived
+    assert us.label_projection(
+        "eng", groups, str(tmp_path / "absent.uci")
+    ).keys == derived
+
+
+def test_no_catalog_engine_declares_a_label_key_that_is_not_a_string():
+    # The declaration is read from the catalog and handed to the projection; a
+    # non-string key would be dropped silently, so this catches a malformed entry
+    # at its source instead of as a missing label term at runtime.
+    from universalchess.managers.engine_manager import ENGINES
+
+    for name, engine in ENGINES.items():
+        label = engine.profile_label
+        if label is None:
+            continue
+        assert label.keys, f"{name} declares an empty ProfileLabel"
+        assert all(isinstance(key, str) and key for key in label.keys), name
 
 
 # ---------------------------------------------------------------------------
@@ -455,18 +775,55 @@ def test_derive_sections_builds_elo_ladder_with_limit_flag():
         FakeOption("UCI_LimitStrength", "check", False),
         FakeOption("UCI_Elo", "spin", 1500, 1400, 1800),
     ]
-    sections = dict(us.derive_sections(options, engine_name="eng"))
+    sections = us.derive_sections(options, engine_name="eng")
 
-    assert list(sections) == ["Default", "1400 ELO", "1600 ELO", "1800 ELO"]
-    assert sections["Default"] == {"UCI_LimitStrength": "false"}
-    assert sections["1600 ELO"] == {"UCI_LimitStrength": "true", "UCI_Elo": "1600"}
+    assert sections[0] == ("Default", {"UCI_LimitStrength": "false"})
+    assert [values for _, values in sections[1:]] == [
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1400"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1600"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1800"},
+    ]
 
 
-def test_derive_sections_file_levels_take_precedence(tmp_path):
-    """A file-backed engine seeds one section per net, Default at the median.
+def test_every_seeded_section_is_identified_by_a_generated_id():
+    """Sections are named by id; what they mean lives in their values.
 
-    For Maia the nets ARE the strength ladder; Default should pick a mid net so a
-    fresh install is neither weakest nor strongest.
+    Why this exists: the section name used to be the identity, the stored foreign
+    key, the URL segment and the display label at once, so a profile could not be
+    relabelled without moving it, and a rung named for an Elo it no longer sets
+    stated a strength it did not play. Ids are opaque and the label is projected
+    from the values, so there is one copy of the Elo.
+
+    Ids must also be unique and unpredictable: ``reset_config`` re-derives the
+    ladder from a fresh probe, and an ordinal id would resolve a stored reference
+    to whatever rung now sits in that position -- a different strength, silently.
+
+    How a regression manifests: two rungs share an id (one becomes unreachable,
+    and ConfigParser keeps only the last), or ids come out sequential and a
+    reference into a re-derived ladder resolves to the wrong strength.
+    """
+    options = [
+        FakeOption("UCI_LimitStrength", "check", False),
+        FakeOption("UCI_Elo", "spin", 1500, 800, 2800),
+    ]
+    ids = [name for name, _ in us.derive_sections(options, engine_name="eng")]
+    again = [name for name, _ in us.derive_sections(options, engine_name="eng")]
+
+    assert ids[0] == "Default"
+    assert len(set(ids)) == len(ids)
+    assert all(ep.is_profile_id(name) for name in ids[1:])
+    assert all(ep.is_valid_profile_name(name) for name in ids[1:])
+    # A second derivation of the same ladder issues different ids.
+    assert set(ids[1:]).isdisjoint(again[1:])
+
+
+def test_a_rated_file_axis_seeds_one_rung_per_file_with_default_in_the_middle(tmp_path):
+    """For Maia the nets ARE the ladder, so Default copies the middle net.
+
+    A fresh install should be neither the weakest nor the strongest net, and the
+    files are named for the rating they mimic, so the middle one is a meaningful
+    default. How a regression manifests: Default selects no net at all and lc0
+    refuses to search, or it selects the weakest.
     """
     for elo in ("1100", "1500", "1900"):
         (tmp_path / f"net-{elo}.pb.gz").write_text("x")
@@ -474,12 +831,105 @@ def test_derive_sections_file_levels_take_precedence(tmp_path):
     options = [FakeOption("WeightsFile", "string", default)]
 
     sections = us.derive_sections(options, engine_name="eng", engines_dir=str(tmp_path))
-    as_dict = dict(sections)
 
-    assert [name for name, _ in sections] == ["Default", "1100 ELO", "1500 ELO", "1900 ELO"]
-    # Median of three sorted nets is the 1500 file.
-    assert as_dict["Default"] == {"WeightsFile": str(tmp_path / "net-1500.pb.gz")}
-    assert as_dict["1900 ELO"] == {"WeightsFile": str(tmp_path / "net-1900.pb.gz")}
+    assert sections[0] == ("Default", {"WeightsFile": str(tmp_path / "net-1500.pb.gz")})
+    assert [values for _, values in sections[1:]] == [
+        {"WeightsFile": str(tmp_path / f"net-{elo}.pb.gz")}
+        for elo in ("1100", "1500", "1900")
+    ]
+
+
+def test_an_unrated_file_axis_leaves_default_uncapped(tmp_path):
+    """Default means "as the engine comes" for every engine, including this one.
+
+    Why this exists: Default used to be the alphabetically middle file whatever
+    the files were. For Maia's rating-named nets that is a middle strength; for a
+    set of playing-style files it is an arbitrary style presented as the engine's
+    default, and there is no way for a user to get the engine's own behaviour
+    back.
+
+    How a regression manifests: selecting Default silently loads a personality --
+    the board plays in a style nobody chose, and it cannot be turned off.
+    """
+    for name in ("Attacker", "Defender", "Positional"):
+        (tmp_path / f"{name}.txt").write_text("x")
+    options = [
+        FakeOption("PersonalityFile", "string", str(tmp_path / "Attacker.txt")),
+    ]
+
+    sections = us.derive_sections(options, engine_name="eng", engines_dir=str(tmp_path))
+
+    assert sections[0] == ("Default", {})
+    assert [values for _, values in sections[1:]] == [
+        {"PersonalityFile": str(tmp_path / f"{name}.txt")}
+        for name in ("Attacker", "Defender", "Positional")
+    ]
+
+
+def test_both_axes_are_seeded_when_the_engine_exposes_both(tmp_path):
+    """A file axis no longer suppresses the Elo ladder.
+
+    Why this exists: the file branch returned before the Elo ladder was built, so
+    an engine with both a personality selector and UCI_Elo got personalities and
+    no ratings -- half its strength control was unreachable, and a profile that
+    is a personality capped at a rating could not exist.
+
+    Axes are seeded side by side rather than crossed: the product of the two
+    would be a picker of hundreds of rows. Each rung differs from Default on one
+    axis, and a combined profile is composed by editing one.
+
+    How a regression manifests: the returned ladder holds only one axis, or it
+    holds the cross product and the picker becomes unusable.
+    """
+    for name in ("Attacker", "Defender"):
+        (tmp_path / f"{name}.txt").write_text("x")
+    options = [
+        FakeOption("PersonalityFile", "string", str(tmp_path / "Attacker.txt")),
+        FakeOption("UCI_LimitStrength", "check", False),
+        FakeOption("UCI_Elo", "spin", 1500, 1400, 1600),
+    ]
+
+    sections = us.derive_sections(options, engine_name="eng", engines_dir=str(tmp_path))
+    values = [v for _, v in sections]
+
+    assert values == [
+        {"UCI_LimitStrength": "false"},
+        {"UCI_LimitStrength": "false", "PersonalityFile": str(tmp_path / "Attacker.txt")},
+        {"UCI_LimitStrength": "false", "PersonalityFile": str(tmp_path / "Defender.txt")},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1400"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1600"},
+    ]
+
+
+def test_the_declared_axis_decides_which_file_option_seeds_the_ladder(tmp_path, monkeypatch):
+    """An opening book must not become an engine's strength ladder.
+
+    Why this exists: the seeder took the first file-backed option in handshake
+    order, and an engine can advertise a style selector and a book both. A ladder
+    of opening books is not a strength ladder, and which one comes first is not
+    something the probe can be asked. The catalog declaration that names the label
+    axis names this one too, so the two cannot disagree.
+
+    How a regression manifests: the ladder is seeded from the wrong axis, and
+    every profile in the picker is named after an opening book.
+    """
+    (tmp_path / "book.bin").write_text("x")
+    (tmp_path / "gm.bin").write_text("x")
+    (tmp_path / "Defender.txt").write_text("x")
+    (tmp_path / "Attacker.txt").write_text("x")
+    options = [
+        FakeOption("BookFile", "string", str(tmp_path / "book.bin")),
+        FakeOption("PersonalityFile", "string", str(tmp_path / "Defender.txt")),
+    ]
+
+    monkeypatch.setattr(us, "catalog_label_keys", lambda name: ("PersonalityFile",))
+    sections = us.derive_sections(
+        options, engine_name="rodentIV", engines_dir=str(tmp_path)
+    )
+
+    assert [set(values) for _, values in sections[1:]] == [
+        {"PersonalityFile"}, {"PersonalityFile"},
+    ]
 
 
 def test_derive_sections_without_strength_controls_is_default_only():
@@ -740,12 +1190,18 @@ def test_has_seeded_profiles_false_for_an_unreadable_config(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def _profile_values(config_path):
+    """Return the seeded sections' values in file order, [DEFAULT] excluded."""
+    return [profile["values"] for profile in ep.read_profiles(str(config_path))]
+
+
 def test_seed_config_writes_default_section_and_sections(monkeypatch, tmp_path):
     """Seeding writes [DEFAULT] Threads plus the derived strength sections.
 
     The seeded file must be exactly what the engine player and pickers read;
     this asserts the DEFAULT engine-wide block and the ELO ladder land in the
     file, and that it parses back through the profile reader (excluding DEFAULT).
+    Sections are asserted by their values, because their identities are generated.
     """
     monkeypatch.setattr(us, "probe_options", lambda path: [
         FakeOption("UCI_LimitStrength", "check", False),
@@ -761,10 +1217,17 @@ def test_seed_config_writes_default_section_and_sections(monkeypatch, tmp_path):
     raw.optionxform = str
     raw.read(str(config))
     assert raw.defaults() == {"Threads": "1"}
-    assert raw.get("1600 ELO", "UCI_Elo") == "1600"
 
     # The shared profile reader excludes [DEFAULT] and lists the seeded ladder.
-    assert ep.read_profile_names(str(config)) == ["Default", "1400 ELO", "1600 ELO", "1800 ELO"]
+    names = ep.read_profile_names(str(config))
+    assert names[0] == "Default"
+    assert all(ep.is_profile_id(name) for name in names[1:])
+    assert _profile_values(config) == [
+        {"UCI_LimitStrength": "false"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1400"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1600"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1800"},
+    ]
 
 
 def test_seed_config_is_idempotent_and_preserves_user_edits(monkeypatch, tmp_path):
@@ -832,8 +1295,11 @@ def test_reset_config_replaces_existing_file_with_fresh_seed(monkeypatch, tmp_pa
 
     result = us.reset_config("eng", engine_path="/fake/eng", config_path=str(config))
     assert result == str(config)
-    assert ep.read_profile_names(str(config)) == [
-        "Default", "1400 ELO", "1600 ELO", "1800 ELO",
+    assert _profile_values(config) == [
+        {"UCI_LimitStrength": "false"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1400"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1600"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1800"},
     ]
 
 
@@ -850,7 +1316,11 @@ def test_reset_config_seeds_when_absent(monkeypatch, tmp_path):
     config = tmp_path / "config" / "engines" / "eng.uci"
 
     us.reset_config("eng", engine_path="/fake/eng", config_path=str(config))
-    assert ep.read_profile_names(str(config)) == ["Default", "1400 ELO", "1600 ELO"]
+    assert _profile_values(config) == [
+        {"UCI_LimitStrength": "false"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1400"},
+        {"UCI_LimitStrength": "true", "UCI_Elo": "1600"},
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -888,7 +1358,12 @@ def test_reconcile_config_seeds_when_absent(monkeypatch, tmp_path):
 
     us.reconcile_config("eng", engine_path="/fake/eng", config_path=str(config))
 
-    assert ep.read_profile_names(str(config)) == ["Default", "1400 ELO", "1600 ELO", "1800 ELO"]
+    assert _profile_values(config) == [
+        {},
+        {"UCI_Elo": "1400"},
+        {"UCI_Elo": "1600"},
+        {"UCI_Elo": "1800"},
+    ]
 
 
 def test_reconcile_config_adds_missing_sections_and_preserves_edits(monkeypatch, tmp_path):
@@ -899,9 +1374,14 @@ def test_reconcile_config_adds_missing_sections_and_preserves_edits(monkeypatch,
     Reconcile must add exactly the missing sections while leaving hand-tuned
     values (Threads, a chosen Default net) untouched.
 
+    A legacy section carrying a net the ladder still wants must not be duplicated
+    either: rung identity is generated, so "already present" is decided by the
+    values a section sets, not by the name it happens to have.
+
     How the regression manifests: either the new net sections are absent (the
-    fetched nets never show as strength profiles) or a full reseed clobbers the
-    user's Threads/Default edits.
+    fetched nets never show as strength profiles), a full reseed clobbers the
+    user's Threads/Default edits, or every reconcile appends the whole ladder
+    again under fresh ids.
     """
     nets = _maia_net_paths(tmp_path, [1100, 1300, 1500])
     monkeypatch.setattr(us, "probe_options", lambda path: [
@@ -910,7 +1390,8 @@ def test_reconcile_config_adds_missing_sections_and_preserves_edits(monkeypatch,
     config = tmp_path / "config" / "engines" / "maia.uci"
     config.parent.mkdir(parents=True)
     # A partial seed: Threads hand-tuned to 2, Default points at a user-chosen
-    # net, and only the 1100 section exists (1300/1500 were fetched later).
+    # net, and only the 1100 section exists (1300/1500 were fetched later) --
+    # under the name an older version gave it.
     config.write_text(
         "[DEFAULT]\nThreads = 2\n\n"
         f"[Default]\nWeightsFile = {nets[0]}\n\n"
@@ -924,9 +1405,14 @@ def test_reconcile_config_adds_missing_sections_and_preserves_edits(monkeypatch,
     raw = configparser.ConfigParser(interpolation=None)
     raw.optionxform = str
     raw.read(str(config))
-    # The nets fetched after the first seed are now selectable strength profiles.
-    assert raw.get("1300 ELO", "WeightsFile") == nets[1]
-    assert raw.get("1500 ELO", "WeightsFile") == nets[2]
+    # The nets fetched after the first seed are now selectable strength profiles,
+    # and the legacy 1100 section is still the only one carrying that net.
+    by_net = {}
+    for section in raw.sections():
+        by_net.setdefault(raw[section].get("WeightsFile"), []).append(section)
+    assert by_net[nets[1]] and all(ep.is_profile_id(s) for s in by_net[nets[1]])
+    assert by_net[nets[2]] and all(ep.is_profile_id(s) for s in by_net[nets[2]])
+    assert sorted(by_net[nets[0]]) == ["1100 ELO", "Default"]
     # User edits survive: reconcile never overwrites an existing value.
     assert raw.defaults() == {"Threads": "2"}
     assert raw.get("Default", "WeightsFile") == nets[0]
@@ -958,8 +1444,12 @@ def test_reconcile_config_fills_empty_default_weightsfile(monkeypatch, tmp_path)
     raw.read(str(config))
     # derive_sections picks the median net (of [1100,1500,1900]) for Default.
     assert raw.get("Default", "WeightsFile") == nets[1]
-    assert raw.has_section("1100 ELO")
-    assert raw.has_section("1900 ELO")
+    seeded_nets = {
+        raw[section].get("WeightsFile")
+        for section in raw.sections()
+        if section != "Default"
+    }
+    assert seeded_nets == set(nets)
 
 
 def test_reconcile_config_is_noop_when_already_complete(monkeypatch, tmp_path):

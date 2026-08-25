@@ -121,13 +121,79 @@ def test_strength_sections_always_offer_a_default(monkeypatch):
 
     monkeypatch.setattr(
         engine_profiles, "strength_level_choices",
-        lambda path: [{"value": "1400 ELO", "label": "1400 ELO"}],
+        lambda path, projection: [{"value": "Profile-a1b2c3", "label": "1400 ELO"}],
     )
 
     sections = uci_schema.strength_sections_for_engine("stockfish")
 
     assert sections[0] == {"value": "Default", "label": "Default"}
-    assert {"value": "1400 ELO", "label": "1400 ELO"} in sections
+    assert {"value": "Profile-a1b2c3", "label": "1400 ELO"} in sections
+
+
+@pytest.fixture
+def seeded_engine_configs(tmp_path, monkeypatch):
+    """Two engines with real ``.uci`` files, counting probes per engine."""
+    for engine in ("stockfish", "maia"):
+        (tmp_path / f"{engine}.uci").write_text(
+            "[DEFAULT]\nThreads = 1\n\n"
+            "[Default]\nUCI_LimitStrength = false\n\n"
+            "[1200 ELO]\nUCI_LimitStrength = true\nUCI_Elo = 1200\n",
+            encoding="utf-8",
+        )
+    probes = []
+
+    def seed(name):
+        probes.append(name)
+        return str(tmp_path / f"{name}.uci")
+
+    monkeypatch.setattr(uci_schema, "seed_config", seed)
+    return tmp_path, probes
+
+
+def test_editing_an_engines_profiles_drops_its_cached_strength_rows(
+    seeded_engine_configs,
+):
+    """A profile write invalidates the picker rows built from that file.
+
+    Why this exists: the rows were cached for the life of the process and nothing
+    invalidated them, so deleting or renaming a profile left the on-device
+    strength picker offering the pre-edit ladder until the app restarted --
+    selecting a removed rung then stored a reference resolving to nothing.
+
+    How a regression manifests: the deleted rung is still listed after the edit,
+    which is what the value assertion below catches (a count check would not, the
+    row count changing for other reasons).
+    """
+    tmp_path, _ = seeded_engine_configs
+    from universalchess.services import engine_profiles
+
+    before = uci_schema.strength_sections_for_engine("stockfish")
+    assert "1200 ELO" in [row["value"] for row in before]
+
+    engine_profiles.delete_profile(str(tmp_path / "stockfish.uci"), "1200 ELO")
+
+    after = uci_schema.strength_sections_for_engine("stockfish")
+    assert [row["value"] for row in after] == ["Default"]
+
+
+def test_editing_one_engine_keeps_another_engines_cached_rows(seeded_engine_configs):
+    """Only the edited engine's rows are dropped.
+
+    Why this exists: rebuilding rows can require probing an engine binary (a
+    process launch), so invalidating every engine on any write would put that
+    cost on the menu thread for engines that did not change.
+
+    How a regression manifests: the probe count for the untouched engine rises
+    above one after an unrelated engine is edited.
+    """
+    tmp_path, probes = seeded_engine_configs
+    from universalchess.services import engine_profiles
+
+    uci_schema.strength_sections_for_engine("maia")
+    engine_profiles.delete_profile(str(tmp_path / "stockfish.uci"), "1200 ELO")
+    uci_schema.strength_sections_for_engine("maia")
+
+    assert probes == ["maia"]
 
 
 def test_an_unprobeable_engine_still_offers_default(monkeypatch):

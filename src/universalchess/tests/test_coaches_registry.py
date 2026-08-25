@@ -132,42 +132,52 @@ def test_resolve_coach_auto_picks_nearest_elo(opponent_elo, expected):
         (1500.0, 1500),        # float truncated
         ("1500", 1500),        # numeric string
         ("2850", 2850),
-        ("1200 ELO", 1200),    # seeded ELO-ladder section name
-        ("800 ELO", 800),
-        ("maia-1100.pb.gz", 1100),  # net file level: first number in the name
-        ("weights_1900.pb.gz", 1900),
-        ("Default", None),     # no number -> unknown (falls back to target)
-        ("Attacker", None),    # custom personality name -> unknown
+        ("1200 ELO", None),    # a profile identity is not a rating
+        ("Profile-1", None),   # the case that made digit-scraping dangerous
+        ("maia-1100.pb.gz", None),
+        ("Default", None),
+        ("Attacker", None),
         ("", None),
         (None, None),
     ],
 )
-def test_parse_elo_derives_number_from_selection(value, expected):
-    # The app stores the strength *selection* (section name), not a bare Elo.
-    # _parse_elo is the single place that turns "1200 ELO"/a Maia filename into a
-    # number for Auto coach matching. A regression here would send every
-    # non-numeric selection to the default target, so a 800-ELO or 2850-ELO
-    # opponent would wrongly get the mid-strength coach.
+def test_parse_elo_only_accepts_an_actual_number(value, expected):
+    # Why: this used to return the first run of digits found anywhere in the
+    # value, because the seeded ladder spelled the Elo into the section name.
+    # Profile identities are now generated, so digits inside one are not a rating
+    # -- "Profile-1" returned 1, and Auto then sized the coach against a 1-rated
+    # opponent with no error anywhere. Unresolvable values must read as unknown so
+    # the caller applies DEFAULT_TARGET_ELO instead of a meaningless number.
+    #
+    # How a regression manifests: any of the non-numeric cases returns an int, and
+    # the Auto coach silently mismatches the opposition.
     assert registry._parse_elo(value) == expected
 
 
 @pytest.mark.parametrize(
-    "opponent_elo,expected",
+    "profile_elo,expected",
     [
-        ("800 ELO", "dave"),        # 800 -> dave exactly
-        ("1200 ELO", "myron"),      # 1200 -> myron (1250, 50 away)
-        ("maia-1100.pb.gz", "myron"),  # 1100 -> myron (150) beats dave (300)
-        ("2850 ELO", "viktor"),     # near-max ladder -> strongest coach
-        ("Attacker", "myron"),      # unnumbered selection -> default target 1200
+        (800, "dave"),      # 800 -> dave exactly
+        (1200, "myron"),    # 1200 -> myron (1250, 50 away)
+        (1100, "myron"),    # 1100 -> myron (150) beats dave (300)
+        (2850, "viktor"),   # near-max ladder -> strongest coach
+        (None, "myron"),    # unresolvable -> default target 1200
     ],
 )
-def test_resolve_coach_auto_matches_section_name_strength(opponent_elo, expected):
-    # End-to-end: a stored section name (the seeded ELO ladder or a Maia net
-    # level) must drive Auto selection just like a bare number. This guards the
-    # whole path resolve_coach -> _parse_elo for the values the app actually
-    # persists; a regression would ignore the ladder and mis-match the coach.
-    coach = registry.resolve_coach(registry.AUTO, opponent_elo)
-    assert coach.id == expected
+def test_resolve_coach_auto_matches_the_profiles_stored_elo(profile_elo, expected):
+    # End-to-end: the rating comes from the opponent profile's own values, looked
+    # up through the injected resolver, and drives Auto selection. This guards the
+    # whole path resolve_opponent_elo -> resolve_coach for what the app actually
+    # persists (an identity, not a number); a regression would fall back to the
+    # default target for every engine opponent and always coach mid-strength.
+    p1 = {"type": "human", "elo": "Default"}
+    p2 = {"type": "engine", "engine": "stockfish", "elo": "Profile-a3f19c"}
+
+    opponent_elo = registry.resolve_opponent_elo(
+        p1, p2, profile_elo=lambda engine, selection: profile_elo
+    )
+
+    assert registry.resolve_coach(registry.AUTO, opponent_elo).id == expected
 
 
 def test_resolve_coach_explicit_id_wins_over_elo():
@@ -223,16 +233,57 @@ def test_resolve_human_color(p1_type, p1_color, p2_type, p2_color, expected):
 @pytest.mark.parametrize(
     "p1,p2,expected",
     [
-        ({"type": "human", "elo": "0"}, {"type": "engine", "elo": "1500"}, "1500"),
-        ({"type": "engine", "elo": "1800"}, {"type": "human", "elo": "0"}, "1800"),
-        ({"type": "engine", "elo": "1400"}, {"type": "engine", "elo": "1600"}, "1600"),
+        ({"type": "human", "elo": "0"}, {"type": "engine", "elo": "1500"}, 1500),
+        ({"type": "engine", "elo": "1800"}, {"type": "human", "elo": "0"}, 1800),
+        ({"type": "engine", "elo": "1400"}, {"type": "engine", "elo": "1600"}, 1600),
         ({"type": "human", "elo": "0"}, {"type": "human", "elo": "0"}, None),
     ],
 )
-def test_resolve_opponent_elo(p1, p2, expected):
+def test_resolve_opponent_elo_picks_the_engine_sides_rating(p1, p2, expected):
     # Auto selection is driven by the opponent (engine) Elo; picking the wrong
-    # side's Elo would match the coach to the human instead of the opposition.
+    # side's Elo would match the coach to the human instead of the opposition. A
+    # slot storing a bare number needs no profile lookup, so these resolve without
+    # one -- and the result is an int, not the raw stored text.
     assert registry.resolve_opponent_elo(p1, p2) == expected
+
+
+def test_the_opponents_rating_is_read_from_its_engines_profile():
+    # A slot stores a profile identity, so the rating has to be looked up in that
+    # engine's config -- which is why the engine is part of the lookup. How a
+    # regression manifests: the resolver is called with the wrong engine (or not
+    # at all) and every engine opponent reads as unknown.
+    calls = []
+
+    def profile_elo(engine, selection):
+        calls.append((engine, selection))
+        return 1700
+
+    p1 = {"type": "human", "elo": "Default"}
+    p2 = {"type": "engine", "engine": "maia", "elo": "Profile-7b2e01"}
+
+    assert registry.resolve_opponent_elo(p1, p2, profile_elo=profile_elo) == 1700
+    assert calls == [("maia", "Profile-7b2e01")]
+
+
+@pytest.mark.parametrize(
+    "slot",
+    [
+        {"type": "engine", "engine": "", "elo": "Profile-a3f19c"},  # no engine named
+        {"type": "engine", "engine": "maia", "elo": ""},            # no strength stored
+        {"type": "engine", "engine": "maia", "elo": "   "},
+    ],
+)
+def test_an_incomplete_opponent_slot_is_reported_as_unknown(slot):
+    # The empty cases: with no engine or no selection there is nothing to look up,
+    # so no resolver call may happen and the answer must be unknown. Calling the
+    # lookup with an empty engine would seed/probe nothing and, worse, any number
+    # returned here would be a fabricated rating.
+    def fail(engine, selection):
+        raise AssertionError(f"resolver must not be called with {engine!r}/{selection!r}")
+
+    assert registry.resolve_opponent_elo(
+        {"type": "human", "elo": "0"}, slot, profile_elo=fail
+    ) is None
 
 
 @pytest.mark.parametrize(

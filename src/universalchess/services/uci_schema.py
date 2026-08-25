@@ -29,13 +29,12 @@ import configparser
 import glob
 import os
 import pathlib
-import re
-import tempfile
 import threading
 from typing import Callable, Dict, List, Optional, Tuple
 
 from universalchess.board.logging import log
 from universalchess.paths import CONFIG_DIR, ENGINES_DIR, get_engine_path
+from universalchess.services import engine_profiles, profile_labels
 from universalchess.services.engine_profiles import ProfileField, ProfileGroup
 from universalchess.services.engine_registry import (
     LOAD_FAILURE_BINARY_MISSING,
@@ -54,14 +53,26 @@ __all__ = [
     "reset_config",
     "reconcile_config",
     "derive_sections",
+    "default_label_keys",
     "help_for",
     "is_info_option",
     "option_to_field",
+    "catalog_label_keys",
+    "label_projection",
+    "projection_for_engine",
+    "profile_label_keys",
+    "requires_for",
+    "unit_for",
 ]
 
 # UCI option names (compared case-insensitively) that select playing strength.
-# Grouped first in the form so the primary knob is prominent.
-_STRENGTH_NAMES = frozenset({"uci_limitstrength", "uci_elo", "skill level", "strength"})
+# Grouped first in the form so the primary knob is prominent. ``personality`` is
+# here because an engine offering one chooses how it plays through it -- Rodent's
+# styles run from beginner to grandmaster -- so it belongs beside the Elo rather
+# than among the tuning knobs.
+_STRENGTH_NAMES = frozenset(
+    {"uci_limitstrength", "uci_elo", "skill level", "strength", "personality"}
+)
 
 # Engine-wide resources written to the shared [DEFAULT] section, not per profile.
 _ENGINE_WIDE_NAMES = frozenset({"hash", "threads"})
@@ -146,6 +157,26 @@ _OPTION_HELP: Dict[str, str] = {
         "and styles."
     ),
     "personality": "Playing-style personality provided by the engine.",
+}
+
+# Options whose value the engine ignores unless another option is switched on,
+# keyed by the option name lower-cased. The UCI handshake describes options one
+# at a time and says nothing about dependencies between them, so the one that
+# matters is declared here -- beside the help text above that already states the
+# rule in prose -- rather than special-cased per engine or per consumer. It is
+# carried onto ProfileField.requires, so the label projection, and anything else
+# that needs to know which stored values the engine is disregarding, reads a
+# single declaration.
+_OPTION_REQUIRES: Dict[str, str] = {
+    "uci_elo": "UCI_LimitStrength",
+}
+
+# What an int option's number measures, keyed by the option name lower-cased.
+# Declared only where the bare number would not say: a label term of "1400" does
+# not read as a rating, whereas Hash's 256 needs no help from a picker row. One
+# entry serves every engine that advertises the option.
+_OPTION_UNIT: Dict[str, str] = {
+    "uci_elo": "ELO",
 }
 
 # Engine-specific descriptions, keyed by engine name then option name (lower-cased).
@@ -245,6 +276,23 @@ def help_for(engine_name: str, option_name: str) -> str:
     return per_engine.get(key) or _OPTION_HELP.get(key, "")
 
 
+def requires_for(option_name: str) -> str:
+    """Return the option that must be on for ``option_name`` to take effect.
+
+    Empty when the option always applies. Matched case-insensitively; the answer
+    is spelled as the UCI standard spells it, since it is used to look up a value
+    in a profile. Generic across engines (unlike :func:`help_for`, which has
+    per-engine overrides), because the dependency is a property of the standard
+    options themselves.
+    """
+    return _OPTION_REQUIRES.get(option_name.lower(), "")
+
+
+def unit_for(option_name: str) -> str:
+    """Return what an option's number measures, or ``""`` when it needs no unit."""
+    return _OPTION_UNIT.get(option_name.lower(), "")
+
+
 def option_to_field(
     option: object, file_choices: Optional[FileChoices] = None, help: str = ""
 ) -> Optional[ProfileField]:
@@ -260,25 +308,33 @@ def option_to_field(
 
     ``help`` is the description to attach (the probe itself provides none; callers
     resolve it via :func:`help_for`). It is carried through to the web form's
-    inline hint / info tooltip.
+    inline hint / info tooltip. The option's dependency and unit come from the
+    registries in this module (:func:`requires_for`, :func:`unit_for`), which are
+    generic and so need no caller involvement.
     """
     if getattr(option, "is_managed", None) and option.is_managed():
         return None
     name = option.name
     otype = getattr(option, "type", "string")
+    requires = requires_for(name)
 
     if otype == "button":
         return None
     if otype == "check":
         default = bool(option.default) if option.default is not None else False
-        return ProfileField(name, name, "bool", default, help=help)
+        return ProfileField(name, name, "bool", default, help=help, requires=requires)
     if otype == "spin":
         default = int(option.default) if option.default is not None else 0
-        return ProfileField(name, name, "int", default, option.min, option.max, help=help)
+        return ProfileField(
+            name, name, "int", default, option.min, option.max, help=help,
+            requires=requires, unit=unit_for(name),
+        )
     if otype == "combo":
         options = tuple((str(v), str(v)) for v in (option.var or ()))
         default = "" if option.default is None else str(option.default)
-        return ProfileField(name, name, "select", default, options=options, help=help)
+        return ProfileField(
+            name, name, "select", default, options=options, help=help, requires=requires
+        )
     if otype in _TEXT_TYPES:
         default = "" if option.default is None else str(option.default)
         if is_info_option(name):
@@ -289,12 +345,13 @@ def option_to_field(
         if choices:
             opts = tuple((c, os.path.basename(c)) for c in choices)
             return ProfileField(
-                name, name, "select", default, options=opts, allow_custom=True, help=help
+                name, name, "select", default, options=opts, allow_custom=True,
+                help=help, requires=requires,
             )
-        return ProfileField(name, name, "text", default, help=help)
+        return ProfileField(name, name, "text", default, help=help, requires=requires)
     # Unknown/unsupported type: keep it editable as free text rather than lose it.
     default = "" if getattr(option, "default", None) is None else str(option.default)
-    return ProfileField(name, name, "text", default, help=help)
+    return ProfileField(name, name, "text", default, help=help, requires=requires)
 
 
 def _group_for(field: ProfileField) -> str:
@@ -489,13 +546,119 @@ def _elo_ladder(minimum: Optional[int], maximum: Optional[int]) -> List[int]:
     return levels
 
 
-def _file_level_name(path: str) -> str:
-    """Name a Maia-style file level, preferring an embedded ELO number."""
-    base = os.path.basename(path)
-    match = re.search(r"(\d{3,4})", base)
-    if match:
-        return f"{match.group(1)} ELO"
-    return base.split(".")[0] or base
+def default_label_keys(groups: Tuple[ProfileGroup, ...]) -> Tuple[str, ...]:
+    """Return the label keys to project a profile through when none is declared.
+
+    The axes the seeding varies, in schema order: the engine's file-backed
+    strength selectors (Maia's nets) and ``UCI_Elo``. Those are exactly the axes
+    :func:`derive_sections` writes sections for, so a
+    seeded section always renders a term and no section is labelled by something
+    the ladder does not vary. A cross-check test pins the two together.
+
+    Gate options are excluded: an option that exists to switch another one on
+    (``UCI_LimitStrength``) says nothing on its own, and the option it gates
+    already reports its own suppression.
+    """
+    fields = [field for group in groups for field in group.fields]
+    gates = {field.requires.casefold() for field in fields if field.requires}
+    keys = [
+        field.key
+        for field in fields
+        if field.key.casefold() not in gates
+        and (
+            (field.type == "select" and field.allow_custom)
+            or field.key.casefold() == "uci_elo"
+        )
+    ]
+    return profile_labels.resolve_keys(keys, fields)
+
+
+def catalog_label_keys(engine_name: str) -> Tuple[str, ...]:
+    """Return the engine catalog's declared label keys, empty when none.
+
+    An engine declares :class:`~universalchess.services.profile_labels.ProfileLabel`
+    only when the probe cannot say which of its options selects strength: Rodent
+    chooses its playing style through a combo, which the derived keys skip because
+    a combo is as likely to hold a castling notation as a strength. The import is
+    lazy for the reason :func:`_file_option_overrides` explains: the catalog is a
+    process constant, and the engine manager is heavy.
+    """
+    from universalchess.managers.engine_manager import ENGINES
+
+    engine = ENGINES.get(engine_name)
+    label = getattr(engine, "profile_label", None) if engine is not None else None
+    return tuple(label.keys) if label is not None else ()
+
+
+def profile_label_keys(
+    engine_name: str, groups: Tuple[ProfileGroup, ...]
+) -> Tuple[str, ...]:
+    """Return the label keys to project ``engine_name``'s profiles through.
+
+    The catalog declaration wins where there is one, validated against the probe
+    so an engine update that dropped an option cannot leave the label built from
+    keys the binary no longer has. Whatever the declaration cannot supply falls
+    back to the axes the schema exposes, so a declaration that resolves to
+    nothing degrades to a derived label rather than to no label at all.
+    """
+    fields = tuple(field for group in groups for field in group.fields)
+    declared = profile_labels.resolve_keys(catalog_label_keys(engine_name), fields)
+    return declared or default_label_keys(groups)
+
+
+def label_projection(
+    engine_name: str,
+    groups: Tuple[ProfileGroup, ...],
+    uci_path: Optional[str] = None,
+) -> profile_labels.LabelProjection:
+    """Resolve how ``engine_name``'s profiles are labelled on this install.
+
+    Three sources, most specific first: the install's own selection in
+    ``[DEFAULT] ProfileLabel`` of its ``.uci``, the catalog declaration, and the
+    axes the probe exposes. Each is validated against the probed schema, so a
+    selection naming an option this binary does not advertise is dropped rather
+    than rendered as an empty term.
+
+    The catalog/derived keys are also kept as the projection's fallback, because
+    a selection can be valid and still describe nothing about a given profile:
+    ``Hash`` is advertised by the engine but stored in the shared ``[DEFAULT]``
+    section, so selecting it alone would label every profile with the empty
+    string and leave the picker with nothing to distinguish its rows.
+
+    ``uci_path`` is the engine's config; it defaults to the writable path for
+    ``engine_name`` and is a parameter so callers that already resolved it (and
+    tests) do not repeat the lookup.
+    """
+    fields = tuple(field for group in groups for field in group.fields)
+    fallback = profile_label_keys(engine_name, groups)
+    path = uci_path if uci_path is not None else config_path_for(engine_name)
+    selected = profile_labels.resolve_keys(
+        engine_profiles.read_label_keys(path), fields
+    )
+    return profile_labels.LabelProjection(
+        keys=selected or fallback, fields=fields, fallback=fallback
+    )
+
+
+def projection_for_engine(
+    engine_name: str, uci_path: Optional[str] = None
+) -> profile_labels.LabelProjection:
+    """Return ``engine_name``'s label projection, empty when it cannot be probed.
+
+    The convenience form of :func:`label_projection` for the label and picker
+    callers, which have an engine name and no schema in hand. The probe is cached
+    per binary, so repeated calls cost a schema build rather than a launch.
+
+    An engine that will not probe yields a projection with no keys: its profiles
+    then label as their ids, which is honest, where guessing a rendering from an
+    unknown schema would put an unverified strength in the picker and the PGN.
+    """
+    try:
+        groups = get_schema(engine_name)
+    except (EngineProbeError, EngineLoadError) as e:
+        log.warning("[uci_schema] Cannot probe %s for labels: %s", engine_name, e)
+        return profile_labels.LabelProjection(keys=())
+    return label_projection(engine_name, groups, uci_path)
 
 
 def _find_option(options, name_lower: str):
@@ -506,67 +669,95 @@ def _find_option(options, name_lower: str):
     return None
 
 
-def _first_file_option(
+def _strength_file_option(
     options, engine_name: str, engines_dir: str
 ) -> Tuple[Optional[str], Optional[List[str]]]:
-    """Return the first file-backed option and its installed files, else (None, None)."""
+    """Return the file-backed option that selects strength and its files.
+
+    An engine can advertise several file-backed options -- a net or personality
+    selector alongside an opening book -- and handshake order says nothing about
+    which one is the strength axis, so the catalog's label declaration decides
+    when there is one. Falls back to the first option with installed files, which
+    is right for every engine that has only one. Returns ``(None, None)`` when the
+    engine has no file-backed option or none of its files are installed.
+    """
+    declared = {key.casefold() for key in catalog_label_keys(engine_name)}
+    fallback: Tuple[Optional[str], Optional[List[str]]] = (None, None)
     for option in options:
         choices = enumerate_file_choices(engine_name, option, engines_dir)
-        if choices:
+        if not choices:
+            continue
+        if option.name.casefold() in declared:
             return option.name, choices
-    return None, None
+        if fallback == (None, None):
+            fallback = (option.name, choices)
+    return fallback
 
 
 def derive_sections(
     options, *, engine_name: str, engines_dir: str = ENGINES_DIR
 ) -> List[Tuple[str, Dict[str, str]]]:
-    """Derive the ordered (section_name, values) list to seed a fresh config.
+    """Derive the ordered ``(id, values)`` list to seed a fresh config.
 
-    Order of preference: a file-backed strength selector (Maia nets) becomes one
-    section per installed file; otherwise a ``UCI_Elo`` ladder is generated. A
-    ``Default`` section (max strength) is always first.
+    Every section is identified by a generated id (see
+    ``engine_profiles.new_profile_id``) except the reserved ``Default``, which
+    stays a literal. What a section *means* is its values; the label the user
+    reads is projected from them (:mod:`universalchess.services.profile_labels`),
+    so nothing has to be re-derived from an identity.
+
+    One section is emitted per rung of every axis the engine exposes: one per
+    installed file for a file-backed selector (Maia's nets) and one per rung of
+    the ``UCI_Elo`` ladder. Both, when the engine has both -- the file branch used
+    to return before the ladder was generated, so an engine with a file-backed
+    selector had no Elo rungs at all. The axes are seeded side by side rather than
+    crossed: a cross product of ten personality files and eleven Elo rungs is 110
+    rows nobody can pick from, and a profile combining two axes (``Defender: 1700
+    ELO``) is now representable, so it can be composed on demand by editing one.
+
+    ``Default`` means "as the engine comes": the strength cap off where the engine
+    has one. It selects a file only when the file axis is itself a strength ladder
+    -- Maia's nets are named for the rating they mimic, and there Default copies
+    the middle rung so a fresh install is neither weakest nor strongest. For an
+    unrated axis (a set of playing-style files) it selects none, because the
+    alphabetically middle style is not a default in any sense.
     """
     has_limit = _find_option(options, "uci_limitstrength") is not None
-
-    file_name, file_choices = _first_file_option(options, engine_name, engines_dir)
-    if file_name and file_choices:
-        default_file = file_choices[len(file_choices) // 2]
-        sections: List[Tuple[str, Dict[str, str]]] = [
-            ("Default", {file_name: default_file})
-        ]
-        for path in file_choices:
-            sections.append((_file_level_name(path), {file_name: path}))
-        return sections
-
     default_values: Dict[str, str] = {}
     if has_limit:
         default_values["UCI_LimitStrength"] = "false"
-    sections = [("Default", default_values)]
+
+    rungs: List[Dict[str, str]] = []
+
+    file_name, file_choices = _strength_file_option(options, engine_name, engines_dir)
+    if file_name and file_choices:
+        rated = [
+            path
+            for path in file_choices
+            if profile_labels.rating_in_filename(path) is not None
+        ]
+        if len(rated) == len(file_choices):
+            default_values[file_name] = file_choices[len(file_choices) // 2]
+        for path in file_choices:
+            rungs.append({**default_values, file_name: path})
 
     elo_option = _find_option(options, "uci_elo")
     if elo_option is not None:
         for elo in _elo_ladder(elo_option.min, elo_option.max):
-            values: Dict[str, str] = {}
+            values = dict(default_values)
             if has_limit:
                 values["UCI_LimitStrength"] = "true"
             values["UCI_Elo"] = str(elo)
-            sections.append((f"{elo} ELO", values))
+            rungs.append(values)
+
+    sections: List[Tuple[str, Dict[str, str]]] = [
+        (engine_profiles.SEEDED_DEFAULT_PROFILE, default_values)
+    ]
+    taken = [engine_profiles.SEEDED_DEFAULT_PROFILE]
+    for values in rungs:
+        section_id = engine_profiles.new_profile_id(taken)
+        taken.append(section_id)
+        sections.append((section_id, values))
     return sections
-
-
-def _atomic_write(parser: configparser.ConfigParser, path: str) -> None:
-    """Write ``parser`` to ``path`` atomically, creating parent dirs."""
-    directory = os.path.dirname(path) or "."
-    os.makedirs(directory, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            parser.write(handle)
-        os.replace(tmp, path)
-    except BaseException:
-        if os.path.exists(tmp):
-            os.remove(tmp)
-        raise
 
 
 def config_path_for(engine_name: str) -> Optional[str]:
@@ -653,7 +844,7 @@ def seed_config(
     for name, values in sections:
         parser[name] = dict(values)
 
-    _atomic_write(parser, path)
+    engine_profiles.atomic_write_config(parser, path)
     log.info("[uci_schema] Seeded config for %s at %s (%d sections)",
              engine_name, path, len(sections))
     return path
@@ -682,15 +873,20 @@ def strength_sections_for_engine(engine_name: str) -> List[dict]:
     support would be worse than listing the one that always resolves, and the
     picker has to render rather than raise on the menu thread.
 
-    Cached for the life of the process, per engine.
+    Cached per engine until that engine's profiles are written, which
+    :func:`forget_strength_sections` is registered to observe. The cache exists
+    because a miss can cost an engine probe (a process launch) on the menu
+    thread.
 
     Args:
         engine_name: Engine whose config holds the sections.
 
     Returns:
-        Ordered ``{"value", "label"}`` rows. ``value`` is the section name
-        persisted as the player's strength; ``label`` is the display text (an
-        uncapped ``Default`` shows as ``"Default (Unlimited)"``).
+        Ordered ``{"value", "label"}`` rows. ``value`` is the profile id
+        persisted as the player's strength; ``label`` is the text projected from
+        that profile's own option values (an uncapped ``Default`` shows as
+        ``"Default (Unlimited)"``). The id is opaque, so a picker must show the
+        label -- a row rendered from ``value`` reads as ``Profile-a1b2c3``.
     """
     if engine_name in _strength_sections:
         return _strength_sections[engine_name]
@@ -700,7 +896,9 @@ def strength_sections_for_engine(engine_name: str) -> List[dict]:
     levels: List[dict] = [dict(_DEFAULT_SECTION)]
     try:
         config_path = seed_config(engine_name)
-        choices = strength_level_choices(config_path)
+        choices = strength_level_choices(
+            config_path, projection_for_engine(engine_name, config_path)
+        )
         if choices:
             levels = choices
         if not any(level["value"] == "Default" for level in levels):
@@ -715,9 +913,24 @@ def strength_sections_for_engine(engine_name: str) -> List[dict]:
     return levels
 
 
-def forget_strength_sections() -> None:
-    """Drop the cached sections so the next call re-reads the engine configs."""
-    _strength_sections.clear()
+def forget_strength_sections(uci_path: Optional[str] = None) -> None:
+    """Drop cached sections so the next call re-reads the engine configs.
+
+    With a ``uci_path``, only that engine's rows are dropped -- rebuilding an
+    unrelated engine's rows can require probing its binary. The engine is the
+    file's stem, matching how :func:`config_path_for` names it. Without a path,
+    every engine's rows are dropped.
+
+    Registered as a profile change listener below, so no caller has to remember
+    to invalidate.
+    """
+    if uci_path is None:
+        _strength_sections.clear()
+        return
+    _strength_sections.pop(pathlib.Path(uci_path).stem, None)
+
+
+engine_profiles.add_change_listener(forget_strength_sections)
 
 
 def strength_display_for_engine(engine_name: str, section: str) -> str:
@@ -750,7 +963,35 @@ def strength_display_for_engine(engine_name: str, section: str) -> str:
     except Exception as e:
         log.warning("[uci_schema] Cannot resolve strength label for %s: %s", engine_name, e)
         return section
-    return strength_section_display(config_path, section)
+    return strength_section_display(
+        config_path, section, projection_for_engine(engine_name, config_path)
+    )
+
+
+def strength_elo_for_engine(engine_name: str, section: str) -> Optional[int]:
+    """Return the Elo a player's stored strength section plays, or None.
+
+    The numeric counterpart to :func:`strength_display_for_engine`, for callers
+    that need to compare strengths rather than show one -- Auto coach selection
+    matches a coach to the opponent's rating. Resolved from the section's own
+    values, never from its identity: profile identities are generated ids, so a
+    number scraped out of one is not an Elo.
+
+    Returns None when the engine cannot be probed/seeded, the section is absent,
+    or the section plays uncapped. Callers must treat None as "unknown" and apply
+    their own default rather than substituting a number here, which would be a
+    fabricated rating.
+    """
+    from universalchess.services.engine_profiles import strength_section_elo
+
+    if not engine_name or not section:
+        return None
+    try:
+        config_path = seed_config(engine_name)
+    except Exception as e:  # noqa: BLE001 - an unprobeable engine is "unknown", not fatal
+        log.warning("[uci_schema] Cannot resolve strength Elo for %s: %s", engine_name, e)
+        return None
+    return strength_section_elo(config_path, section)
 
 
 def reset_config(
@@ -778,6 +1019,10 @@ def reset_config(
         raise EngineProbeError(f"invalid engine name: {engine_name!r}")
     if os.path.exists(path):
         os.remove(path)
+        # The removal alone is a change: a probe failure below leaves no file at
+        # all, and a cache still holding the old ladder would offer rungs that no
+        # longer exist.
+        engine_profiles.notify_profiles_changed(path)
         log.info("[uci_schema] Removed config for %s at %s before reset", engine_name, path)
     return seed_config(
         engine_name,
@@ -786,6 +1031,25 @@ def reset_config(
         engines_dir=engines_dir,
         threads=threads,
     )
+
+
+def _section_setting(
+    parser: configparser.ConfigParser,
+    values: Dict[str, str],
+    skip: Tuple[str, ...] = (),
+) -> Optional[str]:
+    """Return a section that already sets every key/value in ``values``.
+
+    The section may set more (a rung the user has also given a Contempt of its
+    own is still that rung), which is why this is a subset test rather than
+    equality. Sections named in ``skip`` are not candidates.
+    """
+    for section in parser.sections():
+        if section in skip:
+            continue
+        if all(parser[section].get(key) == value for key, value in values.items()):
+            return section
+    return None
 
 
 def reconcile_config(
@@ -806,10 +1070,19 @@ def reconcile_config(
     This reconciles the config with the CURRENT binary + nets:
 
     * absent config -> a full :func:`seed_config`.
-    * present config -> for each section the current layout should have, add it
-      when missing and fill in any missing keys (e.g. the empty ``Default``'s
-      net), but NEVER overwrite a value already in the file, so user edits
-      survive.
+    * present config -> add a section for every rung the current layout should
+      have and that the file does not already hold, and fill in any missing key
+      of the reserved ``Default`` (e.g. its net), but NEVER overwrite a value
+      already in the file, so user edits survive.
+
+    "Already holds" is decided by values, not by identity: section ids are
+    generated, so a fresh derivation names the same rungs differently every time
+    and matching by id would append the entire ladder again on every repair. A
+    rung counts as present when some section already sets everything the rung
+    sets -- which is also what keeps a legacy named section (``[1600 ELO]``) from
+    being duplicated by the id-based rung that means the same thing. ``Default``
+    is matched by its literal name, since it is a reserved id and its meaning is
+    positional rather than a set of values.
 
     It only adds; it does not prune sections whose net was removed -- a
     deliberately conservative choice, since pruning could delete user-authored
@@ -849,18 +1122,25 @@ def reconcile_config(
     parser.optionxform = str
     parser.read(path, encoding="utf-8")
 
+    default_name = engine_profiles.SEEDED_DEFAULT_PROFILE
     changed = False
     for section, values in desired:
-        if section not in parser:
-            parser[section] = dict(values)
-            changed = True
-            continue
-        for key, value in values.items():
-            if key not in parser[section]:
-                parser[section][key] = value
+        if section == default_name:
+            if default_name not in parser:
+                parser[default_name] = dict(values)
                 changed = True
+                continue
+            for key, value in values.items():
+                if key not in parser[default_name]:
+                    parser[default_name][key] = value
+                    changed = True
+            continue
+        if _section_setting(parser, values, skip=(default_name,)) is not None:
+            continue
+        parser[engine_profiles.new_profile_id(parser.sections())] = dict(values)
+        changed = True
 
     if changed:
-        _atomic_write(parser, path)
+        engine_profiles.atomic_write_config(parser, path)
         log.info("[uci_schema] Reconciled config for %s at %s", engine_name, path)
     return path

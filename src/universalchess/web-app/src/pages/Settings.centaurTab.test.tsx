@@ -66,6 +66,10 @@ function settingsPayload() {
 
 interface PostRecord { url: string; body: Record<string, unknown> }
 
+// The stored level is a profile id; what the user reads is its projected label.
+const STOCKFISH_RUNG = 'Profile-a1b2c3';
+const STOCKFISH_RUNG_LABEL = '1500 ELO';
+
 // `centaurAvailable` toggles the installed vs. importer branch; the rest of the
 // Centaur endpoints are stubbed to a stopped board, in translate mode unless
 // `directMode` says otherwise. Engine POSTs are recorded so auto-save tests can
@@ -97,17 +101,20 @@ function installCentaurFetchMock(opts: {
       const status = opts.enginePostStatus ?? 200;
       return jsonResponse(status >= 200 && status < 300 ? { success: true } : { success: false }, status);
     }
-    if (url === '/api/system/centaur-engine') return jsonResponse({ engine: 'stockfish', level: '1500 ELO', options: {} });
+    if (url === '/api/system/centaur-engine') return jsonResponse({ engine: 'stockfish', level: STOCKFISH_RUNG, options: {} });
+    // Picker rows as /levels reports them: the value is the profile's generated
+    // id (what the level setting stores) and the label is projected from the
+    // profile's own option values, so the two are deliberately different here.
     if (url.startsWith('/api/engines/stockfish/levels')) {
       return jsonResponse([
-        { value: 'Default', label: 'Default' },
-        { value: '1500 ELO', label: '1500 ELO' },
+        { value: 'Default', label: 'Default (Unlimited)' },
+        { value: STOCKFISH_RUNG, label: STOCKFISH_RUNG_LABEL },
       ]);
     }
     if (url.startsWith('/api/engines/maia/levels')) {
       return jsonResponse([
-        { value: 'Default', label: 'Default' },
-        { value: '1100 ELO', label: '1100 ELO' },
+        { value: 'Default', label: 'Default (1500 ELO)' },
+        { value: 'Profile-d4e5f6', label: '1100 ELO' },
       ]);
     }
     if (url === '/api/engines/all') {
@@ -177,9 +184,14 @@ describe('Original Centaur tab', () => {
     installCentaurFetchMock({ centaurAvailable: true });
     renderCentaurTab();
 
-    // The strength dropdown is present and pre-selects the saved level.
+    // The strength dropdown is present and pre-selects the saved level by its
+    // id, while showing that profile's label -- a row keyed by the label instead
+    // would leave the stored id unmatched and the dropdown showing the wrong
+    // profile.
     await screen.findByText('Strength');
-    expect(selectInLabeledRow('Strength').value).toBe('1500 ELO');
+    const strength = selectInLabeledRow('Strength');
+    expect(strength.value).toBe(STOCKFISH_RUNG);
+    expect(strength.selectedOptions[0].textContent).toBe(STOCKFISH_RUNG_LABEL);
 
     // The removed controls must not be present anywhere on the tab.
     expect(screen.queryByText('Elo')).toBeNull();
@@ -225,8 +237,9 @@ describe('Original Centaur tab', () => {
   });
 
   it('resets strength to Default and auto-saves when the engine changes', async () => {
-    // Why: an engine's profiles are engine-specific. Carrying "1500 ELO" onto
-    // Maia would persist a level that engine may not have (Players already
+    // Why: an engine's profiles are engine-specific -- a profile id belongs to
+    // one engine's config file. Carrying stockfish's rung onto Maia would persist
+    // a level that engine does not have at all (Players already
     // resets to Default). A regression that saves the old level, or that does
     // not POST at all, is this test failing.
     const { posts } = installCentaurFetchMock({ centaurAvailable: true });
@@ -260,7 +273,7 @@ describe('Original Centaur tab', () => {
     renderCentaurTab();
 
     await screen.findByText('Strength');
-    expect(selectInLabeledRow('Strength').value).toBe('1500 ELO');
+    expect(selectInLabeledRow('Strength').value).toBe(STOCKFISH_RUNG);
     expect(posts.filter((p) => p.url === '/api/system/centaur-engine')).toEqual([]);
   });
 

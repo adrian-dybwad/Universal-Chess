@@ -89,6 +89,7 @@ from universalchess.services.download_progress import (
     DownloadProgressReader,
 )
 from universalchess.services.event_log import log_event
+from universalchess.services.profile_labels import ProfileLabel
 from universalchess.utils.safe_path import safe_under_base
 
 # Engine installation directory
@@ -649,6 +650,16 @@ class EngineDefinition:
     # how well -- the human-like and novelty engines -- where a rating would mean
     # nothing. Drives ``tier``.
     elo: Optional[int] = None
+    # Which of the engine's options compose a profile's display label (see
+    # ProfileLabel). None derives the label from the axes the probe exposes, which
+    # is right for every engine whose file-backed option is its strength selector.
+    # Declare it only where the probe cannot tell: an engine that selects strength
+    # through a combo (Rodent's playing styles) exposes no axis the derived keys
+    # recognise, and an engine advertising several file-backed options gives no way
+    # to know which of them is the strength axis, so the picker would label
+    # profiles by the opening book they use. One declaration, read by the label
+    # projection and by seeding, so those cannot disagree.
+    profile_label: Optional[ProfileLabel] = None
 
     @property
     def tier(self) -> str:
@@ -1327,6 +1338,18 @@ ENGINES = {
         dependencies=["build-essential", "git"],
         estimated_install_minutes=8,  # Medium complexity with extra files
         has_prebuilt=True,
+        # Rodent picks its playing style through a combo, not a file option, so
+        # the derived label keys (file-backed selectors and UCI_Elo) miss it and
+        # two profiles differing only in style would read alike in the picker.
+        # Verified by handshake against a built binary with personalities/ beside
+        # it, the layout the installer produces: it reads
+        # personalities/basic.ini relative to its own executable, and that file
+        # turns the aliases into a `Personality` combo (hiding the
+        # `PersonalityFile` string offered when the aliases are missing) and
+        # suppresses the book options, because books come from the personality.
+        # An install without those files advertises no `Personality`, and the key
+        # is then dropped in favour of the Elo ladder.
+        profile_label=ProfileLabel(keys=("Personality", "UCI_Elo")),
     ),
     "ct800": EngineDefinition(
         name="ct800",

@@ -585,8 +585,10 @@ export function Settings() {
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [accountsState, setAccountsState] = useState<'loading' | 'ready' | 'failed' | 'unauthorized'>('loading');
   // Per-engine strength picker rows from /levels: {value,label} where value is
-  // the persisted `elo` section name and label is the display text (an uncapped
-  // "Default" shows as "Default (Unlimited)").
+  // the profile id persisted as the slot's `elo` and label is projected from that
+  // profile's own option values (an uncapped "Default" shows as
+  // "Default (Unlimited)"). The id is opaque, so the label is the only thing
+  // here fit to show a user.
   const [engineLevels, setEngineLevels] = useState<{ [key: string]: MenuOption[] }>({});
   const [spriteSheets, setSpriteSheets] = useState<string[]>(['default']);
   // Every registered AI agent (built-in + user modules) from GET /api/agents,
@@ -4486,9 +4488,10 @@ function CentaurSettings() {
   const importPollCancelRef = useRef(false);
 
   // Centaur engine-proxy config (translate mode): which UC engine Centaur drives
-  // and its strength level -- an engine profile section name (e.g. "1500 ELO",
-  // "Default"), chosen exactly like a player's strength. The level resolves to
-  // UCI options server-side; Hash is clamped to the memory floor there too.
+  // and its strength level -- an engine profile id (a generated "Profile-<hex>",
+  // or the reserved "Default"), chosen exactly like a player's strength. The
+  // level resolves to UCI options server-side; Hash is clamped to the memory
+  // floor there too.
   const [engineList, setEngineList] = useState<{ value: string; label: string }[]>([]);
   const [centaurEngine, setCentaurEngine] = useState('stockfish');
   const [centaurLevel, setCentaurLevel] = useState('Default');

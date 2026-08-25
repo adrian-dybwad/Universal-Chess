@@ -37,6 +37,8 @@ vi.mock('./LoginDialog', () => ({
 }));
 
 const ENGINE = 'berserk';
+// A profile is addressed by its generated id; the name is only what it shows.
+const PROFILE_ID = 'Profile-a1b2c3';
 const PROFILE = 'Club';
 const CREDENTIALS = 'dGVzdGVyOnNlY3JldA=='; // base64 "tester:secret"
 const AUTH_STORAGE_KEY = 'universal-chess-auth';
@@ -59,7 +61,7 @@ function schemaResponse(caseCollisions: string[][] = []) {
         fields: [{ key: SKILL_FIELD, label: SKILL_FIELD, type: 'int', default: 10, min: 0, max: 20 }],
       },
     ],
-    profiles: [{ name: PROFILE, values: {} }],
+    profiles: [{ id: PROFILE_ID, name: PROFILE, label: PROFILE, values: {} }],
     case_collisions: caseCollisions,
   };
 }
@@ -86,7 +88,7 @@ function mockFetch(postStatus: number, caseCollisions: string[][] = []) {
       json: async () => ({
         success: postStatus < 400,
         ...schemaResponse(),
-        name: PROFILE,
+        id: PROFILE_ID,
         removed: [],
       }),
     };
@@ -112,20 +114,20 @@ function renderEditor() {
 const ACTIONS = [
   {
     name: 'save',
-    url: `/api/engines/${ENGINE}/profiles/${PROFILE}`,
+    url: `/api/engines/${ENGINE}/profiles/${PROFILE_ID}`,
     caseCollisions: [] as string[][],
     async trigger() {
-      // Save is disabled until the form differs from the stored profile. The int
-      // field renders a slider and a number box bound to the same value; drive
-      // the number box (role spinbutton) so the query is unambiguous.
+      // An existing profile saves itself once the form differs from what is
+      // stored, so editing is the whole trigger. The int field renders a slider
+      // and a number box bound to the same value; drive the number box (role
+      // spinbutton) so the query is unambiguous.
       const field = await screen.findByRole('spinbutton');
       fireEvent.change(field, { target: { value: '12' } });
-      fireEvent.click(await screen.findByRole('button', { name: /save changes/i }));
     },
   },
   {
     name: 'delete',
-    url: `/api/engines/${ENGINE}/profiles/${PROFILE}/delete`,
+    url: `/api/engines/${ENGINE}/profiles/${PROFILE_ID}/delete`,
     caseCollisions: [] as string[][],
     async trigger() {
       fireEvent.click(await screen.findByRole('button', { name: /^delete$/i }));

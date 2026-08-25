@@ -71,7 +71,9 @@ def test_the_stored_strength_section_resolves_to_what_the_engine_plays(monkeypat
     from universalchess.services import engine_profiles
 
     monkeypatch.setattr(
-        engine_profiles, "strength_section_display", lambda path, section: "Unlimited"
+        engine_profiles,
+        "strength_section_display",
+        lambda path, section, projection: "Unlimited",
     )
 
     assert uci_schema.strength_display_for_engine("stockfish", "Default") == "Unlimited"

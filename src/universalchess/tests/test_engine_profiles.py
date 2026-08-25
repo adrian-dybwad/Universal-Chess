@@ -27,6 +27,7 @@ import configparser
 import pytest
 
 from universalchess.services import engine_profiles as ep
+from universalchess.services import profile_labels as pl
 
 
 # A representative probed-style schema: strength controls plus a few advanced
@@ -36,7 +37,13 @@ from universalchess.services import engine_profiles as ep
 GROUPS = (
     ep.ProfileGroup("strength", "Strength", (
         ep.ProfileField("UCI_LimitStrength", "Limit strength", "bool", False),
-        ep.ProfileField("UCI_Elo", "ELO", "int", 2800, 800, 2800),
+        # requires/unit as uci_schema's option registry fills them in: the Elo is
+        # ignored while the cap is off, and a bare number does not say what it
+        # measures.
+        ep.ProfileField(
+            "UCI_Elo", "ELO", "int", 2800, 800, 2800,
+            requires="UCI_LimitStrength", unit="ELO",
+        ),
     )),
     ep.ProfileGroup("advanced", "Advanced", (
         ep.ProfileField("OwnAttack", "Own attack", "int", 100, 0, 500),
@@ -194,236 +201,221 @@ def test_read_profile_names_lists_each_profile_once_in_order(uci_file):
 
 
 # ---------------------------------------------------------------------------
-# Strength picker labels (Default -> "Default (Unlimited)" when uncapped)
+# Profile labels: projected from values, never read off the identity
 # ---------------------------------------------------------------------------
 
 
-def test_strength_level_choices_labels_uncapped_default_as_unlimited(uci_file):
-    """An ELO engine's uncapped Default is shown as "Default (Unlimited)".
+@pytest.fixture
+def projection():
+    """The projection a UCI_Elo engine with a net selector yields."""
+    fields = tuple(field for group in GROUPS for field in group.fields)
+    return pl.LabelProjection(
+        keys=("WeightsFile", "UCI_Elo"), fields=fields, fallback=("UCI_Elo",)
+    )
 
-    Why this exists: for a UCI_Elo engine, [Default] sets
-    UCI_LimitStrength=false, so it plays uncapped/full strength -- stronger than
-    any numbered rung. Keeping the word Default in the label keeps every
-    engine's list uniform with Maia's "Default (1500 ELO)". The persisted value
-    stays "Default".
 
-    How the regression manifests: the Default row's label reverts to bare
-    "Default" or bare "Unlimited" (lists disagree with the profile editor) or
-    its value changes away from "Default".
+def test_a_profiles_label_comes_from_its_values(projection):
+    """The label is composed from the options, so it cannot contradict them.
+
+    Why this exists: the section name was the label as well as the identity, so a
+    rung named ``1000 ELO`` whose ``UCI_Elo`` had been edited to 1400 went on
+    claiming 1000, and the only remedy was renaming the section and every setting
+    that referred to it. Identities are generated now and the Elo is stored once.
+
+    How a regression manifests: the phrase reads the identity again (so an
+    edited Elo stops showing), or a capped profile and an uncapped one label the
+    same, hiding which one plays full strength.
     """
-    choices = ep.strength_level_choices(str(uci_file))
+    capped = {"UCI_LimitStrength": "true", "UCI_Elo": "1400"}
+    assert ep.profile_phrase(capped, projection) == "1400 ELO"
+    # Gated off: the engine ignores the Elo, so the label must not advertise it.
+    uncapped = {"UCI_LimitStrength": "false", "UCI_Elo": "1400"}
+    assert ep.profile_phrase(uncapped, projection) == ep.UNLIMITED_LABEL
+    # Two axes at once, which naming a section could not express.
+    both = {"UCI_LimitStrength": "true", "UCI_Elo": "1700", "WeightsFile": "/n/Defender.txt"}
+    assert ep.profile_phrase(both, projection) == "Defender: 1700 ELO"
+    # Nothing on any labelled axis, and no cap to lift: the caller decides.
+    assert ep.profile_phrase({"Contempt": "20"}, projection) == ""
 
-    assert choices == [
-        {"value": "Default", "label": f"Default ({ep.UNLIMITED_LABEL})"},
-        {"value": "1200 ELO", "label": "1200 ELO"},
-        {"value": "Attacker", "label": "Attacker"},
-    ]
+
+def test_a_users_name_outranks_the_projection(projection):
+    # A profile the user named is called that, whatever its values project to:
+    # the user has said what it is. A regression shows the composed terms
+    # instead, so a renamed profile appears under a name nobody chose.
+    values = {"Name": "Club Player", "UCI_LimitStrength": "true", "UCI_Elo": "1600"}
+    assert ep.profile_phrase(values, projection) == "Club Player"
 
 
-def test_profile_display_label_annotates_drifted_elo_rung():
-    """Rung labels include the live Elo when it no longer matches the name.
+def test_profile_rows_separate_identity_from_name_and_label(tmp_path, projection):
+    """Each row carries the id, the user name, and the projected label apart.
 
-    Why: editing UCI_Elo under "1000 ELO" used to leave a lying picker row.
-    How regression shows: label stays bare "1000 ELO" while values play 1400.
+    Why this exists: the four roles the section name used to play (identity,
+    stored reference, URL segment, label) are what made every rename a
+    referential-integrity problem. The editor and the pickers now address a
+    profile by ``id`` and show ``label``.
+
+    How a regression manifests: ``id`` carries a label (so an edit renames the
+    profile and dangles the settings pointing at it), or ``label`` falls back to
+    the opaque id where a phrase was available.
     """
-    assert ep.profile_display_label("1000 ELO", {
-        "UCI_LimitStrength": "true", "UCI_Elo": "1000",
-    }) == "1000 ELO"
-    assert ep.profile_display_label("1000 ELO", {
-        "UCI_LimitStrength": "true", "UCI_Elo": "1400",
-    }) == "1000 ELO (plays 1400)"
-    assert ep.profile_display_label("Club Player", {
-        "UCI_LimitStrength": "true", "UCI_Elo": "1600",
-    }) == "Club Player (1600 ELO)"
-
-
-def test_suggested_elo_rung_name_when_elo_drifts():
-    """Suggest renaming a rung section to match its live UCI_Elo."""
-    assert ep.suggested_elo_rung_name("1000 ELO", {
-        "UCI_LimitStrength": "true", "UCI_Elo": "1400",
-    }) == "1400 ELO"
-    assert ep.suggested_elo_rung_name("1000 ELO", {
-        "UCI_LimitStrength": "true", "UCI_Elo": "1000",
-    }) is None
-    assert ep.suggested_elo_rung_name("Club Player", {
-        "UCI_LimitStrength": "true", "UCI_Elo": "1400",
-    }) is None
-
-
-def test_strength_level_choices_labels_drifted_rung(tmp_path):
-    """Picker rows annotate a rung whose UCI_Elo no longer matches its name."""
     path = tmp_path / "eng.uci"
     path.write_text(
         "[Default]\nUCI_LimitStrength = false\n\n"
-        "[1000 ELO]\nUCI_LimitStrength = true\nUCI_Elo = 1400\n",
+        "[Profile-a1b2c3]\nUCI_LimitStrength = true\nUCI_Elo = 1400\n\n"
+        "[Profile-d4e5f6]\nName = Club Player\nUCI_LimitStrength = true\nUCI_Elo = 1600\n\n"
+        "[Profile-999999]\nContempt = 20\n",
         encoding="utf-8",
     )
-    choices = ep.strength_level_choices(str(path))
-    assert choices == [
+
+    rows = ep.profile_rows(str(path), projection)
+
+    assert rows == [
+        {
+            "id": "Default",
+            "name": "",
+            "label": f"Default ({ep.UNLIMITED_LABEL})",
+            "values": {"UCI_LimitStrength": "false"},
+        },
+        {
+            "id": "Profile-a1b2c3",
+            "name": "",
+            "label": "1400 ELO",
+            "values": {"UCI_LimitStrength": "true", "UCI_Elo": "1400"},
+        },
+        {
+            "id": "Profile-d4e5f6",
+            "name": "Club Player",
+            "label": "Club Player",
+            "values": {
+                "Name": "Club Player",
+                "UCI_LimitStrength": "true",
+                "UCI_Elo": "1600",
+            },
+        },
+        # States no strength and carries no name: the id is all there is to show.
+        {
+            "id": "Profile-999999",
+            "name": "",
+            "label": "Profile-999999",
+            "values": {"Contempt": "20"},
+        },
+    ]
+
+
+def test_the_picker_rows_store_the_id_and_show_the_label(tmp_path, projection):
+    """Picker rows pair the stored id with the projected label.
+
+    Why this exists: ``value`` is written into the player's settings, so it must
+    be the identity and not the label -- storing a label was what let a rename
+    strand the setting. How a regression manifests: ``value`` becomes the
+    displayed text, and the stored strength stops resolving after any edit.
+    """
+    path = tmp_path / "eng.uci"
+    path.write_text(
+        "[Default]\nUCI_LimitStrength = false\n\n"
+        "[Profile-a1b2c3]\nUCI_LimitStrength = true\nUCI_Elo = 1400\n",
+        encoding="utf-8",
+    )
+
+    assert ep.strength_level_choices(str(path), projection) == [
         {"value": "Default", "label": f"Default ({ep.UNLIMITED_LABEL})"},
-        {"value": "1000 ELO", "label": "1000 ELO (plays 1400)"},
+        {"value": "Profile-a1b2c3", "label": "1400 ELO"},
     ]
 
 
-def test_rename_profile_moves_section_and_keeps_values(uci_file, groups):
-    """rename_profile writes under the new name and removes the old section.
+def test_a_file_selected_default_is_labelled_with_the_file_it_picks(
+    tmp_path, projection
+):
+    """A Default that selects a net is labelled with that net, not "Unlimited".
 
-    Why: Elo-rename offer must not leave an orphan 1000 ELO section. How
-    regression shows: both names remain, or the new section lacks OwnAttack.
-    """
-    # SAMPLE has [1200 ELO]; rename it to 1400 ELO with updated strength.
-    ep.rename_profile(
-        str(uci_file),
-        "1200 ELO",
-        "1400 ELO",
-        {"UCI_LimitStrength": True, "UCI_Elo": 1400},
-        groups,
-    )
-    names = ep.read_profile_names(str(uci_file))
-    assert "1200 ELO" not in names
-    assert "1400 ELO" in names
-    values = next(p["values"] for p in ep.read_profiles(str(uci_file)) if p["name"] == "1400 ELO")
-    assert values["UCI_Elo"] == "1400"
+    Why this exists: "Unlimited" is only truthful where the engine has a cap and
+    Default lifts it. Maia's Default merely picks a net -- the middle rung of a
+    rated ladder -- so it plays a concrete strength, and a picker that called it
+    Unlimited would claim the opposite of what it does.
 
-
-def test_strength_level_choices_never_labels_capped_default_unlimited(tmp_path):
-    """A file-model Default (no cap toggle, e.g. Maia) is never "Unlimited".
-
-    Why this exists: "Unlimited" is only truthful when Default disables the cap.
-    A file-selector engine's [Default] merely picks a net and carries no
-    UCI_LimitStrength=false, so relabelling it with Unlimited would be a lie. The
-    relabel is keyed off the cap being off, not off the name.
-
-    How the regression manifests: a name-based relabel would mark this Default
-    "Default (Unlimited)" too, mislabelling a non-full-strength default. Here the
-    Default net matches no rung (custom /nets path), so it stays the bare "Default".
+    How a regression manifests: the file-selecting Default reads "Unlimited"
+    (overstating it) or a bare "Default" (hiding the rating it plays).
     """
     path = tmp_path / "maia.uci"
     path.write_text(
-        "[Default]\nWeightsFile = /nets/only.pb\n\n"
-        "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
+        "[Default]\nWeightsFile = /nets/maia-1500.pb\n\n"
+        "[Profile-a1b2c3]\nWeightsFile = /nets/maia-1300.pb\n",
         encoding="utf-8",
     )
 
-    choices = ep.strength_level_choices(str(path))
-
-    assert choices == [
-        {"value": "Default", "label": "Default"},
-        {"value": "1500 ELO", "label": "1500 ELO"},
-    ]
-
-
-def test_strength_level_choices_labels_net_default_with_resolved_rung(tmp_path):
-    """A net-selected Default that copies a rung shows "Default (<rung>)".
-
-    Why this exists: Maia seeds [Default] as a copy of the middle net rung, so
-    "Default" actually plays a concrete ELO. The picker must reveal that ELO
-    ("Default (1500 ELO)") while keeping the value "Default" selectable, so a user
-    can pick the tracking default and still see what it currently plays.
-
-    How the regression manifests: the Default row reverts to a bare "Default"
-    (hiding the ELO it plays) or its value changes away from "Default" (the slot
-    would pin to a fixed rung and stop tracking).
-    """
-    path = tmp_path / "maia.uci"
-    path.write_text(
-        "[Default]\nWeightsFile = /nets/1500.pb\n\n"
-        "[1300 ELO]\nWeightsFile = /nets/1300.pb\n\n"
-        "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
-        encoding="utf-8",
-    )
-
-    choices = ep.strength_level_choices(str(path))
-
-    assert choices == [
+    assert ep.strength_level_choices(str(path), projection) == [
         {"value": "Default", "label": "Default (1500 ELO)"},
-        {"value": "1300 ELO", "label": "1300 ELO"},
-        {"value": "1500 ELO", "label": "1500 ELO"},
+        {"value": "Profile-a1b2c3", "label": "1300 ELO"},
     ]
 
 
-def test_strength_level_choices_always_offers_default(tmp_path):
-    """A config without a Default section still yields a Default row (first).
+def test_a_config_without_a_default_still_offers_one_first(tmp_path, projection):
+    """A Default row is always present, first, however sparse the config.
 
-    Why this exists: the picker must always offer Default so the stored default
-    setting resolves even for a sparse/edited config. When no Default section
-    exists there is no cap signal, so it stays labelled "Default", not
-    "Default (Unlimited)".
+    Why this exists: Default is the stored strength of a freshly configured
+    player, so a list without it cannot render the current selection -- the
+    picker would show a blank strength for a slot that was never edited. With no
+    Default section there is no cap signal, so it stays the bare word.
 
-    How the regression manifests: the picker omits Default and the stored
-    default value has no matching row (blank/again-unselectable strength).
+    How a regression manifests: the picker omits Default, or lists it after the
+    rungs where it reads as one of them.
     """
     path = tmp_path / "sparse.uci"
-    path.write_text("[1800 ELO]\nUCI_Elo = 1800\n", encoding="utf-8")
+    path.write_text(
+        "[Profile-a1b2c3]\nUCI_LimitStrength = true\nUCI_Elo = 1800\n", encoding="utf-8"
+    )
 
-    choices = ep.strength_level_choices(str(path))
-
-    assert choices == [
+    assert ep.strength_level_choices(str(path), projection) == [
         {"value": "Default", "label": "Default"},
-        {"value": "1800 ELO", "label": "1800 ELO"},
+        {"value": "Profile-a1b2c3", "label": "1800 ELO"},
     ]
 
 
 # ---------------------------------------------------------------------------
-# strength_section_display: stored section -> shown strength (game card / PGN)
+# strength_section_display: stored reference -> shown strength (card / PGN)
 # ---------------------------------------------------------------------------
 
 
-def test_strength_section_display_uncapped_default_is_unlimited(uci_file):
-    """A stored uncapped "Default" is shown as "Unlimited" in the card/PGN.
+def test_the_card_shows_what_the_stored_strength_resolves_to(uci_file, projection):
+    """The shown strength is the phrase alone, with no "Default (...)" wrapper.
 
-    Why this exists: the player name (web Current Game card, PGN) must show what
-    the engine plays, not the raw section. An uncapped Default plays full strength,
-    so the card should read "<engine> (Unlimited)".
+    Why this exists: the card and the PGN compose the strength into a player name
+    ("Maia (1500 ELO)"), so the picker's parenthetical would nest. An uncapped
+    Default reads "Unlimited" rather than the raw section, which is what the
+    stored value would otherwise print.
 
-    How the regression manifests: the card shows a bare "(Default)" again while
-    the settings picker says "Default (Unlimited)".
+    How a regression manifests: the card shows a bare "Default" (saying nothing
+    about the strength played) or "Default (Unlimited)" (nested parentheses once
+    composed into the name).
     """
-    assert ep.strength_section_display(str(uci_file), "Default") == ep.UNLIMITED_LABEL
+    assert (
+        ep.strength_section_display(str(uci_file), "Default", projection)
+        == ep.UNLIMITED_LABEL
+    )
+    assert (
+        ep.strength_section_display(str(uci_file), "1200 ELO", projection)
+        == "1200 ELO"
+    )
 
 
-def test_strength_section_display_net_default_resolves_to_bare_rung(tmp_path):
-    """A net-selected Default resolves to the bare rung it copies (e.g. Maia).
+def test_a_strength_that_resolves_to_nothing_is_shown_as_stored(tmp_path, projection):
+    """An unresolvable reference prints itself rather than an invented strength.
 
-    Why this exists: the reported case -- Maia's "Default" is a specific ELO (the
-    middle net), so the card must show that ELO. It resolves to the bare rung
-    ("1500 ELO"), NOT "Default (1500 ELO)", so the composed player name reads
-    "Maia (1500 ELO)" without nested parentheses. The stored value stays "Default"
-    (tested separately) so it keeps tracking the default net.
+    Why this exists: a reference whose profile is gone is a fault to be seen and
+    repaired. Substituting the strongest, weakest or default rung would show a
+    strength the engine was never set to, and the mismatch would be attributed to
+    the engine.
 
-    How the regression manifests: the card shows a bare "Default" (hiding the ELO)
-    or "Default (1500 ELO)" (nested parens once composed into the name).
+    How a regression manifests: the card names a rung that no profile defines.
     """
-    path = tmp_path / "maia.uci"
+    path = tmp_path / "eng.uci"
     path.write_text(
-        "[Default]\nWeightsFile = /nets/1500.pb\n\n"
-        "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
-        encoding="utf-8",
+        "[Default]\nUCI_LimitStrength = false\n", encoding="utf-8"
     )
-    assert ep.strength_section_display(str(path), "Default") == "1500 ELO"
-
-
-def test_strength_section_display_numbered_section_is_itself(tmp_path):
-    # A concrete rung is shown as its own name; only Default is ever resolved.
-    path = tmp_path / "maia.uci"
-    path.write_text(
-        "[Default]\nWeightsFile = /nets/1500.pb\n\n"
-        "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
-        encoding="utf-8",
+    assert (
+        ep.strength_section_display(str(path), "Profile-missing", projection)
+        == "Profile-missing"
     )
-    assert ep.strength_section_display(str(path), "1500 ELO") == "1500 ELO"
-
-
-def test_strength_section_display_unmatched_default_stays_default(tmp_path):
-    # A Default that is neither uncapped nor a copy of any rung (a custom edit)
-    # has no concrete ELO to show, so it legitimately stays "Default".
-    path = tmp_path / "maia.uci"
-    path.write_text(
-        "[Default]\nWeightsFile = /nets/custom.pb\n\n"
-        "[1500 ELO]\nWeightsFile = /nets/1500.pb\n",
-        encoding="utf-8",
-    )
-    assert ep.strength_section_display(str(path), "Default") == "Default"
 
 
 # ---------------------------------------------------------------------------
@@ -622,13 +614,349 @@ def test_delete_matches_existing_section_case_insensitively(uci_file):
 
 
 # ---------------------------------------------------------------------------
+# Metadata keys: what is ours and what belongs to the engine
+# ---------------------------------------------------------------------------
+
+
+def test_app_metadata_is_never_offered_to_the_engine_as_an_option():
+    """A section carries this app's own keys beside real UCI options.
+
+    Why this exists: the engine player sends every key of the chosen section as a
+    ``setoption``, and ``[DEFAULT]`` keys are inherited into every section, so a
+    metadata key stored there reaches the engine on every game. Many engines
+    accept unknown option names silently, so the symptom is not an error: it is
+    an engine configured with a value it does not understand. This filter used to
+    be copy-pasted at six call sites listing only ``Description``, which is why a
+    new metadata key could not be added without an audit.
+
+    How a regression manifests: ``setoption name ProfileLabel`` is sent at game
+    start, and an engine that rejects unknown options fails to launch.
+    """
+    values = {
+        "Description": "Aggressive",
+        "Name": "Club Player",
+        "ProfileLabel": "UCI_Elo",
+        "UCI_Elo": "1400",
+        "Hash": "16",
+    }
+    assert ep.uci_options_only(values) == {"UCI_Elo": "1400", "Hash": "16"}
+
+
+def test_a_user_name_is_accepted_as_metadata_not_refused_as_an_option(groups):
+    """``Name`` holds the label a user chose, so it must pass validation.
+
+    Why this exists: validation is deliberately strict -- an unknown key would be
+    written verbatim and then offered to the engine as an option it silently
+    ignores -- so every key must be either a probed option or a declared piece of
+    metadata. Profile identities are generated now, so a user-authored label has
+    nowhere else to live.
+
+    How a regression manifests: saving a renamed profile fails with "unknown
+    parameter 'Name'", and a profile can no longer be given a name at all.
+    """
+    coerced = ep.validate_profile_values(
+        groups, {"Name": "Club Player", "UCI_Elo": 1500}
+    )
+    assert coerced == {"Name": "Club Player", "UCI_Elo": "1500"}
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["x" * 65, "two\nlines", 42, ["Club"]],
+)
+def test_a_name_that_cannot_be_shown_is_refused(groups, name):
+    # The name is rendered in the picker, the game card and the PGN, so a
+    # multi-line or over-long value would break each of those in a different
+    # place. A regression accepts it here and fails somewhere further away.
+    with pytest.raises(ep.ProfileValidationError):
+        ep.validate_profile_values(groups, {"Name": name})
+
+
+def test_writing_a_profile_keeps_metadata_the_submission_left_out(uci_file, groups):
+    """A save that says nothing about the name must not erase it.
+
+    Why this exists: ``write_profile`` replaces the section wholesale, so any key
+    the submission omits is gone. The editor submits option values, and the name
+    is set elsewhere (and by a different request), so without this the first save
+    after naming a profile silently un-names it -- and with labels projected from
+    values, the profile then reads as a different profile entirely.
+
+    How a regression manifests: exactly that -- the name disappears from the
+    picker after any edit to the profile's options.
+    """
+    path = str(uci_file)
+    ep.write_profile(path, "Attacker", {"Name": "Club Player", "OwnAttack": 120}, groups)
+    ep.write_profile(path, "Attacker", {"OwnAttack": 130}, groups)
+
+    values = next(p["values"] for p in ep.read_profiles(path) if p["name"] == "Attacker")
+    assert values == {
+        "Name": "Club Player",
+        "Description": "Aggressive attacking style",
+        "OwnAttack": "130",
+    }
+
+
+def test_clearing_a_name_removes_it_rather_than_storing_an_empty_one(uci_file, groups):
+    # Renaming back to nothing must leave the profile labelled by its values
+    # again. An empty stored Name would render as a blank label -- a picker row
+    # with no text -- which is worse than the derived label it replaced.
+    path = str(uci_file)
+    ep.write_profile(path, "Attacker", {"Name": "Club Player", "OwnAttack": 120}, groups)
+    ep.write_profile(path, "Attacker", {"Name": "", "OwnAttack": 120}, groups)
+
+    values = next(p["values"] for p in ep.read_profiles(path) if p["name"] == "Attacker")
+    assert values == {"Description": "Aggressive attacking style", "OwnAttack": "120"}
+
+
+def test_metadata_keys_are_matched_however_they_are_spelled():
+    # The file is hand-editable and INI keys are conventionally case-insensitive,
+    # so a lower-cased metadata key must not slip through as an option.
+    assert ep.uci_options_only({"description": "x", "profilelabel": "UCI_Elo"}) == {}
+
+
+# ---------------------------------------------------------------------------
+# Per-install label key selection
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [
+        ("PersonalityFile, UCI_Elo", ("PersonalityFile", "UCI_Elo")),
+        ("PersonalityFile,UCI_Elo", ("PersonalityFile", "UCI_Elo")),
+        ("  UCI_Elo  ", ("UCI_Elo",)),
+        ("UCI_Elo,,", ("UCI_Elo",)),      # a trailing separator is not a key
+        ("", ()),
+        ("   ", ()),
+    ],
+)
+def test_the_label_key_selection_is_read_from_the_engine_wide_section(
+    tmp_path, stored, expected
+):
+    """A per-install label selection lives in ``[DEFAULT] ProfileLabel``.
+
+    Why this exists: which options identify a profile is a property of the
+    install (which engine build, which personality files are present), not of the
+    shipped catalog, so it has to be storable beside the profiles it labels.
+    ``[DEFAULT]`` is the section every write preserves verbatim, so the selection
+    survives editing profiles.
+
+    How a regression manifests: the selection is parsed as one key containing
+    commas, matches no probed option, and every profile falls back to the derived
+    label with no sign that the selection was read at all.
+    """
+    path = tmp_path / "engine.uci"
+    path.write_text(f"[DEFAULT]\nProfileLabel = {stored}\n\n[Default]\n", encoding="utf-8")
+    assert ep.read_label_keys(str(path)) == expected
+
+
+def test_no_stored_selection_reads_as_no_selection(uci_file):
+    # The overwhelmingly common case: the sample config declares no selection, so
+    # the caller must fall back to the catalog/derived keys rather than to an
+    # empty label.
+    assert ep.read_label_keys(str(uci_file)) == ()
+    assert ep.read_label_keys(str(uci_file / "missing")) == ()
+
+
+def test_the_label_selection_survives_a_profile_write(uci_file, groups):
+    # The selection is stored in the section write_profile rewrites around, so
+    # this pins that editing a profile does not drop it -- losing it would
+    # silently revert every label on the next save.
+    path = str(uci_file)
+    text = uci_file.read_text(encoding="utf-8")
+    uci_file.write_text(
+        text.replace("[DEFAULT]", "[DEFAULT]\nProfileLabel = UCI_Elo"), encoding="utf-8"
+    )
+    ep.write_profile(path, "Attacker", {"OwnAttack": 130}, groups)
+    assert ep.read_label_keys(path) == ("UCI_Elo",)
+
+
+# ---------------------------------------------------------------------------
+# Resolving a stored reference to a section
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reference", "expected"),
+    [
+        ("Attacker", "Attacker"),      # the id itself
+        ("attacker", "Attacker"),      # legacy: sole case-insensitive section
+        ("1200 ELO", "1200 ELO"),      # legacy: a name the seeder once wrote
+        ("Default", "Default"),
+        ("Missing", None),             # nothing to resolve to, and none invented
+        ("", None),
+        (None, None),
+    ],
+)
+def test_a_stored_reference_resolves_to_the_section_it_names(
+    uci_file, reference, expected
+):
+    """A player's strength is stored as a section reference and must resolve.
+
+    Why this exists: the reference outlives the config it points into. Sections
+    are identified by generated ids now, but a config predating that carries
+    names, and configs cross installs through Centaur SD import and backup
+    restore. An unresolved reference is not an error the user sees: the engine
+    player falls back to the file's engine-wide ``[DEFAULT]`` at game start, so
+    the board plays at a strength nobody chose, silently.
+
+    How a regression manifests: a legacy named section stops resolving after the
+    switch to ids, and every pre-existing player slot quietly loses its strength.
+    """
+    assert ep.resolve_section(str(uci_file), reference) == expected
+
+
+def test_a_reference_resolves_by_user_name_when_no_section_matches(uci_file, groups):
+    # A profile can be renamed by its user-authored Name while keeping its id, so
+    # a reference written when the name was the identity has to fall back to it.
+    # A regression drops the slot to [DEFAULT] the first time a named profile is
+    # reached through its old name.
+    path = str(uci_file)
+    ep.write_profile(path, "Tactical", {"Name": "Club Player", "OwnAttack": 120}, groups)
+    assert ep.resolve_section(path, "Club Player") == "Tactical"
+    assert ep.resolve_section(path, "club player") == "Tactical"
+
+
+def test_an_ambiguous_reference_resolves_to_nothing(uci_file):
+    # Two sections differing only by case are the legacy state the reconcile UI
+    # exists for. Picking either would be a guess at which strength was meant, so
+    # the caller must be told it is unresolved (and repoint to Default) instead.
+    uci_file.write_text(
+        uci_file.read_text(encoding="utf-8") + "\n[attacker]\nOwnAttack = 90\n",
+        encoding="utf-8",
+    )
+    assert ep.resolve_section(str(uci_file), "ATTACKER") is None
+    # An exact spelling is never ambiguous, even with a twin present.
+    assert ep.resolve_section(str(uci_file), "attacker") == "attacker"
+
+
+# ---------------------------------------------------------------------------
+# The options an engine is actually sent at game start
+# ---------------------------------------------------------------------------
+
+
+def test_the_options_sent_to_the_engine_merge_the_engine_wide_defaults(uci_file):
+    """A profile's effective options include ``[DEFAULT]``, minus app metadata.
+
+    Why this exists: this is the one reader the engine-backed players use at game
+    start, replacing three copies of the same configparser walk. Hash/Threads live
+    only in ``[DEFAULT]`` and must reach the engine, while ``Description`` is this
+    app's and is not a UCI option -- an engine that rejects an unknown option name
+    fails its handshake, and one that ignores it logs noise on every load.
+
+    How a regression manifests: Hash/Threads silently revert to engine built-ins
+    (a performance change with no error), or ``Description`` is sent as setoption.
+    """
+    options = ep.uci_options_for_section(str(uci_file), "1200 ELO")
+    assert options == {
+        "Hash": "16",
+        "Threads": "2",
+        "UCI_LimitStrength": "true",
+        "UCI_Elo": "1200",
+    }
+
+
+def test_the_options_for_an_unresolved_reference_are_the_defaults_alone(uci_file):
+    """An unresolvable strength yields ``[DEFAULT]`` only, never a guessed rung.
+
+    Why this exists: the selection is already lost by the time the engine loads,
+    and picking a nearby rung would put the board at a strength nobody chose while
+    looking deliberate. The engine-wide block is still applied so Hash/Threads
+    hold.
+
+    How a regression manifests: a fabricated ``UCI_Elo``/``UCI_LimitStrength``
+    appears in the result, or the engine-wide options are dropped along with the
+    section.
+    """
+    assert ep.uci_options_for_section(str(uci_file), "Missing") == {
+        "Hash": "16",
+        "Threads": "2",
+    }
+    assert ep.uci_options_for_section(str(uci_file), None) == {
+        "Hash": "16",
+        "Threads": "2",
+    }
+
+
+def test_a_reference_by_legacy_name_still_reaches_its_section(tmp_path):
+    # Resolution runs before the read, so a stored name that is now only a user
+    # Name (the section itself having a generated id) still loads its options. A
+    # regression sends the engine the defaults instead, at full strength.
+    path = tmp_path / "renamed.uci"
+    path.write_text(
+        "[DEFAULT]\nHash = 16\n\n"
+        "[Profile-a1b2c3]\nName = Attacker\nOwnAttack = 125\n",
+        encoding="utf-8",
+    )
+
+    options = ep.uci_options_for_section(str(path), "Attacker")
+    assert options["OwnAttack"] == "125"
+    assert "Name" not in options
+
+
+def test_the_options_for_a_missing_file_are_empty(tmp_path):
+    # A custom engine can have no .uci file at all; the caller must get an empty
+    # mapping rather than an exception on a path that does not exist.
+    assert ep.uci_options_for_section(str(tmp_path / "absent.uci"), "Default") == {}
+
+
+# ---------------------------------------------------------------------------
+# Reading a section's playing strength
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("section", "expected"),
+    [
+        ("1200 ELO", 1200),   # capped rung: the Elo it actually plays
+        ("1200 elo", 1200),   # sole case-insensitive match resolves like the writers
+        ("Default", None),    # UCI_LimitStrength=false: no single Elo to report
+        ("Attacker", None),   # sets no Elo at all
+        ("Missing", None),    # absent section
+        ("", None),
+    ],
+)
+def test_strength_section_elo_reads_the_elo_out_of_the_section(
+    uci_file, section, expected
+):
+    """The Elo comes from the section's values, never from its identity.
+
+    Why this exists: Auto coach selection needs a number for the opponent, and it
+    used to scrape the first run of digits out of the stored selection because the
+    seeded ladder spelled the Elo into the section name. Identities are generated
+    now, so that scrape returns the identity's digits -- "Profile-1" read as a
+    1-rated opponent, and the coach sized itself against it with no error.
+
+    How a regression manifests: an uncapped or Elo-less section returns a number
+    (a fabricated rating), or a capped rung returns None and every engine opponent
+    reads as unknown.
+    """
+    assert ep.strength_section_elo(str(uci_file), section) == expected
+
+
+# ---------------------------------------------------------------------------
 # Profile name validation
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["1200 ELO", "Club Player", "Tal"])
+@pytest.mark.parametrize("name", [
+    "1200 ELO",              # seeded rung
+    "Club Player",           # internal space
+    "Tal",
+    "Semi-Slav",             # hyphen
+    "Defender: 1700 ELO",    # colon, for a composed label
+    "Angriff (scharf)",      # parentheses
+    "Verteidiger_2",         # underscore
+    "Zugzwang, spät",        # comma and a non-ASCII letter
+])
 def test_valid_profile_names_accepted(name):
-    """Real profile names (with spaces/digits) are accepted."""
+    """Names real profiles use are accepted by the allowlist.
+
+    Why: the allowlist has to admit what users actually type, in five UI
+    languages. How the regression shows: a legitimate name is rejected with
+    "Invalid profile name" and cannot be created at all -- a stricter failure
+    than the blocklist it replaced, so the accepted set is pinned explicitly.
+    """
     assert ep.is_valid_profile_name(name) is True
 
 
@@ -643,14 +971,28 @@ def test_valid_profile_names_accepted(name):
     "a[b]",        # brackets break the INI header
     "x\ny",        # newline
     "x" * 65,      # too long
+    "a/b",         # slash: valid INI, unroutable REST path segment
+    "a\\b",        # backslash: path separator on the import/restore side
+    "50%",         # would become an interpolation token if interpolation returned
+    "a;b",         # INI comment delimiter
+    "a#b",         # INI comment delimiter
+    "a\tb",        # tab, invisible in the picker
 ])
 def test_invalid_profile_names_rejected(name):
-    """Names that break the INI file or collide with reserved sections are rejected.
+    """Names outside the allowlist or colliding with reserved sections are rejected.
 
     Why Default is reserved: overwriting it would leave a section still named
     Default whose options are no longer the seeded default (Maia net / uncapped
     Stockfish). Edits must be saved under a new name instead. Case variants are
     rejected too because ConfigParser keeps case-distinct sections.
+
+    Why the rest: the name is also a REST path segment and an INI header, and the
+    former four-character blocklist only covered what breaks the INI. A slash is
+    the case that mattered -- it writes a perfectly good section that Flask's
+    default string converter will not match, so the profile could be created and
+    then never saved or deleted through its own endpoints. How the regression
+    shows: a name here is accepted, and for the slash the editor then offers Save
+    and Delete buttons that 404 forever.
     """
     assert ep.is_valid_profile_name(name) is False
 
@@ -803,17 +1145,22 @@ def test_write_new_profile_preserves_others_and_default(uci_file, groups):
     }
 
 
-def test_write_replaces_section_wholesale(uci_file, groups):
-    """Editing a profile replaces its keys entirely (removed keys disappear).
+def test_write_replaces_the_options_wholesale(uci_file, groups):
+    """Editing a profile replaces its options entirely (removed keys disappear).
 
-    The editor submits the complete desired set; a regression that merged into
-    the old section would leave stale keys (here 'Style') that the user removed.
+    The editor submits the complete desired set of options; a regression that
+    merged into the old section would leave stale keys (here 'Style') that the
+    user removed. Metadata is the exception and is carried over -- see
+    ``test_writing_a_profile_keeps_metadata_the_submission_left_out``.
     """
     ep.write_profile(str(uci_file), "Attacker", {
         "OwnAttack": 200,
     }, groups)
     profiles = {p["name"]: p["values"] for p in ep.read_profiles(str(uci_file))}
-    assert profiles["Attacker"] == {"OwnAttack": "200"}
+    assert profiles["Attacker"] == {
+        "OwnAttack": "200",
+        "Description": "Aggressive attacking style",
+    }
 
 
 def test_written_file_is_loadable_by_runtime_with_default_inheritance(uci_file, groups):
@@ -917,7 +1264,11 @@ def test_write_updates_existing_section_when_casing_differs(uci_file, groups):
     assert "Attacker" in names
     assert "attacker" not in names
     profiles = {p["name"]: p["values"] for p in ep.read_profiles(str(uci_file))}
-    assert profiles["Attacker"] == {"OwnAttack": "200"}
+    assert profiles["Attacker"] == {
+        "OwnAttack": "200",
+        # Options are replaced wholesale; metadata the submission omits is kept.
+        "Description": "Aggressive attacking style",
+    }
 
 
 # ---------------------------------------------------------------------------

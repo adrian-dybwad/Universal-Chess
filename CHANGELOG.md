@@ -724,6 +724,42 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   now include the pending version, matching the "Update Available: v…" line
   that already named it before the download.
 
+- **An engine profile is named after what it sets**: a profile is a section in
+  the engine's `.uci` file, and its name used to be four things at once -- the
+  profile's identity, the value the player-strength and Original Centaur settings
+  store to point at it, the address the editor saves and deletes through, and the
+  text shown in every picker. Every awkward rule in this area was the price of
+  that: `Default` could not be edited because the seed owns the name, saving asked
+  whether to rename a rung whose Elo had moved, a profile whose name differed only
+  in capitalisation from another silently overwrote it, and a rename left the
+  settings that referenced it naming nothing. A profile now has a generated
+  identity of its own, and its label is composed from its own option values -- so
+  `1600 ELO` is read back from the `UCI_Elo` the profile sets, and a Maia rung
+  from the net it selects, with the Elo stored once and nothing to drift out of
+  step with it. Naming a profile is optional and is an ordinary edit like any
+  other value: a name is shown in place of the composed label, clearing it returns
+  the profile to that label, and neither can strand a setting, because no setting
+  refers to a profile by name. Which values compose the label is declared per
+  engine and can be narrowed per install (the `ProfileLabel` key in the `.uci`
+  file's `[DEFAULT]`), with unknown keys ignored and a guard that falls back to
+  the declaration rather than labelling a profile with, say, its hash size.
+  Existing configuration keeps working untouched: a strength stored under an old
+  name still resolves, and "Reset profiles" moves an engine to the new layout.
+  Editing `Default` now creates a new profile rather than refusing, since the
+  identity it needs is minted rather than typed.
+
+- **Engine profile settings save as they are changed**: the profile editor was
+  the last page holding edits behind a button, so a strength changed and left
+  unsaved played the old value with nothing on screen saying so, while every
+  value on the Settings page and every board menu already persisted as it was
+  set. An edit to an existing profile is now written shortly after it stops
+  changing, which makes dragging a slider one write rather than one per step. A
+  cleared number is left unwritten until it has been retyped, because an empty
+  field means "use the engine's own value" and saving it mid-retype would drop
+  the setting the profile exists to make. Creating a profile -- including editing
+  `Default`, which forks one -- keeps its button, since each press mints an
+  identity and so is the one save that cannot be repeated harmlessly.
+
 - **Engine list groups and orders itself by rating**: The Settings engine list
   puts each engine in a strength group and, within it, lists the strongest
   first. Both now follow the engine's published rating, recorded once in the
@@ -1605,6 +1641,84 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   resets strength to Default the same way Players does. The Save button is
   gone. The card still says the proxy reads the values the next time Centaur
   launches.
+
+- **Renaming, deleting or resetting an engine profile left the settings that
+  used it pointing at nothing**: a profile is a section in the engine's `.uci`
+  file, and three settings name one by section name -- both player slots'
+  strength and the Original Centaur level. Nothing enforced the reference, and
+  the failure was silent in the worst way: with no matching section the engine
+  player falls back to the file's engine-wide `[DEFAULT]` at game start, so the
+  board played at a strength nobody had chosen, with no error on the panel, in
+  the web UI or in the log. "Reset profiles" dangled every reference to a custom
+  profile by design, since it discards them. Renaming can no longer strand
+  anything, because a profile's name is no longer its identity (see the profile
+  identity entry under Added). A delete or a reset repoints only the references
+  whose target is genuinely gone -- so a reset that re-derives the same ladder
+  moves nothing -- and reports what it moved, making the consequence visible at
+  the moment of the action instead of being discovered by playing a game at the
+  wrong strength. The Original Centaur level's cached options are re-resolved
+  with it, because the proxy launches from that cache rather than from the level.
+
+- **A profile could be given a name that made it unmaintainable**: profile names
+  were checked only for the four characters that break the INI file, but the name
+  was also the REST path segment the editor addressed the profile through. `a/b`
+  is a valid section header and does not match Flask's default string converter,
+  so a profile named that way could be written and then never reached -- the
+  editor listed it and offered Save and Delete buttons that could only ever fail,
+  leaving hand-editing the file as the only way out. A name can no longer reach a
+  section header at all, and the header itself is now checked against an allowed
+  character set (letters in any language, digits, spaces and the punctuation real
+  names use) rather than a list of four forbidden ones, which also refuses the
+  INI comment delimiters and the interpolation character.
+
+- **The Auto coach sized itself against the profile's name rather than its
+  strength**: choosing Auto reads the opponent's rating to pick a coach, and it
+  took that rating by finding the first run of digits in the stored strength
+  selection. That selection is a profile name, so it worked only while the name
+  happened to spell the Elo out: a profile named for its style or its net, or a
+  seeded rung whose `UCI_Elo` had since been edited, gave a rating that was
+  wrong or absent with nothing to show it. The rating is now read from the
+  profile's own `UCI_Elo`, honouring `UCI_LimitStrength`, so an uncapped profile
+  reports no rating rather than a made-up one, and a numeric selection still
+  needs no lookup.
+
+- **The board's strength picker kept offering profiles that had been edited
+  away**: the on-device picker builds its rows from the engine's `.uci` and
+  cached them for the life of the process, and nothing dropped that cache when a
+  profile was written, renamed, deleted or reset from the web editor. The panel
+  went on listing the pre-edit ladder until the app restarted, and picking a rung
+  that no longer existed stored a strength that resolved to nothing. Every write
+  to an engine's profiles now invalidates that engine's rows -- and only that
+  engine's, since rebuilding another's can mean launching its binary.
+
+- **An engine loaded with a strength that no longer existed said nothing about
+  it**: a stored strength that matches no profile falls back to the engine-wide
+  `[DEFAULT]`, which was the intended safety net but happened without a trace, so
+  a slot that had lost its profile looked normal and played at full strength. The
+  fallback now names the missing profile in the log, and a strength stored before
+  profiles gained generated identities is resolved by its old name or by a
+  profile's own name before the fallback is reached.
+
+- **Saving an Elo profile asked whether to rename it, every time**: changing
+  `UCI_Elo` on a rung named for a different Elo raised a confirmation dialog from
+  inside the save, so adjusting the strength of `1000 ELO` could not be saved
+  without answering a question about its name. Saving now asks nothing: a rung's
+  Elo is stored once and its label is read back from that value, so there is no
+  second copy in a name to drift out of step and nothing to reconcile.
+
+- **Rodent IV's playing style was buried and unnamed**: Rodent picks among some
+  thirty styles -- Defender, Fischer, Tal -- through a `Personality` option it
+  offers once its personalities are installed, and a handshake against the
+  installed binary shows that is the only strength axis it advertises (the
+  opening-book options are suppressed, because it takes books from the style).
+  Because the option is a fixed list rather than a file picker, it was sorted
+  into Advanced alongside the evaluation tuning knobs, and it did not appear in
+  profile labels at all -- so two profiles differing only in style read
+  identically in every strength picker. The style now sits beside the Elo in the
+  Strength card and leads the label, giving `Defender: 1700 ELO` for a capped
+  profile and `Defender` for an uncapped one. An install whose personalities are
+  missing advertises no such option, and its profiles are labelled by Elo as
+  before.
 
 - The CA install page's Windows download saved `UniversalChess-CA.pem`.
   Windows Certificate Manager associates `.crt` and `.cer`, not `.pem`, so

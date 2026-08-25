@@ -1,18 +1,21 @@
 /**
- * Guards Default-profile save-as behavior in the Engines profile editor.
+ * Guards the profile-editor helpers around the reserved Default and the optional
+ * profile name.
  *
- * Default is seed-owned: editing its fields must not overwrite the section
- * still named Default. Dirty Default -> save requires a new name (create).
+ * Default is seed-owned: it is re-derived by "Reset profiles" and is the stored
+ * strength of every unconfigured player slot, so an edit to it forks a new
+ * profile rather than being saved in place. A profile's name is an ordinary
+ * edited value with no identity role, which is what these tests pin: the name no
+ * longer decides which section is written.
  */
 import { describe, expect, it } from 'vitest'
 import {
-  mustSaveDefaultAsNew,
-  profileFormIsDirty,
-  shouldConfirmProfileReplace,
-  findExistingProfileName,
-  isReservedProfileName,
+  DEFAULT_PROFILE_ID,
+  mustForkDefault,
+  nameForPayload,
   orderSchemaGroups,
-  suggestedEloRungRename,
+  profileFormIsDirty,
+  profileLabel,
   toOverridePayload,
   type Profile,
   type SchemaGroup,
@@ -30,14 +33,15 @@ const SCHEMA: SchemaGroup[] = [
 ]
 
 const DEFAULT_PROFILE: Profile = {
-  name: 'Default',
+  id: DEFAULT_PROFILE_ID,
+  label: 'Default (Unlimited)',
   values: { UCI_LimitStrength: 'false' },
 }
 
 describe('profileFormIsDirty', () => {
   it('is clean when form matches the loaded Default profile (filled defaults)', () => {
-    // Why: Save on an untouched Default must stay a no-op, not force save-as.
-    // Failure: dirty=true on open would block Save / demand a name incorrectly.
+    // Why: Save on an untouched Default must stay a no-op, not fork a profile.
+    // Failure: dirty=true on open would create a duplicate of Default on save.
     const form = {
       UCI_LimitStrength: 'false',
       UCI_Elo: '1500', // schema default filled in by valuesForProfile
@@ -56,68 +60,38 @@ describe('profileFormIsDirty', () => {
   })
 })
 
-describe('mustSaveDefaultAsNew', () => {
-  it('requires a new name only when Default is selected and the form is dirty', () => {
-    // Why: Default stays the seeded anchor; edits save-as under a new name.
-    // Failure: false here would POST to /profiles/Default and overwrite it.
-    expect(mustSaveDefaultAsNew('Default', false, true)).toBe(true)
-    expect(mustSaveDefaultAsNew('Default', false, false)).toBe(false)
-    expect(mustSaveDefaultAsNew('1200 ELO', false, true)).toBe(false)
-    expect(mustSaveDefaultAsNew('Default', true, true)).toBe(false) // already in new-profile flow
+describe('mustForkDefault', () => {
+  it('forks only when Default is selected and the form is dirty', () => {
+    // Why: Default stays the seeded anchor, so an edit to it becomes a new
+    // profile under an id the server mints. Failure: false here would POST to
+    // /profiles/Default and overwrite the anchor every slot falls back to.
+    expect(mustForkDefault(DEFAULT_PROFILE_ID, false, true)).toBe(true)
+    expect(mustForkDefault(DEFAULT_PROFILE_ID, false, false)).toBe(false)
+    expect(mustForkDefault('Profile-a1b2c3', false, true)).toBe(false)
+    // Already creating: the fork decision has been made.
+    expect(mustForkDefault(DEFAULT_PROFILE_ID, true, true)).toBe(false)
   })
 })
 
-describe('isReservedProfileName', () => {
-  it('treats Default / DEFAULT / default as reserved (case-insensitive)', () => {
-    // Why: ConfigParser keeps case-distinct sections; a twin "default" bypasses
-    // seed-owned Default immutability. Failure: false for "default" allows create.
-    expect(isReservedProfileName('Default')).toBe(true)
-    expect(isReservedProfileName('DEFAULT')).toBe(true)
-    expect(isReservedProfileName('default')).toBe(true)
-    expect(isReservedProfileName('DeFaUlT')).toBe(true)
-    expect(isReservedProfileName('1200 ELO')).toBe(false)
+describe('nameForPayload', () => {
+  it('sends a name only when it changed, and sends the empty one', () => {
+    // Why: an unchanged name must not be rewritten by an ordinary save, while
+    // clearing it is a real edit -- it returns the profile to the label projected
+    // from its values. Failure: undefined for a cleared name leaves the old name
+    // in place, so the profile keeps a name the user deleted.
+    expect(nameForPayload('Club Player', '')).toBe('Club Player')
+    expect(nameForPayload('  Club Player  ', 'Club Player')).toBeUndefined()
+    expect(nameForPayload('', 'Club Player')).toBe('')
+    expect(nameForPayload('', undefined)).toBeUndefined()
   })
 })
 
-describe('findExistingProfileName', () => {
-  it('returns the on-disk spelling for a case-insensitive match', () => {
-    // Why: save-as "1200 elo" must update "1200 ELO", not add a second section.
-    // Failure: undefined here leaves writeName as the typed casing.
-    const names = ['Default', '1200 ELO', 'Attacker']
-    expect(findExistingProfileName('1200 elo', names)).toBe('1200 ELO')
-    expect(findExistingProfileName('attacker', names)).toBe('Attacker')
-    expect(findExistingProfileName('Fresh', names)).toBeUndefined()
-  })
-
-  it('prefers exact spelling when case twins exist', () => {
-    // Why: remapping attacker -> Attacker silently overwrote the upper twin.
-    // Failure: returns 'Attacker' for input 'attacker' when both exist.
-    const names = ['Attacker', 'attacker']
-    expect(findExistingProfileName('attacker', names)).toBe('attacker')
-    expect(findExistingProfileName('Attacker', names)).toBe('Attacker')
-    expect(findExistingProfileName('ATTACKER', names)).toBeUndefined()
-  })
-})
-
-describe('shouldConfirmProfileReplace', () => {
-  it('prompts only for create/save-as onto an existing name', () => {
-    // Why: "New profile" / Default save-as with name "1200 ELO" must not silently
-    // wipe that section. Editing the open "1200 ELO" profile (saveAsNew=false)
-    // is an intentional update and must not prompt.
-    // Failure: false for save-as onto an existing name = silent overwrite.
-    const names = ['Default', '1200 ELO', 'Attacker']
-    expect(shouldConfirmProfileReplace(true, '1200 ELO', names)).toBe(true)
-    expect(shouldConfirmProfileReplace(true, 'Fresh', names)).toBe(false)
-    expect(shouldConfirmProfileReplace(false, '1200 ELO', names)).toBe(false)
-    expect(shouldConfirmProfileReplace(true, '', names)).toBe(false)
-  })
-
-  it('prompts when the typed name differs only by case from an existing section', () => {
-    // Why: case-only variants would otherwise create a near-duplicate section.
-    // Failure: false for "1200 elo" = no confirm and a second section on save.
-    const names = ['Default', '1200 ELO', 'Attacker']
-    expect(shouldConfirmProfileReplace(true, '1200 elo', names)).toBe(true)
-    expect(shouldConfirmProfileReplace(true, 'ATTACKER', names)).toBe(true)
+describe('profileLabel', () => {
+  it('falls back to the id when the server sent no label', () => {
+    // Why: the select must render something for every row; an unlabelled option
+    // cannot be picked. Failure: an empty option appears in the profile picker.
+    expect(profileLabel(DEFAULT_PROFILE)).toBe('Default (Unlimited)')
+    expect(profileLabel({ id: 'Profile-a1b2c3', values: {} })).toBe('Profile-a1b2c3')
   })
 })
 
@@ -155,7 +129,7 @@ describe('info fields in form helpers', () => {
   })
 
   it('ignores info fields when deciding dirty', () => {
-    // Why: showing the engine default for info must not force save-as on Default.
+    // Why: showing the engine default for info must not force a fork of Default.
     // Failure: dirty=true because formValues differ from a stale stored about.
     const form = {
       UCI_EngineAbout: 'anything',
@@ -183,30 +157,5 @@ describe('orderSchemaGroups', () => {
       { id: 'engine', label: 'Engine', fields: [] },
     ])
     expect(ordered.map((g) => g.id)).toEqual(['strength', 'engine'])
-  })
-})
-
-describe('suggestedEloRungRename', () => {
-  it('suggests a matching rung name when form Elo drifts from the section name', () => {
-    // Why: saving Elo under "1000 ELO" without rename leaves a lying name.
-    // Failure: null here skips the rename confirm.
-    expect(
-      suggestedEloRungRename('1000 ELO', {
-        UCI_LimitStrength: 'true',
-        UCI_Elo: '1400',
-      }),
-    ).toBe('1400 ELO')
-    expect(
-      suggestedEloRungRename('1000 ELO', {
-        UCI_LimitStrength: 'true',
-        UCI_Elo: '1000',
-      }),
-    ).toBeNull()
-    expect(
-      suggestedEloRungRename('Club Player', {
-        UCI_LimitStrength: 'true',
-        UCI_Elo: '1400',
-      }),
-    ).toBeNull()
   })
 })
