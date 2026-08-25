@@ -2222,6 +2222,21 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
     themselves. Vulnerability alerting now covers the pinned set, and a workflow
     re-resolves the whole closure on a schedule or on demand, verifying offline
     that the result still installs before proposing it.
+    - That refresh has now delivered its first update, moving `webencodings` from
+      0.5.1 to 0.6.1. The package had been silent since April 2017, and a
+      long-dormant dependency suddenly publishing is also what a hijacked one
+      looks like, so the artifact's publisher attestation was checked against the
+      upstream project before the update was accepted, not just its hash against
+      the index. The two consumers in the closure use four functions between them,
+      all still present; the modules the release deletes are imported by nothing
+      the package ships.
+    - Later refreshes are not recorded here individually. Which version of a
+      vendored library a board runs is not something a board can show, so the
+      generated commit names the pins it moved and declares that no entry is
+      owed, which keeps the omission visible to the changelog audit rather than
+      silent. A refresh that resolves an advisory is owed an entry and gets one;
+      the generator cannot tell that case from routine drift, so the judgement is
+      made when the pull request is reviewed.
 - **The Lichess API token is no longer disclosed**: the settings endpoint
   returned it in clear text without authentication. It is now redacted, and
   saving settings without it leaves the stored token unchanged rather than
