@@ -163,6 +163,41 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   is configured to watch, so retargeting the gesture cannot silently leave the
   panel instructing users to hold a button that no longer exits.
 
+- **Splash text now fits in every language**: the splash was laid out around
+  English proportions and three translations had outgrown it. The French
+  shutdown prompt "Appuyez sur [▶]" needs two lines, and the battery was drawn
+  at a fixed offset below the message that assumed exactly one, so the charge
+  reading had a line of text through it -- worse than no reading, because it
+  stayed legible enough to be misread. The German byline wrapped to four lines
+  in a band sized for three and the Dutch Centaur hint to six in a band holding
+  five; word wrapping discards the lines it cannot place, so both simply lost
+  their last line with nothing to indicate it. Behind all three, the message was
+  built with a fixed height whatever was above or below it: a byline pushes it
+  down 52px, and the status-bar variant is shorter still, so text was wrapped
+  against room that did not exist and ran off the panel. The message is now
+  given the space that actually remains, less what is drawn beneath it, and set
+  with the same shrink-then-wrap fitting the game-over screen already used, so
+  an over-long translation is set smaller rather than cut short. The battery
+  follows the height the message really drew and is resolved at each read, so it
+  still tracks a message replaced while the splash is up. English is unchanged,
+  down to the battery sitting at the same pixel.
+
+- **`measure_locale_fit.py` was measuring the wrong font**: the script that
+  clears translated strings for the panel never registered a resource loader, so
+  `get_font` fell back to PIL's default bitmap face -- which ignores the
+  requested size and is about 10px against the 18pt asked for. Every string it
+  has ever cleared was measured on a face roughly half the real one, which is
+  how all three faults above passed review, and why the Dutch hint was reported
+  as fitting on the night it was added. The loader is now registered before
+  anything is measured, the band geometry is taken from the splash rather than
+  restated (the copies had already drifted), and strings are measured through
+  the widget's own fitted layout so the verdict is what the panel does,
+  including reporting when a string was rescued by shrinking. A test renders
+  every shipped locale with the bundled font and asserts the message stays clear
+  of the battery, the battery stack stays on the panel, and no line of the
+  byline or the hint is dropped -- the check that would have caught all three,
+  and which fails without this fix.
+
 - **The BlueZ self-heal runs only on a Raspberry Pi**: the workaround targets
   a BCM43430 firmware fault and was gated on nothing more than the presence of
   an hci device. Orange Pi carries a uwe5622, an unrelated part the workaround

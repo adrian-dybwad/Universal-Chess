@@ -8,7 +8,7 @@ and an updateable message at the bottom.
 import threading
 from PIL import Image
 from .framework.widget import Widget
-from .text import TextWidget, Justify
+from .text import TextWidget, Justify, Overflow
 from .status_bar import STATUS_BAR_HEIGHT
 from typing import Callable, Optional, Tuple
 
@@ -65,8 +65,12 @@ class SplashScreen(Widget):
     UNIVERSAL_Y = 154  # Y position for "UNIVERSAL" text (below the logo band)
     TEXT_MARGIN = 4  # Margin on each side
     TEXT_Y = 186  # Y position for message text (below "UNIVERSAL")
-    TEXT_HEIGHT = 110  # Height for 5 lines of text at font size 18 (296 - TEXT_Y)
-    DISMISS_TEXT_HEIGHT = 72  # Leave a band at the bottom for "Press any button"
+    # The message band is measured from wherever the message starts to the bottom
+    # of the widget, never assumed. A fixed height was wrong in two ways at once:
+    # it over-reported by 52px when a tagline pushed the message down, and again
+    # in the status-bar variant, where the widget is shorter than the panel. Text
+    # was wrapped against room that did not exist and ran off the bottom.
+    DISMISS_RESERVE = 38  # Kept clear at the bottom for "Press any button"
     INSTRUCTION_HEIGHT = 16
     DISMISS_TIMEOUT_SECONDS = 30.0
     # Optional byline shown under "UNIVERSAL" (only when a tagline is supplied,
@@ -75,12 +79,16 @@ class SplashScreen(Widget):
     TAGLINE_Y = 182
     TAGLINE_HEIGHT = 56
 
-    # Optional battery indicator, shown below a single-line message (e.g. the
-    # shutdown "Press [>]" prompt). Kept small so it fits beneath the byline +
-    # message within the 296px screen; its Y is computed per-instance from the
-    # message position (see __init__) rather than pinned to TEXT_Y.
+    # Optional battery indicator (e.g. the shutdown "Press [>]" prompt), drawn
+    # under the message. Its Y follows however tall the message actually drew,
+    # so a translation needing an extra line moves the icon down instead of
+    # having text drawn through it. The space the whole stack needs is reserved
+    # from the message's own height, because the panel cannot grow: under a
+    # byline only 58px remain, and icon plus percentage claim 37 of them.
     BATTERY_W = 30
     BATTERY_H = 15
+    BATTERY_GAP = 4  # Between the last line of the message and the icon
+    BATTERY_PERCENT_HEIGHT = 16  # The "88%" label under the icon
 
     def __init__(self, update_callback, message: str = "Press [OK]", background_shade: int = 4,
                  leave_room_for_status_bar: bool = True,
@@ -140,11 +148,38 @@ class SplashScreen(Widget):
             text="UNIVERSAL", font_size=24, justify=Justify.CENTER, transparent=True
         )
         
-        message_height = self.DISMISS_TEXT_HEIGHT if dismissible else self.TEXT_HEIGHT
+        # The byline is built first because it decides where the message starts:
+        # when one is shown the message is pushed below it, leaving far less room.
+        # Present on the boot/idle and shutdown screens; otherwise the message
+        # keeps TEXT_Y.
+        self._tagline_text = None
+        if tagline:
+            self._tagline_text = TextWidget(
+                x=0, y=0, width=text_width, height=self.TAGLINE_HEIGHT,
+                update_callback=self._handle_child_update,
+                text=tagline, font_size=16, justify=Justify.CENTER,
+                transparent=True, overflow=Overflow.FIT
+            )
+            self._message_y = self.TAGLINE_Y + self.TAGLINE_HEIGHT
+        else:
+            self._message_y = self.TEXT_Y
+
+        # Give the message exactly the room that is left, after whatever else has
+        # to be drawn below it. FIT then shrinks a translation that still will not
+        # fit rather than wrapping into space that is not there: WRAP silently
+        # drops the lines it cannot place, which loses the end of the text with
+        # nothing to show that it happened.
+        message_height = self.height - self._message_y
+        if dismissible:
+            message_height -= self.DISMISS_RESERVE
+        if show_battery:
+            message_height -= (self.BATTERY_GAP + self.BATTERY_H + 2
+                               + self.BATTERY_PERCENT_HEIGHT)
         self._text_widget = TextWidget(
-            x=0, y=0, width=text_width, height=message_height,
+            x=0, y=0, width=text_width, height=max(1, message_height),
             update_callback=self._handle_child_update,
-            text=message, font_size=18, justify=Justify.CENTER, wrapText=True
+            text=message, font_size=18, justify=Justify.CENTER,
+            overflow=Overflow.FIT
         )
 
         self._instruction_text = None
@@ -158,35 +193,29 @@ class SplashScreen(Widget):
                 font_size=12, justify=Justify.CENTER, transparent=True
             )
 
-        # Optional byline under "UNIVERSAL". Present on the boot/idle and shutdown
-        # screens; when shown, the message starts below it, otherwise it keeps
-        # TEXT_Y.
-        self._tagline_text = None
-        if tagline:
-            self._tagline_text = TextWidget(
-                x=0, y=0, width=text_width, height=self.TAGLINE_HEIGHT,
-                update_callback=self._handle_child_update,
-                text=tagline, font_size=16, justify=Justify.CENTER,
-                transparent=True, wrapText=True
-            )
-            self._message_y = self.TAGLINE_Y + self.TAGLINE_HEIGHT
-        else:
-            self._message_y = self.TEXT_Y
-
-        # Battery sits just under the (single-line) message; derive its Y from the
-        # message position so it follows the byline when one is shown, and the
-        # percentage sits just under the icon.
-        self._battery_y = self._message_y + 24
-        self._battery_percent_y = self._battery_y + self.BATTERY_H + 2
-
         # Percentage label beneath the battery icon, only built when needed.
         self._battery_percent_text = None
         if self._show_battery:
             self._battery_percent_text = TextWidget(
-                x=0, y=0, width=self.width, height=16,
+                x=0, y=0, width=self.width, height=self.BATTERY_PERCENT_HEIGHT,
                 update_callback=self._handle_child_update,
                 text="", font_size=13, justify=Justify.CENTER, transparent=True
             )
+
+    @property
+    def _battery_y(self) -> int:
+        """Top of the battery icon, just below however tall the message drew.
+
+        Resolved on each read rather than fixed at construction so it still
+        tracks a message replaced later through ``set_message``.
+        """
+        return (self._message_y + self._text_widget.used_height()
+                + self.BATTERY_GAP)
+
+    @property
+    def _battery_percent_y(self) -> int:
+        """Top of the percentage label, just below the icon."""
+        return self._battery_y + self.BATTERY_H + 2
     
     def _handle_child_update(self, full: bool = False, immediate: bool = False):
         """Handle update requests from child widgets by forwarding to parent callback."""

@@ -7,16 +7,26 @@ strings that clip or wrap in the translation while the English fits are
 reported, so the output is the cost of translating rather than a list of every
 long line.
 
-Two failures are worth acting on:
+The splash fits text with ``Overflow.FIT``, so it shrinks a long translation
+before losing any of it. Three outcomes are reported:
 
-- **clipped**: a single word is wider than the column. Wrapping cannot break
-  inside a word, so the text is cut off on hardware. Split it with an explicit
-  ``\\n``, or choose a shorter word.
-- **taller**: the wrapped text needs more lines than the band has, so the last
-  line falls off the bottom.
+- **shrunk**: the text no longer fits at the designed 18pt and was reduced.
+  Nothing is lost, but it is set smaller than its neighbours, which is worth
+  knowing when a shorter phrase would read better.
+- **clipped**: a single word is wider than the column even at the smallest size
+  FIT will use. Wrapping cannot break inside a word, so the text is cut off on
+  hardware. Split it with an explicit ``\\n``, or choose a shorter word.
+- **taller**: the text needs more lines than the band has even after shrinking,
+  so the last line falls off the bottom.
 
 Run as ``python scripts/measure_locale_fit.py nl`` from the repository root.
 Written for the Dutch pass; the German one used ad-hoc versions of this.
+
+A resource loader is registered before anything is measured. Without one,
+``get_font`` returns ``ImageFont.load_default()``, which *ignores the requested
+size* -- a fixed ~10px bitmap face. Every run of this script before that call
+existed was measuring that instead of the bundled ``Font.ttc``, so it reported
+strings as fitting that clip or truncate on the panel; three shipped that way.
 """
 
 import json
@@ -26,12 +36,19 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "src"))
 
-from universalchess.epaper.text import Justify, TextWidget  # noqa: E402
+from universalchess.resources import ResourceLoader, set_resource_loader  # noqa: E402
 
-# The splash message band: the full panel less a 4px margin each side, over the
-# height left below the "UNIVERSAL" logo, drawn at 18pt with wrapping on.
-COLUMN_WIDTH = 120
-BAND_HEIGHT = 110
+set_resource_loader(ResourceLoader(str(ROOT / "src" / "universalchess" / "resources")))
+
+from universalchess.epaper.splash_screen import SplashScreen  # noqa: E402
+from universalchess.epaper.text import Justify, Overflow, TextWidget  # noqa: E402
+
+# The splash message band, taken from the widget rather than restated here: the
+# panel less its margin each side, over the height left below the "UNIVERSAL"
+# logo, drawn at 18pt with wrapping on. Copies of these numbers had already
+# drifted from the layout they claimed to describe.
+COLUMN_WIDTH = 128 - SplashScreen.TEXT_MARGIN * 2
+BAND_HEIGHT = 296 - SplashScreen.TEXT_Y
 FONT_SIZE = 18
 
 # Placeholders stand in for runtime values whose length no translator controls,
@@ -57,20 +74,31 @@ def _sample(text: str) -> str:
 
 
 def _widget(text: str) -> TextWidget:
+    """Build the widget the splash builds, overflow behaviour included."""
     return TextWidget(
         0, 0, COLUMN_WIDTH, BAND_HEIGHT, lambda *args, **kwargs: None,
-        text=text, font_size=FONT_SIZE, justify=Justify.CENTER, wrapText=True,
+        text=text, font_size=FONT_SIZE, justify=Justify.CENTER,
+        overflow=Overflow.FIT,
     )
 
 
 def _verdict(text: str) -> str:
-    """Return "" when the text fits, else the way it fails."""
+    """Return "" when the text fits as designed, else how it copes or fails.
+
+    Measured through the widget's own fitted layout rather than a re-implemented
+    wrap, so the answer is what the panel does. Reporting a plain wrap would
+    now be wrong in both directions: it flags strings FIT rescues by shrinking,
+    and it misses that the rescue happened at all.
+    """
     widget = _widget(_sample(text))
-    lines = widget._wrap_text(widget.text, COLUMN_WIDTH, widget._font)
+    size = widget.fitted_font_size
+    lines = widget.wrap_lines() if widget.fitted_wrap else widget.text.split("\n")
     if any(widget._text_len(line, widget._font) > COLUMN_WIDTH for line in lines if line):
         return "clipped"
-    if len(lines) * (FONT_SIZE + 2) > BAND_HEIGHT:
+    if len(lines) * (size + 2) > BAND_HEIGHT:
         return "taller than the band"
+    if size < FONT_SIZE:
+        return f"shrunk to {size}pt"
     return ""
 
 
