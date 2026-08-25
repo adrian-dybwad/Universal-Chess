@@ -120,6 +120,7 @@
   "splash.rfcomm": "RFCOMM...",
   "splash.resuming": "Resuming...",
   "splash.returning": "Returning...",
+  "splash.centaur_hold_back": "Loading...\n\nHold BACK to return",
   "splash.ready": "Ready!",
   "splash.shim_build_failed": "Shim build failed",
   "splash.tagline": "Look a gift horse in the mouth",

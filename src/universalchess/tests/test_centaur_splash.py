@@ -1,11 +1,13 @@
-"""Leaving the original Centaur says so on the panel before the service restarts.
+"""What the panel says at both ends of a handover to the original Centaur.
 
-Returning from Centaur is not a quick swap: ``return_to_universal_chess`` settles
-for three seconds and then restarts the unit, and Universal Chess needs roughly
-another fifteen to import and paint its own startup splash. Across that whole gap
-the panel held whatever was last drawn -- Centaur's final frame -- with nothing
-to say the exit had registered. Observed on hardware, that reads as the board
-having crashed and powered itself off, which is exactly how it was reported.
+Two messages, one at each end of the trip.
+
+**Leaving** is not a quick swap: ``return_to_universal_chess`` settles for three
+seconds and then restarts the unit, and Universal Chess needs roughly another
+fifteen to import and paint its own startup splash. Across that whole gap the
+panel held whatever was last drawn -- Centaur's final frame -- with nothing to
+say the exit had registered. Observed on hardware, that reads as the board having
+crashed and powered itself off, which is exactly how it was reported.
 
 Translate mode never gives the panel away, so UC can draw on it the moment
 Centaur exits. Direct mode does give it away, so it must take the hardware back
@@ -13,22 +15,46 @@ first -- the difference the two sets of tests below pin. e-ink holds an image
 with no power, so the splash survives the restart either way and stays up until
 UC's own startup splash replaces it.
 
-The splash belongs only on the path that actually restarts. When the binary is
-missing nothing was handed over and UC simply stays running, so announcing a
-return would be a lie about what just happened.
+The returning splash belongs only on the path that actually restarts. When the
+binary is missing nothing was handed over and UC simply stays running, so
+announcing a return would be a lie about what just happened.
+
+**Starting** is where the exit gesture has to be taught, because once Centaur
+owns the screen UC cannot tell the user anything. Only translate mode can honour
+it: the serial tap sits between Centaur and the board and watches for a held
+BACK. Direct mode hands the port over outright, so nothing is watching and the
+same hint would be an instruction that does nothing -- which is why the two modes
+are asserted to show different messages.
 """
+
+import inspect
 
 from unittest.mock import MagicMock
 
 import pytest
 
+from universalchess import i18n
 from universalchess.app import board_app
+from universalchess.services.centaur_serial.relay import ThreadedSerialTap
 
 
 RETURNING_KEY = "splash.returning"
+# The translate-mode start splash, which names the exit gesture, and the plain
+# one direct mode keeps because it has no gesture to offer.
+HOLD_BACK_KEY = "splash.centaur_hold_back"
+LOADING_KEY = "splash.loading"
 SPLASH = "splash"
 RESTART = "restart"
 REACQUIRE = "reacquire"
+
+
+def _start_splash_messages():
+    """Return the message of every ``SplashScreen`` built during the launch.
+
+    The fixtures replace the class with a ``MagicMock``, so the constructor calls
+    are the record of what was put on the panel before Centaur took over.
+    """
+    return [call.kwargs["message"] for call in board_app.SplashScreen.call_args_list]
 
 
 @pytest.fixture
@@ -215,3 +241,63 @@ def test_a_failed_panel_reacquire_still_restarts_the_service(direct_handoff):
         board_app._run_centaur()
 
     assert (RESTART, None) in calls
+
+
+def test_translate_mode_teaches_the_exit_gesture_before_handing_over(translate_handoff):
+    """The start splash must name the held-BACK exit while UC can still say it.
+
+    Why this test exists: the moment Centaur paints, the panel is its own and UC
+    has no way to tell the user how to get out. The web page can say it, but a
+    user standing at the board with no phone had no way to learn the gesture and
+    was stuck until they pulled the power. This splash is the only place on the
+    device where that instruction can appear, so it must carry the hint rather
+    than the generic loading text.
+
+    How the regression manifests: the message reverts to ``splash.loading`` and
+    the gesture becomes undiscoverable from the board itself.
+    """
+    board_app._run_centaur_translate()
+
+    assert _start_splash_messages() == [HOLD_BACK_KEY]
+
+
+def test_direct_mode_does_not_promise_a_gesture_nothing_is_watching(direct_handoff):
+    """Direct mode must keep the plain message, because BACK does nothing there.
+
+    Why this test exists: the exit gesture is implemented by the serial tap, and
+    direct mode has no tap -- it releases the port so Centaur talks to the board
+    itself. Showing the same hint here would tell the user to hold a button that
+    is not being watched, leaving them holding BACK at a board that never
+    responds, which is worse than saying nothing.
+
+    How the regression manifests: both launch paths are given the hint key
+    together (the obvious way to "finish the job"), so direct mode advertises an
+    exit it cannot perform.
+    """
+    with pytest.raises(SystemExit):
+        board_app._run_centaur()
+
+    assert _start_splash_messages() == [LOADING_KEY]
+
+
+def test_the_hint_names_the_button_the_tap_actually_watches():
+    """The button in the message must be the button the exit gesture uses.
+
+    Why this test exists: the message and the gesture live in different files --
+    a locale bundle and the tap's default argument -- so nothing but this ties
+    them together. Retargeting the gesture (to HELP, say) would silently leave
+    the panel instructing users to hold a button that no longer exits.
+
+    English is asserted because it is the source bundle every other locale is
+    translated from, and because the button name is a physical label that stays
+    untranslated in all of them (see ``engine.installing``).
+
+    How the regression manifests: ``exit_button`` changes without the string, so
+    the hint names a button that does nothing.
+    """
+    watched = inspect.signature(ThreadedSerialTap.__init__).parameters["exit_button"].default
+    english = i18n._load_bundle("en")
+
+    assert watched in english[HOLD_BACK_KEY], (
+        f"{HOLD_BACK_KEY} must name {watched!r}: {english[HOLD_BACK_KEY]!r}"
+    )

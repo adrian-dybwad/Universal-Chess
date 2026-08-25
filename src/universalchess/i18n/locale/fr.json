@@ -120,6 +120,7 @@
   "splash.rfcomm": "RFCOMM...",
   "splash.resuming": "Reprise...",
   "splash.returning": "Retour...",
+  "splash.centaur_hold_back": "Chargement...\n\nMaintenir BACK\npour revenir",
   "splash.ready": "Prêt !",
   "splash.shim_build_failed": "Échec de compilation\nde l'adaptateur",
   "splash.tagline": "Regardez les dents de ce cheval donné",

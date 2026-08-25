@@ -841,6 +841,7 @@
       "switching": "Overschakelen...",
       "switchConfirm": "Overschakelen naar de originele DGT Centaur-software? Dit stopt Universal Chess op het bord; deze webinterface blijft beschikbaar, zodat je hier terug kunt naar Universal Chess.",
       "switchSuccess": "De originele Centaur-software wordt gestart. Gebruik Terug naar Universal Chess om hier weer te komen.",
+      "switchSuccessHoldBack": "De originele Centaur-software wordt gestart. Gebruik Terug naar Universal Chess, of houd BACK op het bord ingedrukt, om hier weer te komen.",
       "engineTitle": "Motor",
       "engineIntro": "In vertaalmodus speelt Centaur via de motorproxy van Universal Chess, zodat je elke geïnstalleerde motor kunt gebruiken en de partijen in je database worden opgeslagen. Wijzigingen gelden vanaf de volgende keer dat Centaur start.",
       "engineLabel": "Motor",

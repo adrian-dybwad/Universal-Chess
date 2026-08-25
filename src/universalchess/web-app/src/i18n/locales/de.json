@@ -841,6 +841,7 @@
       "switching": "Wird gewechselt...",
       "switchConfirm": "Zur originalen DGT-Centaur-Software wechseln? Das beendet Universal Chess auf dem Brett; diese Weboberfläche bleibt verfügbar, sodass Sie von hier zu Universal Chess zurückkehren können.",
       "switchSuccess": "Die originale Centaur-Software wird gestartet. Mit „Zurück zu Universal Chess“ kommen Sie wieder hierher.",
+      "switchSuccessHoldBack": "Die originale Centaur-Software wird gestartet. Mit „Zurück zu Universal Chess“ oder indem Sie BACK am Brett gedrückt halten, kommen Sie wieder hierher.",
       "engineTitle": "Engine",
       "engineIntro": "Im Übersetzungsmodus spielt Centaur über den Engine-Proxy von Universal Chess, sodass Sie jede installierte Engine verwenden können und die Partien in Ihrer Datenbank gespeichert werden. Änderungen werden beim nächsten Start von Centaur wirksam.",
       "engineLabel": "Engine",

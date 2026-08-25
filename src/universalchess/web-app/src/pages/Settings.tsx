@@ -4907,7 +4907,13 @@ function CentaurSettings() {
                       'centaur',
                       'run-centaur',
                       t('settingsPage.systemActions.switchConfirm'),
-                      t('settingsPage.systemActions.switchSuccess')
+                      // Only translate mode can offer the board-side exit: it runs
+                      // the serial tap that watches for a held BACK. Direct mode
+                      // gives the port to Centaur outright, so naming the gesture
+                      // there would send the user to a button nothing listens to.
+                      directMode
+                        ? t('settingsPage.systemActions.switchSuccess')
+                        : t('settingsPage.systemActions.switchSuccessHoldBack')
                     )
                   }
                 >

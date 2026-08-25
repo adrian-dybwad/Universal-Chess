@@ -6007,9 +6007,14 @@ def _run_centaur_translate():
         time.sleep(3)
         return False
 
+    # This splash names the held-BACK exit gesture, and it is the only chance to:
+    # once centaur paints, the panel is its own and UC cannot address the user
+    # again until it exits. Only translate mode may say it -- the serial tap below
+    # is what watches for the hold -- which is why direct mode keeps the plain
+    # loading text instead of advertising an exit nothing would act on.
     board.display_manager.clear_widgets(addStatusBar=False)
     promise = board.display_manager.add_widget(
-        SplashScreen(board.display_manager.update, message=t("splash.loading"),
+        SplashScreen(board.display_manager.update, message=t("splash.centaur_hold_back"),
                      leave_room_for_status_bar=False))
     if promise:
         try:

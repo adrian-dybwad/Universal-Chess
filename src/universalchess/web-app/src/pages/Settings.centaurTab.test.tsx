@@ -67,9 +67,15 @@ function settingsPayload() {
 interface PostRecord { url: string; body: Record<string, unknown> }
 
 // `centaurAvailable` toggles the installed vs. importer branch; the rest of the
-// Centaur endpoints are stubbed to a stopped board in translate mode. Engine
-// POSTs are recorded so auto-save tests can assert the dedicated endpoint body.
-function installCentaurFetchMock(opts: { centaurAvailable: boolean; enginePostStatus?: number }) {
+// Centaur endpoints are stubbed to a stopped board, in translate mode unless
+// `directMode` says otherwise. Engine POSTs are recorded so auto-save tests can
+// assert the dedicated endpoint body, and the handover POST is recorded too so
+// the success-message tests can act on a launch that reported success.
+function installCentaurFetchMock(opts: {
+  centaurAvailable: boolean;
+  enginePostStatus?: number;
+  directMode?: boolean;
+}) {
   const posts: PostRecord[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
     const method = ((init?.method as string) ?? 'GET').toUpperCase();
@@ -80,8 +86,12 @@ function installCentaurFetchMock(opts: { centaurAvailable: boolean; enginePostSt
       return jsonResponse({ success: true });
     }
     if (url === '/api/system/info') return jsonResponse({ centaur_available: opts.centaurAvailable });
-    if (url === '/api/system/centaur-mode') return jsonResponse({ direct_mode: false });
+    if (url === '/api/system/centaur-mode') return jsonResponse({ direct_mode: opts.directMode ?? false });
     if (url === '/api/system/centaur-status') return jsonResponse({ running: false });
+    if (url === '/api/system/run-centaur' && method === 'POST') {
+      posts.push({ url, body: {} });
+      return jsonResponse({ success: true });
+    }
     if (url === '/api/system/centaur-engine' && method === 'POST') {
       posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') });
       const status = opts.enginePostStatus ?? 200;
@@ -299,6 +309,52 @@ describe('Original Centaur tab', () => {
     expect(within(card).getByText('Unblock-File .\\make-centaur-image.ps1')).toBeInTheDocument();
     expect(within(card).getByText('Set-ExecutionPolicy -Scope CurrentUser -ExecutionPolicy RemoteSigned')).toBeInTheDocument();
     expect(within(card).getByText(/elevated \(Administrator\) PowerShell/i)).toBeInTheDocument();
+  });
+
+  // Confirms the handover and returns the success banner's text. The dialog is
+  // stubbed to accept because these tests are about what is said afterwards.
+  async function switchToCentaur(): Promise<HTMLElement> {
+    vi.stubGlobal('confirm', vi.fn(() => true));
+    await userEvent.click(await screen.findByRole('button', { name: 'Switch to Original Centaur' }));
+    return await screen.findByText(/Launching the original Centaur software/i);
+  }
+
+  it('tells translate-mode users they can also hold BACK on the board', async () => {
+    // Why: the web page is the only place the handover is explained, and until
+    // now it named just one way back -- this browser tab. A user who closes it,
+    // or walks up to the board without a phone, then has no way to know the
+    // board itself can exit. Translate mode runs the serial tap, which watches
+    // for a held BACK, so the gesture genuinely works and belongs in the copy.
+    //
+    // A regression manifests as the banner reverting to the Return-only wording,
+    // leaving the board-side exit undocumented everywhere the user can read it.
+    installCentaurFetchMock({ centaurAvailable: true, directMode: false });
+    renderCentaurTab();
+
+    const banner = await switchToCentaur();
+
+    expect(banner).toHaveTextContent(/hold BACK on the board/i);
+    expect(banner).toHaveTextContent(/Return to Universal Chess/i);
+  });
+
+  it('omits the BACK gesture in direct mode, where nothing watches for it', async () => {
+    // Why: the exit gesture is implemented by the serial tap, and direct mode has
+    // no tap -- the board port is handed to Centaur outright. Repeating the hint
+    // here would send the user to hold a button that is not being listened to,
+    // stranding them at a board that never responds when the web tab was in fact
+    // their only way back. The two modes must therefore say different things.
+    //
+    // A regression manifests as one shared string for both modes, so direct mode
+    // advertises an exit it cannot perform.
+    installCentaurFetchMock({ centaurAvailable: true, directMode: true });
+    renderCentaurTab();
+
+    const banner = await switchToCentaur();
+
+    // Matched on the gesture phrase, not the bare word: both messages end in
+    // "come back", so a /BACK/i check could never pass and would test nothing.
+    expect(banner).not.toHaveTextContent(/hold BACK/i);
+    expect(banner).toHaveTextContent(/Return to Universal Chess/i);
   });
 
   it('shows the Troubleshooting card when Centaur is already installed', async () => {

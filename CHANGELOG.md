@@ -147,6 +147,22 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   over, nothing restarts, and the live menu must not be replaced by a message
   about a return that did not happen.
 
+- **The way out of the original Centaur is now stated where it is needed**:
+  holding BACK on the board exits Centaur, but nothing said so. The web page
+  named only its own Return to Universal Chess button, so a user who closed the
+  tab, or who walked up to the board without a phone, had no way to learn the
+  gesture existed. The splash shown while Centaur starts now carries it, that
+  being the last moment Universal Chess can address the panel before Centaur
+  takes it over, and the web confirmation offers it alongside the button. Both
+  say it only in translate mode. The gesture is implemented by the serial tap
+  watching for a held BACK, and direct mode has no tap -- it hands the board port
+  to Centaur outright -- so repeating the hint there would send a user to hold a
+  button nothing is listening to, at a board that never answers, when the web tab
+  was in fact their only way back. Direct mode therefore keeps the plain wording
+  in both places. A test ties the button named in the message to the one the tap
+  is configured to watch, so retargeting the gesture cannot silently leave the
+  panel instructing users to hold a button that no longer exits.
+
 - **The BlueZ self-heal runs only on a Raspberry Pi**: the workaround targets
   a BCM43430 firmware fault and was gated on nothing more than the presence of
   an hci device. Orange Pi carries a uwe5622, an unrelated part the workaround
