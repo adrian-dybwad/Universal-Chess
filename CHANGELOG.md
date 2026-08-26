@@ -479,6 +479,41 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   it sets rather than repeating the heading. The board's menu is unaffected --
   it has never shown both.
 
+- **Russian UI**: Русский was already offered in Settings > Language -- it sits
+  in the ten most-spoken the selector opens with, so the AI coach could write
+  Russian -- but the board menus, e-paper widgets, and the web app stayed English.
+  The three bundles now ship: the 338 board strings, the menu-catalog overlay,
+  and the 983-key web bundle. The selector itself is unchanged.
+  - The copy is informal (ты, not Вы), matching Lichess's own Russian interface
+    and Russian consumer software, and uses the chess vocabulary a player
+    expects: ферзь for the queen (not королева), слон, конь, ладья, пешка, шах,
+    мат, пат and ничья.
+  - Russian inflects in four CLDR bands, the same count Polish needs. The seven
+    counted web strings now carry `_one`, `_few`, `_many` and `_other`, so
+    "1 позиция", "3 позиции" and "5 позиций" each read correctly, a 21 takes the
+    singular again, and a fraction takes the genitive singular. Colour labels are
+    nominative Белые/Чёрные, so the Lichess start message and the king-lift
+    resign prompt name the side ("Твой цвет: Белые") rather than governing the
+    colour. Counted seconds on the board use the `s` symbol, because the board's
+    own `t()` has no plural mechanism.
+  - RESUME on the Play tile reads ДАЛЕЕ, the short word that fits the 32pt slot
+    the way German WEITER does; ПРОДОЛЖИТЬ would have to shrink. The tile's help
+    quotes the word the tile shows. Rated Lichess games are labelled Рейтинговая.
+  - Lengths were measured through the widgets that draw them:
+    `scripts/measure_locale_fit.py` reported sixteen board strings that fit in
+    English and not in Russian. Eleven were reworded to fit at full size
+    (Соединение, Запускаю, Продолжаю, Чиню рассылку, Неверный токен API, and
+    similar). Five stay at 17pt because the word a Russian reader expects does
+    not fit at 18pt: `lichess.seek.casual` keeps товарищеская, `setup.mode_title`
+    keeps РЕЖИМ РАССТАНОВКИ, the two promotion-position titles keep превращение,
+    and opposite-bishop draws keep разнопольные слоны. The bundled font draws
+    Cyrillic, and the splash tagline is the proverb the English byline inverts:
+    "Дарёному коню в зубы не смотрят".
+  - The exemption list recording which catalog strings need no translation was
+    re-read against Russian: `min` and UTC stay exempt, while every city Russian
+    respells in Cyrillic (London Лондон, Chicago Чикаго, São Paulo Сан-Паулу,
+    Auckland Окленд) is translated in the overlay.
+
 - **Italian UI**: Italiano is now offered in Settings > Language and translates the
   board menus, e-paper widgets, and the web app. Like Dutch and Polish, Italian
   was not already on the list, so adding it meant registering the locale itself

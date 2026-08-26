@@ -14,19 +14,20 @@ import fr from '../i18n/locales/fr.json';
 import it from '../i18n/locales/it.json';
 import nl from '../i18n/locales/nl.json';
 import pl from '../i18n/locales/pl.json';
+import ru from '../i18n/locales/ru.json';
 
 export type Bundle = { [key: string]: string | Bundle };
 
 export const LOCALES = {
   en: en as Bundle, es: es as Bundle, fr: fr as Bundle, de: de as Bundle, nl: nl as Bundle,
-  pl: pl as Bundle, it: it as Bundle,
+  pl: pl as Bundle, it: it as Bundle, ru: ru as Bundle,
 };
 
 /** Every locale with a bundle, English included. */
-export const SHIPPED = ['en', 'es', 'fr', 'de', 'nl', 'pl', 'it'] as const;
+export const SHIPPED = ['en', 'es', 'fr', 'de', 'nl', 'pl', 'it', 'ru'] as const;
 
 /** The locales translated away from the English source. */
-export const TRANSLATED = ['es', 'fr', 'de', 'nl', 'pl', 'it'] as const;
+export const TRANSLATED = ['es', 'fr', 'de', 'nl', 'pl', 'it', 'ru'] as const;
 
 /** Every leaf key in a bundle, dotted -- `settingsPage.deviceClock.title`. */
 export function leafKeys(bundle: Bundle, prefix = ''): string[] {

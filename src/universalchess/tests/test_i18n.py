@@ -124,6 +124,19 @@ def test_returns_italian_when_locale_is_italian(monkeypatch):
     assert i18n.t("game_over.result.white_wins") == "Vincono i bianchi"
 
 
+def test_returns_russian_when_locale_is_russian(monkeypatch):
+    """t() returns the Russian string when the active locale is Russian.
+
+    Why: Russian was already offered in the selector (the coach could write it)
+    but had no UI bundles. A regression that registered the code and never
+    loaded the bundle shows English here while every locale that was added
+    together with its files still passes.
+    """
+    _set_locale(monkeypatch, "ru")
+    assert i18n.t("common.enabled") == "Включено"
+    assert i18n.t("game_over.result.white_wins") == "Белые победили"
+
+
 def test_interpolates_named_placeholders():
     """t() fills {name} placeholders from kwargs via str.format.
 
@@ -157,7 +170,7 @@ def test_missing_key_returns_key_itself():
     assert i18n.t("does.not.exist") == "does.not.exist"
 
 
-@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl", "pl", "it"])
+@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl", "pl", "it", "ru"])
 def test_translated_bundle_covers_every_english_key(locale):
     """Every key in en.json has a translation in each shipped locale bundle.
 

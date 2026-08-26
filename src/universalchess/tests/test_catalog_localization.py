@@ -208,7 +208,7 @@ def test_missing_overlay_falls_back_to_english(base_menu):
 # -- real overlays: drift guard ----------------------------------------------
 
 
-@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl", "pl", "it"])
+@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl", "pl", "it", "ru"])
 def test_overlay_keys_reference_real_catalog_entries(base_menu, locale):
     """Every id/name in translations/<locale>.json resolves to a real catalog entry.
 
@@ -354,6 +354,25 @@ def test_get_localized_catalog_italian_reflects_overlay_without_mutating_base():
     italian = get_localized_catalog("it")
     assert italian.get_node("power.shutdown")["label"] == "Spegni"
     assert italian.option_label("player_type", "human") == "Umano"
+
+    assert get_localized_catalog("en").get_node("power.shutdown")["label"] == "Shutdown"
+    assert english.option_label("player_type", "human") == english_players_before == "Human"
+
+
+def test_get_localized_catalog_russian_reflects_overlay_without_mutating_base():
+    """get_localized_catalog("ru") is Russian; the English base is unaffected.
+
+    Why: Russian was already in the selector, so the only half that can be left
+    out is the overlay itself -- a file on disk the loader never applies, or a
+    code the loader does not look up. That shows English on a Russian device
+    while every locale that was added together with its overlay still passes.
+    """
+    english = load_catalog()
+    english_players_before = english.option_label("player_type", "human")
+
+    russian = get_localized_catalog("ru")
+    assert russian.get_node("power.shutdown")["label"] == "Выключить"
+    assert russian.option_label("player_type", "human") == "Человек"
 
     assert get_localized_catalog("en").get_node("power.shutdown")["label"] == "Shutdown"
     assert english.option_label("player_type", "human") == english_players_before == "Human"

@@ -104,6 +104,19 @@ describe('Navbar localization', () => {
     expect(menu.getAllByText('Impostazioni').length).toBeGreaterThan(0);
   });
 
+  it('renders Russian nav labels when the language is Russian', async () => {
+    // Why: Russian was already in the selector, so the bundle is the half most
+    // likely to be left out of the resources map or of SUPPORTED_LANGUAGES. A
+    // regression in either leaves the navbar English on a Russian device while
+    // every locale that was added together with its bundle still passes.
+    await i18n.changeLanguage('ru');
+    const { container } = renderNavbar();
+    const menu = within(container);
+    expect(menu.getAllByText('Доска').length).toBeGreaterThan(0);
+    expect(menu.getAllByText('Партии').length).toBeGreaterThan(0);
+    expect(menu.getAllByText('Настройки').length).toBeGreaterThan(0);
+  });
+
   it('renders French nav labels when the language is French', async () => {
     // Why: French is a shipped UI locale; a regression that only wired Spanish
     // would leave the navbar in English when the device language is French.

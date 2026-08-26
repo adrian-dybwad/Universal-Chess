@@ -107,6 +107,17 @@ describe('useDeviceLanguage', () => {
     expect(document.documentElement.lang).toBe('it');
   });
 
+  it('adopts Russian when the device language is Russian', () => {
+    // Why: Russian was already in the Python language service, so the only list
+    // that can still gate it out is SUPPORTED_LANGUAGES here. A bundle can sit
+    // on disk while that list omits it, which renders English on a Russian
+    // device and is invisible to every other case in this file.
+    setDeviceLanguage('ru');
+    const { getByTestId } = render(<Probe />);
+    expect(getByTestId('lang').textContent).toBe('ru');
+    expect(document.documentElement.lang).toBe('ru');
+  });
+
   it('switches language live when the device setting changes', () => {
     // Why: a change made on the board (or another tab) arrives via a store refresh
     // and must switch the SPA. A regression that only read the value once (no

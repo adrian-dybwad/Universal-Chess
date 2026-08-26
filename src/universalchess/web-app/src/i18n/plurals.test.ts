@@ -90,4 +90,28 @@ describe('counted strings', () => {
       1.5: '1.5 pozycji',
     });
   });
+
+  it('inflect the Russian noun by band rather than reusing one form', async () => {
+    // The check above compares each rendering against the bundle using the same
+    // category selector, so it would still pass if the Russian forms were written
+    // into the wrong categories -- `_few` and `_many` swapped, say. These are
+    // spelt out so a wrong ending is caught: "позиция" for 1 and 21, "позиции"
+    // for the 2-4 band, "позиций" for 5 and up and for zero, "позиции" again
+    // for a fraction (genitive singular, same letters as the 2-4 form).
+    await i18n.changeLanguage('ru');
+    const rendered = Object.fromEntries(
+      [1, 3, 5, 21, 22, 25, 0, 1.5].map((count) => [count, i18n.t('positions.positionCount', { count })]),
+    );
+
+    expect(rendered).toEqual({
+      1: '1 позиция',
+      3: '3 позиции',
+      21: '21 позиция',
+      22: '22 позиции',
+      5: '5 позиций',
+      25: '25 позиций',
+      0: '0 позиций',
+      1.5: '1.5 позиции',
+    });
+  });
 });
