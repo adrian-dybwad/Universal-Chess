@@ -66,6 +66,41 @@ def test_orangepi_backend_is_libgpiod_with_measured_pins_without_gpiozero():
     gpiozero.InputDevice.assert_not_called()
 
 
+def test_libgpiod_busy_input_enables_pull_down(tmp_path, monkeypatch):
+    # Why: gpiozero claims BUSY as InputDevice(pull_up=False), i.e. pull-down.
+    # LibgpiodEpaper requested the same line as a bias-less input. Allwinner
+    # GPIO inputs default to pull-up, so a disconnected BUSY pin reads HIGH.
+    # UC8151D treats HIGH as idle and reports a V2 panel. A fitted V1 driving
+    # idle LOW already beats that pull-up; this bias is for the undriven pin.
+    # How a regression manifests: LineSettings for BUSY has no Bias.PULL_DOWN;
+    # Orange Pi with no display is reported as UC8151D.
+    _fake_spi_gpio_sysfs(tmp_path, bus=2)
+    monkeypatch.setattr(
+        epdconfig, "SPI_MASTER_SYSFS", str(tmp_path / "spi_master")
+    )
+    fake_gpiod = MagicMock()
+    fake_line = MagicMock()
+    monkeypatch.setitem(sys.modules, "gpiod", fake_gpiod)
+    monkeypatch.setitem(sys.modules, "gpiod.line", fake_line)
+
+    def capture_settings(**kwargs):
+        settings = MagicMock()
+        settings.kwargs = kwargs
+        return settings
+
+    fake_gpiod.LineSettings.side_effect = capture_settings
+    profile = profile_for_model(MODEL_ORANGEPI)
+    backend = epdconfig.backend_for_profile(profile)
+    backend.SPI = MagicMock()
+    assert backend.module_init() == 0
+    config = fake_gpiod.request_lines.call_args.kwargs["config"]
+    busy = config[profile.epaper_busy]
+    assert busy.kwargs["direction"] == fake_line.Direction.INPUT
+    assert busy.kwargs["bias"] == fake_line.Bias.PULL_DOWN
+    assert "bias" not in config[profile.epaper_rst].kwargs
+    assert "bias" not in config[profile.epaper_dc].kwargs
+
+
 def test_libgpiod_module_init_opens_spi_gpio_not_onboard_flash(tmp_path, monkeypatch):
     # Why: hardware SPI0 is the 16MB NOR. Opening spidev0.0 or SPI 1.0 talks
     # to flash / the Pi SPI0 header. Manifests as SPI.open(0, 0) or (1, 0).

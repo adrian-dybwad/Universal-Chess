@@ -208,3 +208,46 @@ def resolve_outcome(
         active_controller=None,
         error=primary.error,
     )
+
+
+# Labels for the Settings diagnostics event log. Keys are CONTROLLER_*.
+PANEL_EVENT_LABEL = {
+    CONTROLLER_UC8151D: "UC8151D (V2)",
+    CONTROLLER_SSD1680: "SSD1680 (V1)",
+}
+
+EVENT_CATEGORY = "display"
+
+
+def event_log_entry(
+    outcome: DisplayOutcome,
+    primary: DisplayAttempt,
+    alt: Optional[DisplayAttempt] = None,
+    order: Optional[tuple] = None,
+) -> tuple[str, str]:
+    """Return ``(level, message)`` for the Settings diagnostics event log.
+
+    One line per boot so an operator can see, without SSH, which panel
+    initialized, that none did, or the non-timeout init error (missing
+    overlay, gpiochip/spidev permissions, SPI open) that skipped the other
+    driver. ``level`` is one of the event-log severities (info/warning/error).
+    """
+    first, second = order if order is not None else DEFAULT_CONTROLLER_ORDER
+    if outcome.initialized:
+        label = PANEL_EVENT_LABEL.get(
+            outcome.active_controller, outcome.active_controller or "unknown"
+        )
+        return "info", f"E-paper panel detected: {label}"
+
+    error = outcome.error or primary.error or "unknown error"
+    timed_out = primary.busy_timeout or (alt is not None and alt.busy_timeout)
+    if not timed_out:
+        probed = first if alt is None else f"{first}, then {second}"
+        return "error", f"E-paper init failed ({probed}): {error}"
+
+    parts = [f"{first}: {primary.error or 'failed'}"]
+    if alt is not None:
+        parts.append(f"{second}: {alt.error or 'failed'}")
+    else:
+        parts.append(f"{second}: not tried")
+    return "warning", "No e-paper panel detected (" + "; ".join(parts) + ")"

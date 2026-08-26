@@ -4,8 +4,9 @@ The verbose root logger (board.logging) writes ~/debug.log, which is truncated
 every boot and is far too noisy to scan for "what important things happened".
 This module is the complement: a concise, *persistent* record of the handful of
 events an operator actually cares about -- engine installs and how long they
-took, the BlueZ self-heal, software updates, reboots -- so the Settings "Event
-Log" viewer can show a readable history that survives reboots.
+took, the BlueZ self-heal, software updates, reboots, the e-paper panel
+probe -- so the Settings "Event Log" viewer can show a readable history that
+survives reboots.
 
 Format: JSON Lines (one JSON object per line). One self-describing record per
 event keeps the file append-only, trivially parseable by the viewer endpoint,
@@ -190,7 +191,11 @@ def read_events(limit: int = 200, *, path: Optional[Path] = None) -> List[dict]:
                     continue
                 try:
                     parsed = json.loads(line)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
+                    # A torn last line after a crash must not blank the viewer.
+                    # Debug, not warning: skipping a truncated record is the
+                    # documented recovery path, not an operator-actionable failure.
+                    log.debug("event_log: skipping malformed line in %s (%s)", target, exc)
                     continue
                 if isinstance(parsed, dict):
                     events.append(parsed)

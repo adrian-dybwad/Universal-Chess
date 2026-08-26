@@ -103,5 +103,71 @@ class ResolveOutcomeTests(unittest.TestCase):
         self.assertIsNone(outcome.active_controller)
 
 
+class EventLogEntryTests(unittest.TestCase):
+    """The Settings diagnostics event log gets one line per display probe.
+
+    Why these tests exist: overlay-missing, gpiochip/spidev permission, and
+    other non-timeout init failures previously existed only in the board log
+    and status file. The Event Log is what an operator reads without SSH.
+    How a regression manifests: SPI/GPIO errors stay off the Event Log, or a
+    successful probe no longer names V1 vs V2 vs no panel.
+    """
+
+    def test_v2_success_names_uc8151d(self):
+        primary = DisplayAttempt(ok=True)
+        outcome = ds.resolve_outcome(primary)
+        level, message = ds.event_log_entry(outcome, primary)
+        self.assertEqual(level, "info")
+        self.assertEqual(message, "E-paper panel detected: UC8151D (V2)")
+
+    def test_v1_success_names_ssd1680(self):
+        primary = DisplayAttempt(ok=False, busy_timeout=True, error="busy timeout")
+        alt = DisplayAttempt(ok=True)
+        outcome = ds.resolve_outcome(primary, alt)
+        level, message = ds.event_log_entry(outcome, primary, alt)
+        self.assertEqual(level, "info")
+        self.assertEqual(message, "E-paper panel detected: SSD1680 (V1)")
+
+    def test_overlay_or_permission_failure_is_an_error_naming_the_cause(self):
+        # The case the Event Log is for: UC8151D never reached a BUSY wait, so
+        # SSD1680 was not tried. The message must carry the exception text
+        # (overlay not loaded, Permission denied on /dev/gpiochip* or
+        # /dev/spidev*, etc.).
+        err = (
+            "Failed to initialize display: e-paper SPI is spi-gpio; "
+            "overlay not loaded (no spi-gpio SPI master)"
+        )
+        primary = DisplayAttempt(ok=False, busy_timeout=False, error=err)
+        outcome = ds.resolve_outcome(primary)
+        level, message = ds.event_log_entry(outcome, primary)
+        self.assertEqual(level, "error")
+        self.assertIn("E-paper init failed (UC8151D)", message)
+        self.assertIn("overlay not loaded", message)
+
+    def test_timeout_and_alt_failure_reports_no_panel(self):
+        primary = DisplayAttempt(ok=False, busy_timeout=True, error="busy timeout")
+        alt = DisplayAttempt(ok=False, busy_timeout=True, error="ssd1680 busy")
+        outcome = ds.resolve_outcome(primary, alt)
+        level, message = ds.event_log_entry(outcome, primary, alt)
+        self.assertEqual(level, "warning")
+        self.assertTrue(message.startswith("No e-paper panel detected"))
+        self.assertIn("UC8151D", message)
+        self.assertIn("SSD1680", message)
+        self.assertIn("ssd1680 busy", message)
+
+    def test_hinted_non_timeout_failure_includes_both_controllers(self):
+        # Hinted probe order tries the other driver on any failure. Both
+        # hitting the same Permission denied must still surface that error.
+        order = (ds.CONTROLLER_SSD1680, ds.CONTROLLER_UC8151D)
+        err = "Failed to initialize display: [Errno 13] Permission denied: '/dev/gpiochip1'"
+        primary = DisplayAttempt(ok=False, busy_timeout=False, error=err)
+        alt = DisplayAttempt(ok=False, busy_timeout=False, error=err)
+        outcome = ds.resolve_outcome(primary, alt, order=order)
+        level, message = ds.event_log_entry(outcome, primary, alt, order=order)
+        self.assertEqual(level, "error")
+        self.assertIn("SSD1680, then UC8151D", message)
+        self.assertIn("Permission denied", message)
+
+
 if __name__ == "__main__":
     unittest.main()

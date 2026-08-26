@@ -765,7 +765,8 @@
       "categorySystem": "System",
       "categoryEngineInit": "Engine startup",
       "categoryCentaurImport": "Centaur import",
-      "categoryCentaur": "Original Centaur"
+      "categoryCentaur": "Original Centaur",
+      "categoryDisplay": "Display"
     },
     "debug": {
       "title": "Debug",

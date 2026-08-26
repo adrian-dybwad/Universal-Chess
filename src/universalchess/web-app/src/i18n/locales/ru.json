@@ -779,7 +779,8 @@
       "categorySystem": "Система",
       "categoryEngineInit": "Запуск движка",
       "categoryCentaurImport": "Импорт Centaur",
-      "categoryCentaur": "Оригинальный Centaur"
+      "categoryCentaur": "Оригинальный Centaur",
+      "categoryDisplay": "Дисплей"
     },
     "debug": {
       "title": "Debug",

@@ -292,8 +292,11 @@ class LibgpiodEpaper:
 
     Pin numbers are gpiochip line offsets from the board profile. CS is
     owned by spi-gpio (active-low), matching RaspberryPi leaving CS to the
-    SPI controller. SPI.open uses the spi-gpio master, never bus 0 (NOR)
-    or bus 1 (Pi SPI1 / H618 SPI1 on the wrong header).
+    SPI controller. BUSY is requested with pull-down, matching gpiozero
+    ``InputDevice(pull_up=False)``: without it Allwinner's default pull-up
+    makes a disconnected pin look idle to the UC8151D probe. SPI.open uses
+    the spi-gpio master, never bus 0 (NOR) or bus 1 (Pi SPI1 / H618 SPI1
+    on the wrong header).
     """
 
     PWR_PIN = None
@@ -346,10 +349,15 @@ class LibgpiodEpaper:
             )
         bus, device = found
         import gpiod
-        from gpiod.line import Direction, Value
+        from gpiod.line import Bias, Direction, Value
 
         chip = self.profile.gpiochip or "gpiochip1"
         path = chip if str(chip).startswith("/") else f"/dev/{chip}"
+        # Pull-down matches gpiozero InputDevice(pull_up=False) on the Pi.
+        # Allwinner GPIO inputs default to pull-up; a disconnected BUSY pin
+        # then reads HIGH, which UC8151D treats as idle, so a missing panel
+        # is reported as V2. A fitted V1 driving idle LOW already beats that
+        # pull-up; this bias only changes the undriven pin.
         config = {
             self.RST_PIN: gpiod.LineSettings(
                 direction=Direction.OUTPUT, output_value=Value.INACTIVE
@@ -357,7 +365,9 @@ class LibgpiodEpaper:
             self.DC_PIN: gpiod.LineSettings(
                 direction=Direction.OUTPUT, output_value=Value.INACTIVE
             ),
-            self.BUSY_PIN: gpiod.LineSettings(direction=Direction.INPUT),
+            self.BUSY_PIN: gpiod.LineSettings(
+                direction=Direction.INPUT, bias=Bias.PULL_DOWN
+            ),
         }
         # display_boot initialize() and board.init_display() both call this
         # on the singleton. Holding the first request_lines makes the second

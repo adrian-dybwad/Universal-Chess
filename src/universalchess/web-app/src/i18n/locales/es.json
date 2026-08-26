@@ -772,7 +772,8 @@
       "categorySystem": "Sistema",
       "categoryEngineInit": "Inicio del motor",
       "categoryCentaurImport": "Importación de Centaur",
-      "categoryCentaur": "Centaur original"
+      "categoryCentaur": "Centaur original",
+      "categoryDisplay": "Pantalla"
     },
     "debug": {
       "title": "Depuración",

@@ -765,7 +765,8 @@
       "categorySystem": "Systeem",
       "categoryEngineInit": "Motorstart",
       "categoryCentaurImport": "Centaur-import",
-      "categoryCentaur": "Originele Centaur"
+      "categoryCentaur": "Originele Centaur",
+      "categoryDisplay": "Display"
     },
     "debug": {
       "title": "Debug",

@@ -15,6 +15,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Display probe result is recorded in the Settings event log**: startup
+  wrote the outcome only to the board log and `display_status.json`.
+  Overlay missing, gpiochip/spidev permission errors, and other
+  non-timeout init failures never appeared under Diagnostics, and a
+  successful probe had no durable "which panel" line. Each boot now
+  appends one `display` event: which controller initialized (UC8151D V2
+  or SSD1680 V1), that no panel responded, or the init error that
+  skipped the other driver.
+
 - **Orange Pi boards are known to have onboard Wi-Fi and Bluetooth**: the
   model classifier only knew Raspberry Pi strings, so an Orange Pi fell through
   to the plain Pi Zero rule (which shares the word "zero") and was treated as
@@ -1258,6 +1267,18 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   `/etc/netplan/60-universal-chess-wifi.yaml` and runs `netplan apply`
   when `nmcli` is absent (passphrase on stdin, never on argv). Raspberry
   Pi OS still uses `nmcli`. Saved and Forget use the same netplan file.
+
+- **Orange Pi reported a V2 e-paper panel when none was present**: the
+  libgpiod backend claimed BUSY as a floating input. Allwinner GPIO inputs
+  default to pull-up, so a disconnected pin reads HIGH, which the UC8151D
+  driver treats as idle and reports as a working V2 panel. A fitted V1
+  panel already overrode that pull-up by driving idle LOW, so the UC8151D
+  probe timed out and SSD1680 was selected; the false V2 is the undriven
+  pin, not a fitted idle V1. After a no-panel boot the status file then
+  hinted UC8151D, so the next probe started on V2. The Pi path already
+  pull-downs the same line (`gpiozero.InputDevice(pull_up=False)`);
+  libgpiod now requests `Bias.PULL_DOWN` so a floating BUSY reads LOW and
+  the UC8151D probe times out instead of succeeding.
 
 - **Orange Pi e-paper failed with "No module named 'gpiod'" after a
   successful install**: the GPIO dependency was declared as

@@ -179,6 +179,7 @@ def init_display() -> Tuple[Optional[Manager], Optional[SplashScreen]]:
     outcome = ds.resolve_outcome(
         primary, alt, order=order, prior_busy_timeout=prior_busy_timeout
     )
+    _log_display_probe(outcome, primary, alt, order)
 
     if not outcome.initialized:
         log.warning(f"Early display initialization failed: {outcome.error}")
@@ -208,3 +209,16 @@ def init_display() -> Tuple[Optional[Manager], Optional[SplashScreen]]:
         controller=outcome.active_controller,
     )
     return manager, splash
+
+
+def _log_display_probe(outcome, primary, alt, order) -> None:
+    """Append one Settings diagnostics event for this boot's display probe.
+
+    Best-effort: :func:`log_event` never raises. Lazy-imports the event log so
+    a missing logger cannot block the splash.
+    """
+    from universalchess.board import display_selection as ds
+    from universalchess.services.event_log import log_event
+
+    level, message = ds.event_log_entry(outcome, primary, alt, order)
+    log_event(ds.EVENT_CATEGORY, message, level=level)

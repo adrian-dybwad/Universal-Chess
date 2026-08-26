@@ -765,7 +765,8 @@
       "categorySystem": "Sistem",
       "categoryEngineInit": "Motor başlangıcı",
       "categoryCentaurImport": "Centaur içe aktarma",
-      "categoryCentaur": "Orijinal Centaur"
+      "categoryCentaur": "Orijinal Centaur",
+      "categoryDisplay": "Ekran"
     },
     "debug": {
       "title": "Debug",

@@ -3763,6 +3763,7 @@ interface EventLogEntry {
 // render time; falls back to the raw token for any future category not yet
 // listed here.
 const EVENT_CATEGORY_LABEL_KEYS: Record<string, string> = {
+  display: 'settingsPage.eventLog.categoryDisplay',
   engine_install: 'settingsPage.eventLog.categoryEngineInstall',
   engine_init: 'settingsPage.eventLog.categoryEngineInit',
   engine_uninstall: 'settingsPage.eventLog.categoryEngineUninstall',

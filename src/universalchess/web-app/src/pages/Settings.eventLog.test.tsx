@@ -29,8 +29,15 @@ const idleEngineStatus = {
 };
 
 // One record per shape the viewer must render: an ordinary progress line, a
-// failure carrying helper output, and the launcher's own category.
+// failure carrying helper output, the launcher's own category, and a display
+// probe error (the overlay/SPI path an operator reads back from Diagnostics).
 const importEvents = [
+  {
+    ts: '2026-08-26T18:00:00Z',
+    level: 'error',
+    category: 'display',
+    message: 'E-paper init failed (UC8151D): overlay not loaded (no spi-gpio SPI master)',
+  },
   {
     ts: '2026-08-25T10:00:04Z',
     level: 'error',
@@ -147,5 +154,15 @@ describe('Event Log viewer', () => {
     expect(await scoped.findByText('Original Centaur failed to launch')).toBeInTheDocument();
     expect(scoped.getByText('Original Centaur')).toBeInTheDocument();
     expect(scoped.queryByText('centaur')).not.toBeInTheDocument();
+  });
+
+  it('labels display probe rows instead of showing the raw category token', async () => {
+    const scoped = await openEventLog();
+
+    expect(await scoped.findByText(
+      'E-paper init failed (UC8151D): overlay not loaded (no spi-gpio SPI master)',
+    )).toBeInTheDocument();
+    expect(scoped.getByText('Display')).toBeInTheDocument();
+    expect(scoped.queryByText('display')).not.toBeInTheDocument();
   });
 });

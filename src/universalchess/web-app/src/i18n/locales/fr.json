@@ -772,7 +772,8 @@
       "categorySystem": "Système",
       "categoryEngineInit": "Démarrage du moteur",
       "categoryCentaurImport": "Import Centaur",
-      "categoryCentaur": "Centaur d'origine"
+      "categoryCentaur": "Centaur d'origine",
+      "categoryDisplay": "Affichage"
     },
     "debug": {
       "title": "Débogage",
