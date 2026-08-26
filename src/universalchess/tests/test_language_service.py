@@ -19,7 +19,7 @@ from universalchess.services import language_service as ls
 # The launch set of locales offered by the selector. Pinned here so a change to
 # SUPPORTED is a deliberate edit to this expectation, not a silent drift.
 EXPECTED_LOCALES = {
-    "en", "es", "zh", "hi", "ar", "fr", "ru", "pt", "de", "ja", "nl", "pl", "it",
+    "en", "es", "zh", "hi", "ar", "fr", "ru", "pt", "de", "ja", "nl", "pl", "it", "tr",
 }
 
 
@@ -81,6 +81,7 @@ def test_every_supported_locale_has_a_coach_language_name():
     assert ls.coach_language_name("nl") == "Dutch"
     assert ls.coach_language_name("pl") == "Polish"
     assert ls.coach_language_name("it") == "Italian"
+    assert ls.coach_language_name("tr") == "Turkish"
 
 
 def test_coach_language_name_unknown_code_falls_back_to_english():

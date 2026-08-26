@@ -479,6 +479,40 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   it sets rather than repeating the heading. The board's menu is unaffected --
   it has never shown both.
 
+- **Turkish UI**: Türkçe is now offered in Settings > Language and translates the
+  board menus, e-paper widgets, and the web app. Like Dutch, Polish and Italian,
+  Turkish was not already on the list, so adding it meant registering the locale
+  itself -- the supported set, the selector label, and the plain-English name the
+  AI coach is instructed with -- as well as writing all three bundles: the 338
+  board strings, the menu-catalog overlay, and the 983-key web bundle. It sits
+  after Italian at the end of the selector, on the same basis: it is an original
+  DGT Centaur firmware language that is not in the ten most-spoken the list
+  opens with. With Turkish, every language the original Centaur firmware offered
+  now has a full Universal Chess UI.
+  - The copy is informal (sen, not siz), matching Lichess's own Turkish interface
+    and Turkish consumer software, and uses the chess vocabulary a player
+    expects: vezir for the queen, fil for the bishop, at for the knight, kale,
+    piyon, şah, mat, pat and beraberlik.
+  - Colour labels are nominative Beyaz/Siyah, so the Lichess start message and
+    the king-lift resign prompt name the side rather than governing the colour.
+    Counted seconds on the board use the `s` symbol, because the board's own
+    `t()` has no plural mechanism. The web counted strings use `_one` and
+    `_other`, which is the pair CLDR assigns Turkish.
+  - RESUME on the Play tile reads DEVAM. The tile's help quotes the word the tile
+    shows. Rated Lichess games are labelled Reytingli.
+  - Lengths were measured through the widgets that draw them:
+    `scripts/measure_locale_fit.py` reported four board strings that fit in
+    English and not in Turkish. All four stay at 17pt, because the expected words
+    (doğrulanamadı, durdurulamadı, desteklenmiyor) are a single unbreakable stem
+    wider than the column at 18pt, and shrinking loses nothing. The bundled font
+    draws ı and İ. The splash tagline is the proverb the English byline inverts:
+    "Hediyenin atına bakılmaz".
+  - The exemption list recording which catalog strings need no translation was
+    re-read against Turkish: `min` stays exempt, Chicago, Denver, Auckland and
+    UTC stay exempt because they are spelt the same, while the cities Turkish
+    renames (London becomes Londra, Moscow Moskova, Kolkata Kalküta, Shanghai
+    Şanghay, Sydney Sidney) are translated like any other string.
+
 - **Russian UI**: Русский was already offered in Settings > Language -- it sits
   in the ten most-spoken the selector opens with, so the AI coach could write
   Russian -- but the board menus, e-paper widgets, and the web app stayed English.

@@ -1,0 +1,754 @@
+{
+  "_comment": "Turkish (tr) translation overlay for menu.json. Keyed by node id / optionSet name / section id. Only translated strings are listed; anything omitted falls back to the English source in menu.json. Language names in the 'ui_language' optionSet are intentionally left untranslated (endonyms). Informal sen, matching the board locale and Lichess's Turkish UI. Chess vocabulary: vezir, fil, at, kale, piyon, şah; şah, mat, pat, beraberlik; rok, terfi; beyaz/siyah; taşlar for pieces.",
+  "sections": {
+    "players": "Oyuncular",
+    "game": "Oyun",
+    "agents": "Ajanlar",
+    "display": "Ekran",
+    "sound": "Ses",
+    "connectivity": "Bağlantılar",
+    "accounts": "Hesaplar",
+    "engines": "Motorlar",
+    "system": "Sistem"
+  },
+  "optionSets": {
+    "color": {
+      "white": "Beyaz",
+      "black": "Siyah"
+    },
+    "player_type": {
+      "human": "İnsan",
+      "engine": "Motor",
+      "hand_brain": "El + Beyin",
+      "lichess": "Lichess"
+    },
+    "hand_brain_mode": {
+      "normal": "Normal (Motor = Beyin)",
+      "reverse": "Ters (İnsan = Beyin)"
+    },
+    "time_control": {
+      "1": "1 dk (Bullet)",
+      "3": "3 dk (Blitz)",
+      "5": "5 dk (Blitz)",
+      "10": "10 dk (Rapid)",
+      "15": "15 dk (Rapid)",
+      "30": "30 dk (Klasik)",
+      "60": "60 dk (Klasik)",
+      "90": "90 dk (Klasik)"
+    },
+    "tc_increment": {
+      "0": "Yok",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "tc_delay": {
+      "0": "Yok",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s"
+    },
+    "tc_delay_mode": {
+      "none": "Yok",
+      "simple": "Simple (USA)",
+      "bronstein": "Bronstein"
+    },
+    "engine_move_delay": {
+      "0": "Yok",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s"
+    },
+    "think_time": {
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "20": "20 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "update_channel": {
+      "stable": "Kararlı (önerilen)",
+      "nightly": "Nightly (geliştirme)"
+    },
+    "sleep_timer": {
+      "0": "Kapalı",
+      "300": "5 dk",
+      "600": "10 dk",
+      "900": "15 dk",
+      "1800": "30 dk",
+      "3600": "1 saat"
+    },
+    "usb_gadget_mode": {
+      "off": {
+        "label": "Off",
+        "description": "USB Ethernet kapalı.{wifi_or_ethernet_reach: Tahtaya yalnızca Wi-Fi veya Ethernet ile ulaş.}"
+      },
+      "auto": {
+        "label": "Auto",
+        "description": "Tahta Client veya Shared'ı kendi seçer — kablo üzerinden ana bilgisayar ağ sunuyorsa Client, sunmuyorsa Shared — ve bu değişince geçer. Client ve Shared ise sabit kalır. Her iki durumda da tahtaya {mdns_url} ile ulaş; Shared iken ayrıca http://10.12.194.1/. Mod kendiliğinden değişebileceği için tahta Shared'a geçince ana bilgisayarın alışılmış interneti (Wi-Fi veya Ethernet) çalışmayı bırakabilir."
+      },
+      "client": {
+        "label": "Client",
+        "description": "Ana bilgisayar internetini USB ile tahtayla paylaşır. Tahtaya {mdns_url} ile ulaş. Ana bilgisayarda internet paylaşımı (veya ICS) gerekir."
+      },
+      "shared": {
+        "label": "Shared",
+        "description": "USB ağını tahta yönetir. http://10.12.194.1/ veya {mdns_url} aç. Ana bilgisayarda internet paylaşımını kapat — macOS'ta Paylaşım listesinde \"Universal Chess USB Gadget\" anahtarını da kapat (yalnızca ana anahtar yetmez; yoksa Mac kendi atadığı adresi tutar). Uyarı: kablo takılıyken ana bilgisayarın alışılmış interneti (Wi-Fi veya Ethernet) çalışmayı bırakabilir. Tahta zaten Wi-Fi ile çevrimiçiyse internetini bilgisayarla paylaşır."
+      }
+    },
+    "analysis_time": {
+      "quick": "Hızlı (0,3 s)",
+      "standard": "Standart (0,8 s)",
+      "deep": "Derin (2 s)"
+    },
+    "coach_multipv": {
+      "1": "1 (kapalı)"
+    },
+    "notation": {
+      "figurine": "Figürlü (♘f3)",
+      "san": "Standart (Nf3)",
+      "lan": "Uzun (Ng1-f3)",
+      "uci": "Koordinat (g1f3)"
+    },
+    "text_size": {
+      "small": "Küçük",
+      "medium": "Orta",
+      "large": "Büyük"
+    },
+    "timezones_common": {
+      "Europe/London": "Londra",
+      "Europe/Paris": "Paris",
+      "Europe/Berlin": "Berlin",
+      "Europe/Moscow": "Moskova",
+      "America/New_York": "New York",
+      "America/Los_Angeles": "Los Angeles",
+      "Asia/Dubai": "Dubai",
+      "Asia/Kolkata": "Kalküta",
+      "Asia/Shanghai": "Şanghay",
+      "Asia/Tokyo": "Tokyo",
+      "Australia/Sydney": "Sidney"
+    }
+  },
+  "accountTypes": {
+    "lichess": {
+      "fields": {
+        "api_token": {
+          "label": "API token",
+          "help": "Seçilen Lichess sunucusunda board:play, challenge:read ve challenge:write izinleriyle bir token oluştur"
+        },
+        "range": {
+          "label": "Reyting aralığı",
+          "help": "Eşleşme için tercih edilen rakip reyting aralığı"
+        }
+      }
+    }
+  },
+  "nodes": {
+    "main": {
+      "label": "Ana menü"
+    },
+    "main.play": {
+      "label": "OYNA",
+      "label_in_progress": "DEVAM",
+      "help": "Yeni bir oyun başlatır. Bir oyun yarıda kaldıysa burada DEVAM yazar ve onu sürdürür."
+    },
+    "main.positions": {
+      "label": "Pozisyonlar",
+      "help": "Alıştırma veya analiz için tahtaya hazır bir pozisyon dizer."
+    },
+    "main.centaur": {
+      "label": "Orijinal\nCentaur",
+      "help": "Orijinal DGT Centaur yazılımına döner."
+    },
+    "main.settings": {
+      "label": "Ayarlar",
+      "help": "Oyuncuları, tempo, ekranı, bağlantıları ve sistem seçeneklerini yapılandırır."
+    },
+    "settings": {
+      "label": "Ayarlar"
+    },
+    "settings.players": {
+      "label": "Oyuncular",
+      "help": "Oyuncu adlarını, türlerini, motorları ve Lichess'i yapılandırır."
+    },
+    "players.player1": {
+      "label": "Oyuncu 1\n{fn:player1_summary}",
+      "help": "Oyuncu 1'i yapılandırır (seçilen rengi oynayan)."
+    },
+    "players.player2": {
+      "label": "Oyuncu 2\n{fn:player2_summary}",
+      "help": "Oyuncu 2'yi yapılandırır."
+    },
+    "players.accounts": {
+      "label": "Hesaplar",
+      "help": "Bir Lichess token bağlar. Her hesap sunucu:kullanıcı olarak listelenir."
+    },
+    "players.lichess": {
+      "label": "Lichess lobisi",
+      "boardLabel": "Lichess\nlobisi",
+      "help": "Lichess kimlik bilgileri ve çevrimiçi oyun. Her giriş bir sunucu ve kullanıcıdır (lichess.org veya lichess.dev). Hesap seçiciyi, Reytingli'yi, devam eden oyunları, meydan okumaları ve Yeni oyun ara'yı açar."
+    },
+    "lichess.account": {
+      "label": "Hesap",
+      "boardLabel": "Hesap",
+      "help": "Bu tahtanın oyuncu ayarlarından bağımsız olarak hangi kayıtlı Lichess girişi ile oynayıp gezindiği. Alttaki Hesaplar giriş ekler veya siler."
+    },
+    "lichess.ongoing": {
+      "label": "Devam eden oyunlar",
+      "boardLabel": "Devam eden\noyunlar",
+      "help": "Bu hesabın bu tahtada, sitede veya başka bir cihazda başlattığı bir Lichess oyununu sürdürür.\n\nBurada devam etmek için bir oyun seç. Saat ve senin rengin o karşılaşmadan gelir.\n\nHiçbiri yoksa bu hesabın bitmemiş oyunu yoktur. Rakip için Yeni oyun ara'yı kullan."
+    },
+    "lichess.challenges": {
+      "label": "Meydan okumalar",
+      "boardLabel": "Meydan okum.",
+      "help": "Meydan okuma, bu hesaba sunulan veya bu hesabın başkasına sunduğu bir oyundur.\n\nGelen: bu tahtada kabul etmek için birini seç. Arama sırasında gelen bir meydan okuma da Kabul et ve Reddet gösterir.\n\nGiden: hâlâ diğer oyuncuyu bekliyor. Burada beklemek için birini seç; kabul edince oyun bu tahtada açılır.\n\nYeni oyun ara belirli bir kişiyi çağırmak yerine açık bir arama yayınlar."
+    },
+    "lichess.new_game": {
+      "label": "Yeni oyun ara",
+      "boardLabel": "Oyun\nara",
+      "help": "Oyuncu ayarlarından bağımsız olarak bu hesapla Lichess'te yeni rakip arar. Reytingli üst satırdır ve tempo Oyun ayarlarından gelir; seçilen renk yalnızca bir oyuncu Lichess olarak ayarlıysa geçerlidir."
+    },
+    "players.start": {
+      "label": "Yeni\noyun",
+      "help": "Geçerli oyuncu yapılandırmasıyla yeni bir oyun başlatır. Devam eden bir oyunu bitirir."
+    },
+    "settings.player_detail": {
+      "label": "Oyuncu",
+      "help": "Tek bir oyuncuyu yapılandırır."
+    },
+    "settings.game": {
+      "label": "Oyun",
+      "help": "Tempo ve konumun canlı analizi."
+    },
+    "settings.agents": {
+      "label": "Ajanlar",
+      "help": "Koç gibi özellikleri çalıştıran yapay zeka ajanlarını (hizmetler) yapılandırır: API anahtarı, model ve uç nokta."
+    },
+    "settings.notation": {
+      "label": "Hamle notasyonu",
+      "boardLabel": "Notasyon\n{value}",
+      "help": "Tahtadaki ve webdeki hamle listesi için satranç notasyonu."
+    },
+    "settings.chess960": {
+      "help": "Her yeni oyunu rastgele bir Chess960 (Fischer Random) konumundan başlatır. Hedef konum ekranda gösterilir; taşları ona göre diz."
+    },
+    "settings.timecontrol": {
+      "label": "Temel dakika",
+      "boardLabel": "Temel dk\n{fn:time_control}",
+      "help": "Artışsız ve gecikmesiz basit bir saat için oyuncu başına dakika."
+    },
+    "settings.timecontrol.engine_move_delay": {
+      "label": "Motor hamle gecikmesi",
+      "boardLabel": "Motor gecik.\n{value}",
+      "help": "Motora karşı tempolu oyunlarda motor hamlesini gösterince saati durur ve senin saatin bu gecikmeden sonra başlar (onun taşını oynarken)."
+    },
+    "settings.timecontrol.preset": {
+      "label": "Hazır ayar",
+      "boardLabel": "Hazır\n{fn:time_control_preset_label}",
+      "help": "Hazır bir tempo seç: artışsız, artışlı, gecikmeli veya turnuva temposu. Kendi saatin için Özel'i seç."
+    },
+    "timecontrol.custom.base": {
+      "label": "Temel süre",
+      "boardLabel": "Temel\n{value}",
+      "help": "Her oyuncunun saatindeki başlangıç süresi."
+    },
+    "timecontrol.custom.increment": {
+      "label": "Artış",
+      "boardLabel": "Artış\n{value}",
+      "help": "Her hamleden sonra hamle yapanın saatine eklenen saniye (Fischer artışı)."
+    },
+    "timecontrol.custom.delay": {
+      "label": "Gecikme",
+      "boardLabel": "Gecikme\n{value}",
+      "help": "Hamle başına gecikme saniyesi, Gecikme kipi ayarına göre uygulanır."
+    },
+    "timecontrol.custom.mode": {
+      "label": "Gecikme kipi",
+      "boardLabel": "Kip\n{value}",
+      "help": "Yok: gecikme yok. Simple: saat geri saymadan önce bekler. Bronstein: kullanılan süre, gecikmeye kadar iade edilir."
+    },
+    "timecontrol.custom.asymmetric": {
+      "label": "Tarafa göre farklı",
+      "boardLabel": "Asimetrik\n{value}",
+      "help": "Beyaza ve siyaha farklı süre verir (süre avantajı). Açıksa aşağıda siyahın temel süresini ve artışını ayarla."
+    },
+    "timecontrol.custom.black_base": {
+      "label": "Siyah temel süre",
+      "boardLabel": "Siyah temel\n{value}",
+      "help": "Taraflara farklı süre verilince siyahın saatindeki başlangıç süresi."
+    },
+    "timecontrol.custom.black_increment": {
+      "label": "Siyah artış",
+      "boardLabel": "Siyah artış\n{value}",
+      "help": "Taraflara farklı süre verilince her hamleden sonra siyahın saatine eklenen saniye."
+    },
+    "settings.display": {
+      "label": "Ekran",
+      "help": "E-paper ekranda ve LED'lerde ne görüneceğini denetler."
+    },
+    "settings.sound": {
+      "label": "Ses",
+      "help": "Ses geri bildirimini ve bip seslerini denetler."
+    },
+    "settings.connectivity": {
+      "label": "Bağlantılar",
+      "help": "Ağ, çevre birimleri, USB Ethernet ve ekran yansıtma."
+    },
+    "settings.engines": {
+      "label": "Motorlar",
+      "help": "Oynamak ve analiz için satranç motorlarını kurar ve yönetir."
+    },
+    "settings.system": {
+      "label": "Sistem",
+      "help": "Bakım, yazılım güncellemeleri ve güç."
+    },
+    "connectivity": {
+      "label": "Bağlantılar"
+    },
+    "connectivity.wifi": {
+      "help": "Tahtayı kablosuz bir ağa bağlar."
+    },
+    "connectivity.bluetooth": {
+      "help": "Bir Bluetooth klavyeyi tahtayla eşler."
+    },
+    "connectivity.usb_gadget": {
+      "label": "USB gadget",
+      "boardLabel": "USB gadget\n{value}",
+      "help": "Ana bilgisayara kabloyla USB Ethernet. Kablo tahtanın içindeki Pi Zero'nun USB veri portuna gider, Centaur şarj portuna değil. Bağlıyken kip değiştirmek oturumu kesebilir. Yeniden bağlamak için kabloyu tahtadan (veya bir USB-A ekleminden) çıkar: bilgisayarın USB-C portuna yeniden takmak bağlantıyı her zaman geri getirmez ve sonra bilgisayar hiç cihaz görmeyebilir."
+    },
+    "connectivity.chromecast": {
+      "help": "Tahtayı bir Chromecast cihazına yansıtır."
+    },
+    "wifi": {
+      "label": "WiFi",
+      "help": "WiFi durumu, ağ tarama ve radyoyu açıp kapatma."
+    },
+    "wifi.scan": {
+      "label": "Tara",
+      "help": "Kullanılabilir kablosuz ağları arar ve bağlanır."
+    },
+    "wifi.networks": {
+      "label": "Ağlar",
+      "help": "Son taramada bulunan kablosuz ağlar."
+    },
+    "wifi.networks.list": {
+      "help": "Bağlanmak için bir ağ seç; korumalı ağlar parola sorar."
+    },
+    "wifi.status": {
+      "help": "Geçerli WiFi bağlantı durumu ve sinyal gücü."
+    },
+    "wifi.enabled": {
+      "help": "WiFi bağlantı durumu. WiFi radyosunu açmak veya kapatmak için seç."
+    },
+    "bluetooth": {
+      "label": "Bluetooth",
+      "help": "Bluetooth durumu, görünürlük ve eşlenmiş cihazlar."
+    },
+    "bluetooth.status": {
+      "help": "Geçerli Bluetooth bağlantı durumu ve BLE duyurusu."
+    },
+    "bluetooth.enabled": {
+      "help": "Bluetooth bağlantı ve duyuru durumu. Bluetooth radyosunu açmak veya kapatmak için seç."
+    },
+    "bluetooth.devices": {
+      "label": "Cihazlar",
+      "help": "Yeni bir klavye eşle ve eşlenmiş Bluetooth cihazlarını görüntüle veya yönet."
+    },
+    "bluetooth.pair": {
+      "label": "Klavye eşle",
+      "help": "Bir Bluetooth klavye arar ve eşler."
+    },
+    "bluetooth.devices.list": {
+      "label": "Cihazlar",
+      "help": "Bağlamak, kesmek veya kaldırmak için eşlenmiş bir cihaz seç veya yeni bir klavye eşle."
+    },
+    "bluetooth.devices.list.items": {
+      "help": "Yönetmek için eşlenmiş bir cihaz seç."
+    },
+    "bluetooth.device.detail": {
+      "label": "Cihaz",
+      "help": "Seçilen Bluetooth cihazını bağlar, keser veya kaldırır."
+    },
+    "bluetooth.device.info": {
+      "help": "Seçilen cihaz ve bağlantı durumu."
+    },
+    "bluetooth.device.connect": {
+      "label": "Bağlan",
+      "help": "Bu cihaza bağlan."
+    },
+    "bluetooth.device.disconnect": {
+      "label": "Kes",
+      "help": "Bu cihazın bağlantısını kes."
+    },
+    "bluetooth.device.forget": {
+      "label": "Kaldır",
+      "help": "Bu cihazın eşleşmesini kaldırır."
+    },
+    "bluetooth.device.stale": {
+      "label": "Eşleşme reddedildi",
+      "help": "Cihaz kayıtlı eşleşmeyi reddetti; kaldır veya tut."
+    },
+    "bluetooth.device.stale.remove": {
+      "label": "Eşleşmeyi\nkaldır",
+      "help": "Reddedilen eşleşmeyi kaldırır ki yeniden eşlenebilsin."
+    },
+    "bluetooth.device.stale.keep": {
+      "label": "Eşleşmeyi\ntut",
+      "help": "Mevcut eşleşmeyi tutar ve geri döner."
+    },
+    "bluetooth.keyboards": {
+      "label": "Klavye eşle",
+      "help": "Bulunan Bluetooth klavyeler; eşlemek için birini seç."
+    },
+    "bluetooth.keyboards.list": {
+      "help": "Eşlenecek bir klavye seç; gerekirse bir kod gösterilir."
+    },
+    "system": {
+      "label": "Sistem"
+    },
+    "group.system.device": {
+      "label": "Cihaz",
+      "help": "Bu tahtanın uyku, saat ve dil tercihleri."
+    },
+    "system.inactivity": {
+      "label": "Uyku zamanlayıcısı",
+      "boardLabel": "Uyku\n{value}",
+      "help": "Bir süre işlem olmayınca tahtayı otomatik olarak uykuya alır."
+    },
+    "system.timezone": {
+      "label": "Saat dilimi",
+      "boardLabel": "Saat dilimi\n{value}",
+      "help": "Cihaz saatinin dilimini ayarlar. Kayıtlı oyun saatleri UTC'de kalır; bu tahta saati ekranını etkiler."
+    },
+    "system.ntp": {
+      "label": "Ağ saati",
+      "boardLabel": "Ağ saati",
+      "help": "Saati internetten otomatik doğru tutar. Tahtada pille çalışan saat yoktur; bu kapalıysa -- veya ağ yoksa -- saati kayar ve web Ayarları'ndan elle kurulmalıdır."
+    },
+    "system.language": {
+      "label": "Dil",
+      "boardLabel": "Dil\n{value}",
+      "help": "Tahta menüleri, ekran ve web uygulamasının dili. Yapay zeka Koçu da yorumlarını bu dilde yazar; ayrı bir Koç dili ayarı yoktur."
+    },
+    "system.updates": {
+      "label": "Güncellemeler",
+      "boardLabel": "Güncelleme\n{fn:updates_status}",
+      "help": "Yazılım güncellemelerini arar ve kurar."
+    },
+    "system.reset": {
+      "label": "Ayarları\nsıfırla",
+      "help": "Tüm ayarları varsayılanlara döndürür."
+    },
+    "system.about": {
+      "label": "Hakkında",
+      "help": "Sürüm ve destek bilgisi."
+    },
+    "system.power": {
+      "label": "Güç",
+      "help": "Tahtayı kapatır veya yeniden başlatır."
+    },
+    "system.reset.confirm": {
+      "label": "Ayarları sıfırla",
+      "help": "Tüm ayarların varsayılanlara dönmesini onaylar."
+    },
+    "system.reset.confirm.yes": {
+      "label": "Tümü\nsıfırlansın mı?",
+      "help": "Tüm oyun ve oyuncu ayarlarını siler ve varsayılanları geri yükler."
+    },
+    "system.reset.confirm.no": {
+      "label": "İptal",
+      "help": "Ayarları değiştirmeden geri döner."
+    },
+    "analysis.enabled": {
+      "label": "Canlı analiz",
+      "help": "Oyun sırasında motorun geçerli konum değerlendirmesini gösterir."
+    },
+    "analysis.engine": {
+      "label": "Analiz motoru",
+      "boardLabel": "Motor\n{value}",
+      "help": "Konum analizi için motor (oyunlar arasında değiştirmek daha iyidir)."
+    },
+    "analysis.time": {
+      "label": "Analiz süresi",
+      "boardLabel": "Analiz\n{value}",
+      "help": "Tahta motorunun değerlendirme için her konumu ne kadar analiz ettiği. Daha uzun daha doğrudur (webdeki sayıya daha yakın) ama daha fazla CPU ve pil kullanır."
+    },
+    "analysis.deep": {
+      "label": "Derin analiz (tarayıcı)",
+      "help": "Baktığın konumu tarayıcıda Stockfish 16 NNUE ile analiz eder; tahta motorundan çok daha güçlüdür. İlk seferde yaklaşık 39 MB indirir."
+    },
+    "coach.id": {
+      "label": "Koç",
+      "boardLabel": "Koç\n{fn:coach_selected_label}",
+      "help": "Koçun kişiliği ve üslubu. Otomatik, Koçu rakibin reytingine uyarlar; onu çalıştıran ajandan bağımsızdır."
+    },
+    "coach.provider": {
+      "label": "Ajan",
+      "boardLabel": "Ajan\n{value}",
+      "help": "Koçu hangi yapay zeka ajanının çalıştırdığı. Yalnızca API anahtarı ve gerekli tüm ayarları olan ajanlar listelenir; bunları Ayarlar > Ajanlar'da kur. Koç kapalıyken soluktur."
+    },
+    "coach.multipv": {
+      "label": "Aday varyantlar",
+      "boardLabel": "Varyantlar\n{value}",
+      "help": "Koçun bir hamle için baktığı motor aday hamle sayısı. Daha yüksek değerler alternatif önerir ama ekstra analiz ister; 1 alternatifleri kapatır."
+    },
+    "game.ponder": {
+      "label": "Sürekli düşünme",
+      "boardLabel": "Sürek. düşün.",
+      "help": "Motor rakiplerin senin sürenizde düşünmesine izin verir. Motorun oyununu iyileştirir ama ayrı bir süreci sürekli açık tutar, daha fazla CPU ve güç kullanır (pilden çok prizde daha iyidir)."
+    },
+    "alerts.queen_threat": {
+      "label": "Vezirin uyarısı",
+      "boardLabel": "Senin vezirin",
+      "help": "Vezirin saldırı altındayken uyarır: ekranda SENİN VEZİRİN, saldıran taştan vezirine bir LED flaşı ve web tahtasında bir uyarı. Şah her zaman gösterilir ve kapatılamaz."
+    },
+    "group.game.clock": {
+      "label": "Saat"
+    },
+    "group.game.variant": {
+      "label": "Varyant"
+    },
+    "group.game.alerts": {
+      "label": "Oyun içi uyarılar"
+    },
+    "group.game.analysis": {
+      "label": "Analiz"
+    },
+    "group.game.pondering": {
+      "label": "Sürekli düşünme"
+    },
+    "group.game.coach": {
+      "label": "Koç"
+    },
+    "group.game.history": {
+      "label": "Hamle listesi"
+    },
+    "group.display.epaper": {
+      "label": "E-paper ekran"
+    },
+    "group.display.leds": {
+      "label": "LED"
+    },
+    "agents.list.items": {
+      "help": "API anahtarı, model ve uç noktayı yapılandırmak için bir ajan seç."
+    },
+    "agents.detail": {
+      "label": "Ajan",
+      "help": "Seçilen ajanı yapılandırır: API anahtarı, model ve uç nokta."
+    },
+    "agents.detail.clear_key": {
+      "label": "API anahtarını sil",
+      "boardLabel": "API anaht. sil",
+      "help": "Bu ajanın kayıtlı API anahtarını kaldırır. Yalnızca bir anahtar varken gösterilir."
+    },
+    "agents.detail.api_key": {
+      "label": "API anahtarı",
+      "boardLabel": "API anahtarı\n{fn:agent_key_status}",
+      "help": "Bu yapay zeka ajanı için API anahtarı."
+    },
+    "agents.detail.model": {
+      "label": "Model",
+      "boardLabel": "Model\n{fn:agent_model_label}",
+      "help": "Bu ajanın modeli (canlı okunur; boş ajanın varsayılanını kullanır)."
+    },
+    "agents.detail.model_custom": {
+      "label": "Model",
+      "boardLabel": "Model\n{fn:agent_model_label}",
+      "help": "Bu uç nokta için model kimliği (boş ajanın varsayılanını kullanır)."
+    },
+    "agents.detail.base_url": {
+      "label": "Temel URL",
+      "boardLabel": "Temel URL\n{fn:agent_base_url_label}",
+      "help": "Bu OpenAI uyumlu ajan uç noktası için temel URL."
+    },
+    "power": {
+      "label": "Güç"
+    },
+    "power.shutdown": {
+      "label": "Kapat",
+      "help": "Tahtayı kapatır."
+    },
+    "power.reboot": {
+      "label": "Yeniden başlat",
+      "help": "Tahtayı yeniden başlatır."
+    },
+    "about": {
+      "label": "Hakkında",
+      "help": "Sürüm ve canlı sistem telemetrisi."
+    },
+    "about.version": {
+      "label": "Sürüm",
+      "boardLabel": "Sürüm\n{value}",
+      "valueDefault": "Bilinmiyor",
+      "help": "Kurulu yazılım sürümü."
+    },
+    "about.telemetry": {
+      "help": "Canlı sistem telemetrisi (CPU, bellek, depolama, çalışma süresi)."
+    },
+    "updates": {
+      "label": "Güncellemeler",
+      "help": "Otomatik indirme, yayın kanalı ve güncelleme kurulumu."
+    },
+    "updates.auto": {
+      "label": "Güncellemeleri otomatik indir",
+      "boardLabel": "Oto. indirme\n{fn:auto_update_state}",
+      "help": "Yeni sürümleri arka planda otomatik indirir ki hazır olsun. Güncellemeler kendiliğinden kurulmaz; ne zaman kuracağını sen seçersin."
+    },
+    "updates.channel": {
+      "label": "Güncelleme kanalı",
+      "boardLabel": "Kanal\n{value}",
+      "help": "Kararlı sürümler önerilir. Nightly derlemeler hata içerebilir."
+    },
+    "updates.check": {
+      "label": "Güncelleme\nara",
+      "help": "Şimdi güncelleme sunucusuna daha yeni bir sürüm olup olmadığını sorar."
+    },
+    "updates.install_pending": {
+      "label": "Güncellemeyi\nkur",
+      "boardLabel": "Kur\nv{value}",
+      "help": "İndirilen güncellemeyi kurar; tahta yeni sürümle yeniden başlar."
+    },
+    "updates.download": {
+      "label": "Güncellemeyi indir",
+      "boardLabel": "İndir\nv{value}",
+      "help": "Kullanılabilir güncellemeyi indirir."
+    },
+    "updates.install_local": {
+      "label": "Yerel .deb\nkur",
+      "help": "Ev dizinindeki bir .deb paketini kurar."
+    },
+    "updates.install_local.confirm": {
+      "label": "Yerel .deb kur",
+      "help": "Bulunan .deb paketinin kurulumunu onaylar."
+    },
+    "updates.install_local.confirm.yes": {
+      "label": "{value} kurulsun mu?",
+      "boardLabel": "Kurulsun mu\n{value}?",
+      "help": "Bulunan paketi kurar; tahta yeni sürümle yeniden başlar."
+    },
+    "updates.install_local.confirm.no": {
+      "label": "İptal",
+      "help": "Kurmadan geri döner."
+    },
+    "field.player.color": {
+      "label": "Renk",
+      "boardLabel": "Renk\n{value}",
+      "help": "Bu oyuncunun oynadığı renk"
+    },
+    "field.player.type": {
+      "label": "Oyuncu türü",
+      "boardLabel": "Tür\n{value}",
+      "help": "İnsan, Motor, El+Beyin veya Lichess"
+    },
+    "field.player.name": {
+      "label": "Oyuncu adı",
+      "boardLabel": "Ad\n{fn:player_name}",
+      "help": "PGN başlıkları için isteğe bağlı ad"
+    },
+    "field.player.hand_brain_mode": {
+      "label": "El+Beyin kipi",
+      "boardLabel": "Ters",
+      "help": "İnsan ve motorun nasıl birlikte çalıştığı"
+    },
+    "field.player.engine": {
+      "label": "Motor",
+      "boardLabel": "Motor\n{value}",
+      "help": "Kullanılacak satranç motoru"
+    },
+    "field.player.think_time": {
+      "label": "Düşünme süresi",
+      "boardLabel": "Düşünme\n{value}",
+      "help": "Motorun hamle başına ne kadar düşünebileceği"
+    },
+    "field.player.elo": {
+      "label": "ELO / Üslup",
+      "boardLabel": "ELO\n{value}",
+      "help": "Motorun gücü veya kişiliği"
+    },
+    "field.display.show_board": {
+      "label": "Tahtayı göster",
+      "help": "Satranç tahtasını ekranda gösterir"
+    },
+    "field.display.sprites": {
+      "label": "Taş seti",
+      "help": "E-paper tahtada taşları çizmek için kullanılan sprite seti"
+    },
+    "field.display.text_size": {
+      "label": "Metin boyutu",
+      "boardLabel": "Metin\n{value}",
+      "help": "E-paper ekrandaki metin boyutu: menüler, Koç yorumları, hamle listesi, saat ve oyun sonu, kurulum ve yardım ekranları. Daha büyük metin ekran başına daha az satır ve sıra gösterir."
+    },
+    "field.display.show_clock": {
+      "label": "Saati göster",
+      "boardLabel": "Saat",
+      "help": "Oyun saatini ve sıra göstergesini gösterir. Tempolu oyunlar kalan süre görünsün diye saati her zaman gösterir."
+    },
+    "field.display.show_analysis": {
+      "label": "Analizi göster",
+      "help": "Motor analiz widget'ını gösterir"
+    },
+    "field.display.show_graph": {
+      "label": "Değerlendirme grafiğini göster",
+      "boardLabel": "Grafik",
+      "help": "Değerlendirme geçmişi grafiğini gösterir"
+    },
+    "field.display.led_brightness": {
+      "label": "LED parlaklığı",
+      "boardLabel": "LED: {value}",
+      "help": "Tahta LED'lerinin parlaklık düzeyi"
+    },
+    "field.display.pegasus_override_brightness": {
+      "label": "Pegasus parlaklığını geçersiz kıl",
+      "help": "DGT Chess uygulaması sabit bir LED parlaklığı gönderir. Açıksa Pegasus LED'leri için bunun yerine yukarıdaki LED parlaklığı ayarı geçerlidir."
+    },
+    "field.sound.enabled": {
+      "label": "Ses açık",
+      "help": "Tüm ses efektlerinin ana anahtarı"
+    },
+    "field.sound.piece_events": {
+      "label": "Taş olayları",
+      "help": "Taşlar kaldırılınca veya konunca bip"
+    },
+    "field.sound.game_events": {
+      "label": "Oyun olayları",
+      "help": "Şah, mat ve diğer oyun olaylarında bip"
+    },
+    "field.sound.errors": {
+      "label": "Hatalar",
+      "help": "Hatalarda bip"
+    },
+    "field.sound.key_press": {
+      "label": "Tuş basımı",
+      "help": "Tuşlara basınca bip"
+    },
+    "field.lichess.rated": {
+      "label": "Reytingli",
+      "boardLabel": "Reytingli",
+      "help": "Reytingli oyunlar bu hesabın Lichess reytingine sayılır, dostluk oyunları sayılmaz.\n\nBu tahtanın yayınladığı her arama için geçerlidir, lobiden ve hiç oyuncu Lichess olarak ayarlı değilken bile."
+    },
+    "field.lichess.api_token": {
+      "label": "API token",
+      "help": "Seçilen Lichess sunucusunda board:play, challenge:read ve challenge:write izinleriyle bir token oluştur"
+    },
+    "field.lichess.range": {
+      "label": "Reyting aralığı",
+      "help": "Eşleşme için tercih edilen rakip reyting aralığı"
+    },
+    "field.system.database_uri": {
+      "label": "Veritabanı URI",
+      "help": "Varsayılan SQLite için boş bırak. SQLAlchemy uyumlu herhangi bir URI kabul eder."
+    }
+  }
+}

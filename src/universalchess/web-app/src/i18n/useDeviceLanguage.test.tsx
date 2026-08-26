@@ -118,6 +118,17 @@ describe('useDeviceLanguage', () => {
     expect(document.documentElement.lang).toBe('ru');
   });
 
+  it('adopts Turkish when the device language is Turkish', () => {
+    // Why: Turkish, like Dutch, had to be registered in the Python language
+    // service *and* in SUPPORTED_LANGUAGES here. A bundle can sit on disk while
+    // either list still gates it out, which renders English on a Turkish device
+    // and is invisible to every other case in this file.
+    setDeviceLanguage('tr');
+    const { getByTestId } = render(<Probe />);
+    expect(getByTestId('lang').textContent).toBe('tr');
+    expect(document.documentElement.lang).toBe('tr');
+  });
+
   it('switches language live when the device setting changes', () => {
     // Why: a change made on the board (or another tab) arrives via a store refresh
     // and must switch the SPA. A regression that only read the value once (no

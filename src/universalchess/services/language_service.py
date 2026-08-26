@@ -40,13 +40,13 @@ _KEY = "ui_language"
 # write in the new language from its :func:`coach_language_name`.
 #
 # The first ten are the world's most-spoken languages, in that order. Dutch,
-# Polish, and Italian follow them on a different basis: they are original DGT
-# Centaur firmware languages that are not in that ten (English, German, Spanish,
-# French, and Russian already sit there). All three of the tail ship the full
-# set of UI bundles.
+# Polish, Italian, and Turkish follow them on a different basis: they are
+# original DGT Centaur firmware languages that are not in that ten (English,
+# German, Spanish, French, and Russian already sit there). All four of the tail
+# ship the full set of UI bundles.
 DEFAULT = "en"
 SUPPORTED = {
-    "en", "es", "zh", "hi", "ar", "fr", "ru", "pt", "de", "ja", "nl", "pl", "it",
+    "en", "es", "zh", "hi", "ar", "fr", "ru", "pt", "de", "ja", "nl", "pl", "it", "tr",
 }
 
 # Display labels for the selector, in presentation order. Written as endonyms (in
@@ -66,9 +66,10 @@ _LABELS: Dict[str, str] = {
     "nl": "Nederlands",
     "pl": "Polski",
     "it": "Italiano",
+    "tr": "Türkçe",
 }
 _ORDER: List[str] = [
-    "en", "es", "zh", "hi", "ar", "fr", "ru", "pt", "de", "ja", "nl", "pl", "it",
+    "en", "es", "zh", "hi", "ar", "fr", "ru", "pt", "de", "ja", "nl", "pl", "it", "tr",
 ]
 
 # Plain-English language name for each locale, used to instruct the coach LLM
@@ -89,6 +90,7 @@ _COACH_NAMES: Dict[str, str] = {
     "nl": "Dutch",
     "pl": "Polish",
     "it": "Italian",
+    "tr": "Turkish",
 }
 
 

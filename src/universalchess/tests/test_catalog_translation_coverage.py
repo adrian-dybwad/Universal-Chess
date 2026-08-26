@@ -37,7 +37,7 @@ from universalchess.menus.catalog.loader import (
 TRANSLATIONS_DIR = Path(__file__).resolve().parents[1] / "menus" / "catalog" / "translations"
 
 # Locales with an overlay file. English is the authored source and has none.
-SHIPPED_LOCALES = ("es", "fr", "de", "nl", "pl", "it", "ru")
+SHIPPED_LOCALES = ("es", "fr", "de", "nl", "pl", "it", "ru", "tr")
 
 # Runtime substitutions -- ``{fn:play_label}``, ``{value}``. A string made only
 # of these carries no words to translate.
@@ -55,7 +55,7 @@ SAME_IN_EVERY_SHIPPED_LOCALE = {
     "connectivity.bluetooth.label": "Bluetooth is a trademark, not a translated word",
     "connectivity.chromecast.label": "Chromecast is a trademark, not a translated word",
     "field.display.pegasus_override_brightness.boardLabel": (
-        "DGT Pegasus is a product name and LED is the same initialism in es/fr/de/nl/pl/it/ru"
+        "DGT Pegasus is a product name and LED is the same initialism in es/fr/de/nl/pl/it/ru/tr"
     ),
     "accountType:lichess.label": "Lichess is the service's name in every language",
     # An example value shown in an empty input, not prose.
@@ -71,17 +71,17 @@ SAME_IN_EVERY_SHIPPED_LOCALE = {
     # one by one.
     "optionSet:timezones_common[UTC]": "an acronym",
     "optionSet:timezones_common[America/Chicago]": (
-        "spelt the same in es/fr/de/nl/pl/it; Russian overlays Чикаго, which is allowed"
+        "spelt the same in es/fr/de/nl/pl/it/tr; Russian overlays Чикаго, which is allowed"
     ),
     "optionSet:timezones_common[America/Denver]": (
-        "spelt the same in es/fr/de/nl/pl/it; Russian overlays Денвер, which is allowed"
+        "spelt the same in es/fr/de/nl/pl/it/tr; Russian overlays Денвер, which is allowed"
     ),
     "optionSet:timezones_common[America/Sao_Paulo]": (
-        "spelt the same in es/fr/de/nl/pl; Italian overlays San Paolo and Russian "
+        "spelt the same in es/fr/de/nl/pl/tr; Italian overlays San Paolo and Russian "
         "Сан-Паулу, which is allowed"
     ),
     "optionSet:timezones_common[Pacific/Auckland]": (
-        "spelt the same in es/fr/de/nl/pl/it; Russian overlays Окленд, which is allowed"
+        "spelt the same in es/fr/de/nl/pl/it/tr; Russian overlays Окленд, which is allowed"
     ),
 }
 
