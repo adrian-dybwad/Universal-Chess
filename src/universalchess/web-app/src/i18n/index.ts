@@ -24,10 +24,11 @@ import de from './locales/de.json';
 import en from './locales/en.json';
 import es from './locales/es.json';
 import fr from './locales/fr.json';
+import it from './locales/it.json';
 import nl from './locales/nl.json';
 import pl from './locales/pl.json';
 
-export const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de', 'nl', 'pl'] as const;
+export const SUPPORTED_LANGUAGES = ['en', 'es', 'fr', 'de', 'nl', 'pl', 'it'] as const;
 export type SupportedLanguage = (typeof SUPPORTED_LANGUAGES)[number];
 
 export const DEFAULT_LANGUAGE: SupportedLanguage = 'en';
@@ -40,6 +41,7 @@ void i18n.use(initReactI18next).init({
     de: { translation: de },
     nl: { translation: nl },
     pl: { translation: pl },
+    it: { translation: it },
   },
   lng: DEFAULT_LANGUAGE,
   fallbackLng: DEFAULT_LANGUAGE,

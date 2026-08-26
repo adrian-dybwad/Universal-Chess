@@ -111,6 +111,19 @@ def test_returns_polish_when_locale_is_polish(monkeypatch):
     assert i18n.t("game_over.result.white_wins") == "Białe wygrywają"
 
 
+def test_returns_italian_when_locale_is_italian(monkeypatch):
+    """t() returns the Italian string when the active locale is Italian.
+
+    Why: Italian is the third original-Centaur language added to the selector
+    as well as given a bundle. A regression in that registration (a code missing
+    from the supported set, or a bundle the loader cannot find) shows up here as
+    English text while every earlier locale still passes.
+    """
+    _set_locale(monkeypatch, "it")
+    assert i18n.t("common.enabled") == "Attivo"
+    assert i18n.t("game_over.result.white_wins") == "Vincono i bianchi"
+
+
 def test_interpolates_named_placeholders():
     """t() fills {name} placeholders from kwargs via str.format.
 
@@ -144,7 +157,7 @@ def test_missing_key_returns_key_itself():
     assert i18n.t("does.not.exist") == "does.not.exist"
 
 
-@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl", "pl"])
+@pytest.mark.parametrize("locale", ["es", "fr", "de", "nl", "pl", "it"])
 def test_translated_bundle_covers_every_english_key(locale):
     """Every key in en.json has a translation in each shipped locale bundle.
 

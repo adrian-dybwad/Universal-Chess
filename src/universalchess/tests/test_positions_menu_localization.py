@@ -28,7 +28,7 @@ from universalchess.menus.positions_menu import (
 POSITIONS_INI = (
     Path(__file__).resolve().parents[1] / "defaults" / "config" / "positions.ini"
 )
-SHIPPED_LOCALES = ("es", "fr", "de", "nl", "pl")
+SHIPPED_LOCALES = ("es", "fr", "de", "nl", "pl", "it")
 CUSTOM_CATEGORY = "custom"
 
 

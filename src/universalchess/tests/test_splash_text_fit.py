@@ -51,7 +51,7 @@ LOCALE_DIR = pathlib.Path(__file__).resolve().parents[1] / "i18n" / "locale"
 # Every shipped bundle. English is included deliberately: it is the source
 # language, so a band that cannot even hold English is a layout bug rather than
 # a translation one, and the distinction matters when one of these fails.
-LOCALES = ["en", "de", "es", "fr", "nl", "pl"]
+LOCALES = ["en", "de", "es", "fr", "nl", "pl", "it"]
 
 TAGLINE_KEY = "splash.tagline"
 PRESS_PLAY_KEY = "power.press_play"

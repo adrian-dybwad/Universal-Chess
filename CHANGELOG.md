@@ -479,6 +479,44 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   it sets rather than repeating the heading. The board's menu is unaffected --
   it has never shown both.
 
+- **Italian UI**: Italiano is now offered in Settings > Language and translates the
+  board menus, e-paper widgets, and the web app. Like Dutch and Polish, Italian
+  was not already on the list, so adding it meant registering the locale itself
+  -- the supported set, the selector label, and the plain-English name the AI
+  coach is instructed with -- as well as writing all three bundles: the 338 board
+  strings, the menu-catalog overlay, and the 983-key web bundle. It sits after
+  Polish at the end of the selector, on the same basis: it is an original DGT
+  Centaur firmware language that is not in the ten most-spoken the list opens
+  with.
+  - The copy is informal (tu, not Lei), matching Lichess's own Italian interface
+    and Italian consumer software, and uses the chess vocabulary a player
+    expects: donna for the queen, alfiere for the bishop, cavallo for the knight,
+    pedone, scacco, scacco matto, stallo and patta.
+  - Italian, like Spanish and French, distinguishes a CLDR `many` form at exactly
+    a million. The seven counted web strings carry that form as well as `_one`
+    and `_other`, so a count of 1 000 000 stays Italian instead of falling
+    through to English.
+  - Colour labels are nominative Bianchi/Neri, so the Lichess start message and
+    the king-lift resign prompt name the side ("Colore: Bianchi") rather than
+    governing the colour. Counted seconds on the board use the `s` symbol,
+    because the board's own `t()` has no plural mechanism.
+  - RESUME on the Play tile reads CONTINUA. The tile's help quotes the word the
+    tile shows. Rated Lichess games are labelled Valida.
+  - Lengths were measured through the widgets that draw them:
+    `scripts/measure_locale_fit.py` reported ten board strings that fit in
+    English and not in Italian. Eight were reworded to fit at full size (informal
+    verbs such as Attendo and Disconnetto, Scollegamento fallito, Nuova versione,
+    Installazione in corso). Two stay slightly smaller: `update.checking` keeps
+    "Cerco aggiornamenti..." at 16pt because that is the word an Italian reader
+    expects for looking up updates, and `setup.mode_title` keeps PREPARAZIONE at
+    17pt. The bundled font draws Italian, and the splash tagline is the proverb
+    the English byline inverts: "A caval donato non si guarda in bocca".
+  - The exemption list recording which catalog strings need no translation was
+    re-read against Italian: `min` stays exempt, and Chicago, Denver, Auckland
+    and UTC stay exempt because they are spelt the same, while the cities Italian
+    renames (London becomes Londra, Paris Parigi, Moscow Mosca, Kolkata Calcutta,
+    São Paulo San Paolo) are translated like any other string.
+
 - **Polish UI**: Polski is now offered in Settings > Language and translates the
   board menus, e-paper widgets, and the web app. Like Dutch, Polish was not
   already on the list, so adding it meant registering the locale itself -- the

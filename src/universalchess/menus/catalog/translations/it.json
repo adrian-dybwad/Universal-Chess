@@ -1,0 +1,755 @@
+{
+  "_comment": "Italian (it) translation overlay for menu.json. Keyed by node id / optionSet name / section id. Only translated strings are listed; anything omitted falls back to the English source in menu.json. Language names in the 'ui_language' optionSet are intentionally left untranslated (endonyms).",
+  "sections": {
+    "players": "Giocatori",
+    "game": "Partita",
+    "agents": "Agenti",
+    "display": "Schermo",
+    "sound": "Suono",
+    "connectivity": "Connessioni",
+    "accounts": "Account",
+    "engines": "Motori",
+    "system": "Sistema"
+  },
+  "optionSets": {
+    "color": {
+      "white": "Bianchi",
+      "black": "Neri"
+    },
+    "player_type": {
+      "human": "Umano",
+      "engine": "Motore",
+      "hand_brain": "Mano + Cervello",
+      "lichess": "Lichess"
+    },
+    "hand_brain_mode": {
+      "normal": "Normale (Motore = Cervello)",
+      "reverse": "Inverso (Umano = Cervello)"
+    },
+    "time_control": {
+      "1": "1 min (Bullet)",
+      "3": "3 min (Blitz)",
+      "5": "5 min (Blitz)",
+      "10": "10 min (Rapida)",
+      "15": "15 min (Rapida)",
+      "30": "30 min (Classica)",
+      "60": "60 min (Classica)",
+      "90": "90 min (Classica)"
+    },
+    "tc_increment": {
+      "0": "Nessuno",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "tc_delay": {
+      "0": "Nessuno",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s"
+    },
+    "tc_delay_mode": {
+      "none": "Nessuno",
+      "simple": "Simple (USA)",
+      "bronstein": "Bronstein"
+    },
+    "engine_move_delay": {
+      "0": "Nessuno",
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s"
+    },
+    "think_time": {
+      "1": "1 s",
+      "2": "2 s",
+      "3": "3 s",
+      "5": "5 s",
+      "10": "10 s",
+      "15": "15 s",
+      "20": "20 s",
+      "30": "30 s",
+      "60": "60 s"
+    },
+    "update_channel": {
+      "stable": "Stabile (consigliato)",
+      "nightly": "Nightly (sviluppo)"
+    },
+    "sleep_timer": {
+      "0": "Disattivo",
+      "300": "5 min",
+      "600": "10 min",
+      "900": "15 min",
+      "1800": "30 min",
+      "3600": "1 ora"
+    },
+    "usb_gadget_mode": {
+      "off": {
+        "label": "Off",
+        "description": "L'Ethernet USB è disattivato.{wifi_or_ethernet_reach: Raggiungi la scacchiera solo via Wi-Fi o Ethernet.}"
+      },
+      "auto": {
+        "label": "Auto",
+        "description": "La scacchiera sceglie Client o Shared da sola — Client quando il computer host offre una rete via cavo, Shared quando non lo fa — e cambia se quello cambia. Client e Shared restano invece fissi. Raggiungi la scacchiera su {mdns_url} in entrambi i casi, o su http://10.12.194.1/ mentre è in Shared. Poiché la modalità può cambiare da sola, l'internet abituale del computer host (Wi-Fi o Ethernet) può smettere di funzionare ogni volta che la scacchiera passa a Shared."
+      },
+      "client": {
+        "label": "Client",
+        "description": "Il computer host condivide il suo internet con la scacchiera via USB. Raggiungi la scacchiera su {mdns_url}. Serve la condivisione internet (o ICS) sul computer host."
+      },
+      "shared": {
+        "label": "Shared",
+        "description": "La scacchiera gestisce la rete USB. Apri http://10.12.194.1/ o {mdns_url}. Disattiva la condivisione internet sul computer host — su macOS spegni anche l'interruttore di \"Universal Chess USB Gadget\" nell'elenco Condivisione (l'interruttore principale da solo non basta; altrimenti il Mac tiene un indirizzo autoassegnato). Avviso: finché il cavo è collegato, l'internet abituale del computer host (Wi-Fi o Ethernet) può smettere di funzionare. La scacchiera condividerà la sua connessione internet con il computer se è già online via Wi-Fi."
+      }
+    },
+    "analysis_time": {
+      "quick": "Veloce (0,3 s)",
+      "standard": "Standard (0,8 s)",
+      "deep": "Profonda (2 s)"
+    },
+    "coach_multipv": {
+      "1": "1 (off)"
+    },
+    "notation": {
+      "figurine": "Figure (♘f3)",
+      "san": "Standard (Nf3)",
+      "lan": "Lunga (Ng1-f3)",
+      "uci": "Coordinate (g1f3)"
+    },
+    "text_size": {
+      "small": "Piccolo",
+      "medium": "Medio",
+      "large": "Grande"
+    },
+    "timezones_common": {
+      "Europe/London": "Londra",
+      "Europe/Paris": "Parigi",
+      "Europe/Berlin": "Berlino",
+      "Europe/Moscow": "Mosca",
+      "America/New_York": "New York",
+      "America/Los_Angeles": "Los Angeles",
+      "Asia/Dubai": "Dubai",
+      "America/Sao_Paulo": "San Paolo",
+      "Asia/Kolkata": "Calcutta",
+      "Asia/Shanghai": "Shanghai",
+      "Asia/Tokyo": "Tokyo",
+      "Australia/Sydney": "Sydney"
+    }
+  },
+  "accountTypes": {
+    "lichess": {
+      "fields": {
+        "api_token": {
+          "label": "Token API",
+          "help": "Crea un token sul server Lichess scelto con i permessi board:play, challenge:read e challenge:write"
+        },
+        "range": {
+          "label": "Intervallo di punteggio",
+          "help": "Intervallo di punteggio preferito degli avversari per l'abbinamento"
+        }
+      }
+    }
+  },
+  "nodes": {
+    "main": {
+      "label": "Menu principale"
+    },
+    "main.play": {
+      "label": "GIOCA",
+      "label_in_progress": "CONTINUA",
+      "help": "Avvia una nuova partita. Se una partita è sospesa, qui c'è CONTINUA e la riprende."
+    },
+    "main.positions": {
+      "label": "Posizioni",
+      "help": "Sistema una posizione predefinita sulla scacchiera per esercitarti o analizzare."
+    },
+    "main.centaur": {
+      "label": "Centaur\noriginale",
+      "help": "Torna al software originale DGT Centaur."
+    },
+    "main.settings": {
+      "label": "Impostazioni",
+      "help": "Configura giocatori, cadenza, schermo, connessioni e opzioni di sistema."
+    },
+    "settings": {
+      "label": "Impostazioni"
+    },
+    "settings.players": {
+      "label": "Giocatori",
+      "help": "Configura nomi dei giocatori, tipi, motori e Lichess."
+    },
+    "players.player1": {
+      "label": "Giocatore 1\n{fn:player1_summary}",
+      "help": "Configura il Giocatore 1 (chi conduce il colore scelto)."
+    },
+    "players.player2": {
+      "label": "Giocatore 2\n{fn:player2_summary}",
+      "help": "Configura il Giocatore 2."
+    },
+    "players.accounts": {
+      "label": "Account",
+      "help": "Collega un token Lichess. Ogni account è elencato come server:utente."
+    },
+    "players.lichess": {
+      "label": "Lobby Lichess",
+      "boardLabel": "Lobby\nLichess",
+      "help": "Credenziali Lichess e gioco online. Ogni accesso è un server e un utente (lichess.org o lichess.dev). Apre il selettore account, Valida, partite in corso, sfide e Cerca nuova partita."
+    },
+    "lichess.account": {
+      "label": "Account",
+      "boardLabel": "Account",
+      "help": "Con quale accesso Lichess salvato questa scacchiera gioca e naviga, indipendentemente dalle impostazioni dei giocatori. Account in fondo aggiunge o elimina gli accessi."
+    },
+    "lichess.ongoing": {
+      "label": "Partite in corso",
+      "boardLabel": "Partite\nin corso",
+      "help": "Continua una partita Lichess che questo account ha già iniziato, su questa scacchiera, sul sito o su un altro dispositivo.\n\nScegli una partita per riprenderla qui. Orologio e tuo colore vengono da quello scontro.\n\nSe non ce n'è nessuna, questo account non ha partite incompiute. Usa Cerca nuova partita per trovare un avversario."
+    },
+    "lichess.challenges": {
+      "label": "Sfide",
+      "boardLabel": "Sfide",
+      "help": "Una sfida è una partita offerta a questo account, o che questo account ha offerto a qualcun altro.\n\nIn arrivo: scegline una per accettarla su questa scacchiera. Una sfida che arriva durante una ricerca mostra anche Accetta o Rifiuta.\n\nIn uscita: ancora in attesa dell'altro giocatore. Scegline una per aspettare qui; la partita si apre su questa scacchiera quando accetta.\n\nCerca nuova partita pubblica una ricerca aperta invece di sfidare una persona."
+    },
+    "lichess.new_game": {
+      "label": "Cerca nuova partita",
+      "boardLabel": "Cerca\npartita",
+      "help": "Cerca un nuovo avversario su Lichess con questo account, indipendentemente dalle impostazioni dei giocatori. Valida è la riga sopra e la cadenza viene dalle impostazioni Partita; il colore è quello che hai scelto solo quando un giocatore è impostato su Lichess."
+    },
+    "players.start": {
+      "label": "Nuova\npartita",
+      "help": "Avvia una nuova partita con la configurazione attuale dei giocatori. Termina una partita in corso."
+    },
+    "settings.player_detail": {
+      "label": "Giocatore",
+      "help": "Configura un singolo giocatore."
+    },
+    "settings.game": {
+      "label": "Partita",
+      "help": "Cadenza e analisi in tempo reale della posizione."
+    },
+    "settings.agents": {
+      "label": "Agenti",
+      "help": "Configura gli agenti IA (servizi) che alimentano funzioni come il Coach: chiave API, modello e endpoint."
+    },
+    "settings.notation": {
+      "label": "Notazione delle mosse",
+      "boardLabel": "Notazione\n{value}",
+      "help": "Notazione scacchistica per l'elenco mosse sulla scacchiera e sul web."
+    },
+    "settings.chess960": {
+      "help": "Avvia ogni nuova partita da una posizione Chess960 (Fischer Random) casuale. La posizione obiettivo è mostrata sullo schermo; sistema i pezzi di conseguenza."
+    },
+    "settings.timecontrol": {
+      "label": "Minuti base",
+      "boardLabel": "Min. base\n{fn:time_control}",
+      "help": "Minuti per giocatore per un orologio semplice a morte improvvisa (senza incremento né ritardo)."
+    },
+    "settings.timecontrol.engine_move_delay": {
+      "label": "Ritardo mossa del motore",
+      "boardLabel": "Ritardo mot.\n{value}",
+      "help": "Nelle partite a tempo contro il motore, quando il motore mostra la sua mossa il suo orologio si ferma e il tuo parte dopo questo ritardo (mentre muovi il suo pezzo)."
+    },
+    "settings.timecontrol.preset": {
+      "label": "Preimpostazione",
+      "boardLabel": "Preimp.\n{fn:time_control_preset_label}",
+      "help": "Scegli una cadenza già pronta: morte improvvisa, incremento, ritardo o una cadenza da torneo. Scegli Personalizzata per usare l'orologio personalizzato."
+    },
+    "timecontrol.custom.base": {
+      "label": "Tempo base",
+      "boardLabel": "Base\n{value}",
+      "help": "Tempo iniziale sull'orologio di ogni giocatore."
+    },
+    "timecontrol.custom.increment": {
+      "label": "Incremento",
+      "boardLabel": "Incremento\n{value}",
+      "help": "Secondi aggiunti all'orologio di chi ha mosso dopo ogni mossa (incremento Fischer)."
+    },
+    "timecontrol.custom.delay": {
+      "label": "Ritardo",
+      "boardLabel": "Ritardo\n{value}",
+      "help": "Secondi di ritardo per mossa, applicati secondo l'impostazione Modalità ritardo."
+    },
+    "timecontrol.custom.mode": {
+      "label": "Modalità ritardo",
+      "boardLabel": "Modalità\n{value}",
+      "help": "Nessuno: nessun ritardo. Simple: l'orologio aspetta prima di scendere. Bronstein: il tempo usato viene restituito, fino al ritardo."
+    },
+    "timecontrol.custom.asymmetric": {
+      "label": "Diverso per lato",
+      "boardLabel": "Asimmetrico\n{value}",
+      "help": "Dà ai bianchi e ai neri tempi diversi (vantaggio di tempo). Se attivo, imposta sotto base e incremento dei neri."
+    },
+    "timecontrol.custom.black_base": {
+      "label": "Tempo base neri",
+      "boardLabel": "Base neri\n{value}",
+      "help": "Tempo iniziale sull'orologio dei neri quando si usano tempi diversi per lato."
+    },
+    "timecontrol.custom.black_increment": {
+      "label": "Incremento neri",
+      "boardLabel": "Incr. neri\n{value}",
+      "help": "Secondi aggiunti all'orologio dei neri dopo ogni mossa quando si usano tempi diversi per lato."
+    },
+    "settings.display": {
+      "label": "Schermo",
+      "help": "Controlla cosa appare sullo schermo e-paper e sui LED."
+    },
+    "settings.sound": {
+      "label": "Suono",
+      "help": "Controlla i suoni di riscontro e i bip."
+    },
+    "settings.connectivity": {
+      "label": "Connessioni",
+      "help": "Rete, periferiche, Ethernet USB e duplicazione schermo."
+    },
+    "settings.engines": {
+      "label": "Motori",
+      "help": "Installa e gestisci i motori scacchistici per giocare e analizzare."
+    },
+    "settings.system": {
+      "label": "Sistema",
+      "help": "Manutenzione, aggiornamenti software e alimentazione."
+    },
+    "connectivity": {
+      "label": "Connessioni"
+    },
+    "connectivity.wifi": {
+      "help": "Collega la scacchiera a una rete wireless."
+    },
+    "connectivity.bluetooth": {
+      "help": "Associa una tastiera Bluetooth alla scacchiera."
+    },
+    "connectivity.usb_gadget": {
+      "label": "Gadget USB",
+      "boardLabel": "Gadget USB\n{value}",
+      "help": "Ethernet USB via cavo verso il computer host. Il cavo va alla porta USB dati del Pi Zero dentro la scacchiera, non alla porta di ricarica del Centaur. Cambiare modalità da collegati può interrompere la sessione. Per ricollegare il cavo, staccalo dalla scacchiera (o da un giunto USB-A): reinserirlo nella porta USB-C del computer non ripristina sempre il collegamento, e il computer può poi non vedere più nessun dispositivo."
+    },
+    "connectivity.chromecast": {
+      "help": "Duplica la scacchiera su un dispositivo Chromecast."
+    },
+    "wifi": {
+      "label": "WiFi",
+      "help": "Stato WiFi, ricerca reti e attivazione o disattivazione della radio."
+    },
+    "wifi.scan": {
+      "label": "Cerca",
+      "help": "Cerca le reti wireless disponibili e collegati."
+    },
+    "wifi.networks": {
+      "label": "Reti",
+      "help": "Reti wireless trovate nell'ultima ricerca."
+    },
+    "wifi.networks.list": {
+      "help": "Scegli una rete per collegarti; le reti protette chiedono una password."
+    },
+    "wifi.status": {
+      "help": "Stato attuale della connessione WiFi e potenza del segnale."
+    },
+    "wifi.enabled": {
+      "help": "Stato della connessione WiFi. Seleziona per attivare o disattivare la radio WiFi."
+    },
+    "bluetooth": {
+      "label": "Bluetooth",
+      "help": "Stato Bluetooth, visibilità e dispositivi associati."
+    },
+    "bluetooth.status": {
+      "help": "Stato attuale della connessione Bluetooth e dell'annuncio BLE."
+    },
+    "bluetooth.enabled": {
+      "help": "Stato della connessione Bluetooth e dell'annuncio. Seleziona per attivare o disattivare la radio Bluetooth."
+    },
+    "bluetooth.devices": {
+      "label": "Dispositivi",
+      "help": "Associa una nuova tastiera e consulta o gestisci i dispositivi Bluetooth associati."
+    },
+    "bluetooth.pair": {
+      "label": "Associa tastiera",
+      "help": "Cerca e associa una tastiera Bluetooth."
+    },
+    "bluetooth.devices.list": {
+      "label": "Dispositivi",
+      "help": "Scegli un dispositivo associato per collegarlo, scollegarlo o rimuoverlo, oppure associa una nuova tastiera."
+    },
+    "bluetooth.devices.list.items": {
+      "help": "Scegli un dispositivo associato per gestirlo."
+    },
+    "bluetooth.device.detail": {
+      "label": "Dispositivo",
+      "help": "Collega, scollega o rimuovi il dispositivo Bluetooth selezionato."
+    },
+    "bluetooth.device.info": {
+      "help": "Il dispositivo selezionato e il suo stato di connessione."
+    },
+    "bluetooth.device.connect": {
+      "label": "Collega",
+      "help": "Collegati a questo dispositivo."
+    },
+    "bluetooth.device.disconnect": {
+      "label": "Scollega",
+      "help": "Scollega questo dispositivo."
+    },
+    "bluetooth.device.forget": {
+      "label": "Rimuovi",
+      "help": "Rimuove l'associazione di questo dispositivo."
+    },
+    "bluetooth.device.stale": {
+      "label": "Associazione rifiutata",
+      "help": "Il dispositivo ha rifiutato l'associazione salvata; rimuovila o tienila."
+    },
+    "bluetooth.device.stale.remove": {
+      "label": "Rimuovi\nassociazione",
+      "help": "Rimuove l'associazione rifiutata così si può associare di nuovo."
+    },
+    "bluetooth.device.stale.keep": {
+      "label": "Mantieni\nassociazione",
+      "help": "Mantiene l'associazione esistente e torna indietro."
+    },
+    "bluetooth.keyboards": {
+      "label": "Associa tastiera",
+      "help": "Tastiere Bluetooth trovate; scegline una per associarla."
+    },
+    "bluetooth.keyboards.list": {
+      "help": "Scegli una tastiera da associare; se serve viene mostrato un codice."
+    },
+    "system": {
+      "label": "Sistema"
+    },
+    "group.system.device": {
+      "label": "Dispositivo",
+      "help": "Preferenze di sospensione, orologio e lingua di questa scacchiera."
+    },
+    "system.inactivity": {
+      "label": "Timer di sospensione",
+      "boardLabel": "Sospensione\n{value}",
+      "help": "Mette la scacchiera in sospensione automaticamente dopo un periodo di inattività."
+    },
+    "system.timezone": {
+      "label": "Fuso orario",
+      "boardLabel": "Fuso orario\n{value}",
+      "help": "Imposta il fuso orario dell'orologio del dispositivo. Gli orari delle partite restano in UTC; questo riguarda lo schermo dell'orologio della scacchiera."
+    },
+    "system.ntp": {
+      "label": "Ora di rete",
+      "boardLabel": "Ora di rete",
+      "help": "Mantiene l'orologio corretto automaticamente da internet. La scacchiera non ha un orologio con batteria; se questo è disattivo -- o non c'è rete -- il suo orario deriva e va impostato a mano dalle Impostazioni web."
+    },
+    "system.language": {
+      "label": "Lingua",
+      "boardLabel": "Lingua\n{value}",
+      "help": "Lingua dei menu della scacchiera, dello schermo e dell'app web. Anche il Coach IA scrive i suoi commenti in questa lingua; non c'è un'impostazione di lingua separata per il Coach."
+    },
+    "system.updates": {
+      "label": "Aggiornamenti",
+      "boardLabel": "Aggiornam.\n{fn:updates_status}",
+      "help": "Cerca e installa gli aggiornamenti software."
+    },
+    "system.reset": {
+      "label": "Ripristina\nimpostazioni",
+      "help": "Ripristina tutte le impostazioni ai valori predefiniti."
+    },
+    "system.about": {
+      "label": "Informazioni",
+      "help": "Versione e informazioni di supporto."
+    },
+    "system.power": {
+      "label": "Energia",
+      "help": "Spegne o riavvia la scacchiera."
+    },
+    "system.reset.confirm": {
+      "label": "Ripristina impostazioni",
+      "help": "Conferma il ripristino di tutte le impostazioni ai valori predefiniti."
+    },
+    "system.reset.confirm.yes": {
+      "label": "Ripristinare\ntutto?",
+      "help": "Cancella tutte le impostazioni di partita e giocatori e ripristina i valori predefiniti."
+    },
+    "system.reset.confirm.no": {
+      "label": "Annulla",
+      "help": "Torna indietro senza cambiare le impostazioni."
+    },
+    "analysis.enabled": {
+      "label": "Analisi in tempo reale",
+      "help": "Mostra durante la partita la valutazione del motore della posizione attuale."
+    },
+    "analysis.engine": {
+      "label": "Motore di analisi",
+      "boardLabel": "Motore\n{value}",
+      "help": "Motore usato per l'analisi della posizione (meglio cambiarlo tra una partita e l'altra)."
+    },
+    "analysis.time": {
+      "label": "Tempo di analisi",
+      "boardLabel": "Analisi\n{value}",
+      "help": "Quanto a lungo il motore della scacchiera analizza ogni posizione per la sua valutazione. Più tempo è più preciso (più vicino al numero del web) ma usa più CPU e batteria."
+    },
+    "analysis.deep": {
+      "label": "Analisi approfondita (browser)",
+      "help": "Analizza nel browser la posizione che stai guardando con Stockfish 16 NNUE, un motore molto più forte di quello della scacchiera. Scarica circa 39 MB la prima volta."
+    },
+    "coach.id": {
+      "label": "Coach",
+      "boardLabel": "Coach\n{fn:coach_selected_label}",
+      "help": "Personalità e stile del Coach. Auto adatta il Coach al punteggio dell'avversario; indipendente dall'agente che lo alimenta."
+    },
+    "coach.provider": {
+      "label": "Agente",
+      "boardLabel": "Agente\n{value}",
+      "help": "Quale agente IA alimenta il Coach. Sono elencati solo gli agenti con chiave API e tutte le impostazioni necessarie; configurali in Impostazioni > Agenti. Disattivato finché il Coach è disattivo."
+    },
+    "coach.multipv": {
+      "label": "Linee candidate",
+      "boardLabel": "Linee\n{value}",
+      "help": "Numero di mosse candidate del motore che il Coach considera per una mossa. Valori più alti permettono alternative ma costano analisi extra; 1 disattiva le alternative."
+    },
+    "game.ponder": {
+      "label": "Riflessione permanente",
+      "boardLabel": "Rifl. perm.",
+      "help": "Lascia che i motori avversari pensino nel tuo tempo. Migliora il gioco del motore ma tiene sempre acceso un processo dedicato, usando più CPU e corrente (meglio a rete, non a batteria)."
+    },
+    "alerts.queen_threat": {
+      "label": "Avviso della tua donna",
+      "boardLabel": "La tua donna",
+      "help": "Avvisa quando la tua donna è sotto attacco: LA TUA DONNA sullo schermo, un lampo LED dall'attaccante alla tua donna e un avviso sulla scacchiera web. Lo scacco è sempre mostrato e non si può disattivare."
+    },
+    "group.game.clock": {
+      "label": "Orologio"
+    },
+    "group.game.variant": {
+      "label": "Variante"
+    },
+    "group.game.alerts": {
+      "label": "Avvisi in partita"
+    },
+    "group.game.analysis": {
+      "label": "Analisi"
+    },
+    "group.game.pondering": {
+      "label": "Riflessione permanente"
+    },
+    "group.game.coach": {
+      "label": "Coach"
+    },
+    "group.game.history": {
+      "label": "Elenco mosse"
+    },
+    "group.display.epaper": {
+      "label": "Schermo e-paper"
+    },
+    "group.display.leds": {
+      "label": "LED"
+    },
+    "agents.list.items": {
+      "help": "Scegli un agente per configurare chiave API, modello ed endpoint."
+    },
+    "agents.detail": {
+      "label": "Agente",
+      "help": "Configura l'agente selezionato: chiave API, modello ed endpoint."
+    },
+    "agents.detail.clear_key": {
+      "label": "Cancella chiave API",
+      "boardLabel": "Canc. chiave API",
+      "help": "Rimuove la chiave API salvata di questo agente. Viene mostrato solo se c'è una chiave."
+    },
+    "agents.detail.api_key": {
+      "label": "Chiave API",
+      "boardLabel": "Chiave API\n{fn:agent_key_status}",
+      "help": "Chiave API per questo agente IA."
+    },
+    "agents.detail.model": {
+      "label": "Modello",
+      "boardLabel": "Modello\n{fn:agent_model_label}",
+      "help": "Modello per questo agente (letto in diretta; vuoto usa il predefinito dell'agente)."
+    },
+    "agents.detail.model_custom": {
+      "label": "Modello",
+      "boardLabel": "Modello\n{fn:agent_model_label}",
+      "help": "ID del modello per questo endpoint (vuoto usa il predefinito dell'agente)."
+    },
+    "agents.detail.base_url": {
+      "label": "URL base",
+      "boardLabel": "URL base\n{fn:agent_base_url_label}",
+      "help": "URL base per questo endpoint agente compatibile con OpenAI."
+    },
+    "power": {
+      "label": "Energia"
+    },
+    "power.shutdown": {
+      "label": "Spegni",
+      "help": "Spegne la scacchiera."
+    },
+    "power.reboot": {
+      "label": "Riavvia",
+      "help": "Riavvia la scacchiera."
+    },
+    "about": {
+      "label": "Informazioni",
+      "help": "Versione e telemetria di sistema in tempo reale."
+    },
+    "about.version": {
+      "label": "Versione",
+      "boardLabel": "Versione\n{value}",
+      "valueDefault": "Sconosciuta",
+      "help": "Versione software installata."
+    },
+    "about.telemetry": {
+      "help": "Telemetria di sistema in tempo reale (CPU, memoria, archivio, attività)."
+    },
+    "updates": {
+      "label": "Aggiornamenti",
+      "help": "Download automatico, canale di rilascio e installazione degli aggiornamenti."
+    },
+    "updates.auto": {
+      "label": "Scarica aggiornamenti automaticamente",
+      "boardLabel": "Download auto.\n{fn:auto_update_state}",
+      "help": "Scarica automaticamente le nuove versioni in background perché siano pronte. Gli aggiornamenti non si installano da soli; scegli tu quando installarli."
+    },
+    "updates.channel": {
+      "label": "Canale di aggiornamento",
+      "boardLabel": "Canale\n{value}",
+      "help": "Si consigliano le versioni stabili. Le build Nightly possono contenere errori."
+    },
+    "updates.check": {
+      "label": "Cerca\naggiornamenti",
+      "help": "Chiede ora al server degli aggiornamenti se c'è una versione più recente."
+    },
+    "updates.install_pending": {
+      "label": "Installa\naggiornamento",
+      "boardLabel": "Installa\nv{value}",
+      "help": "Installa l'aggiornamento scaricato; la scacchiera si riavvia con la nuova versione."
+    },
+    "updates.download": {
+      "label": "Scarica aggiornamento",
+      "boardLabel": "Scarica\nv{value}",
+      "help": "Scarica l'aggiornamento disponibile."
+    },
+    "updates.install_local": {
+      "label": "Installa\n.deb locale",
+      "help": "Installa un pacchetto .deb trovato nella directory home."
+    },
+    "updates.install_local.confirm": {
+      "label": "Installa .deb locale",
+      "help": "Conferma l'installazione del pacchetto .deb trovato."
+    },
+    "updates.install_local.confirm.yes": {
+      "label": "Installare {value}?",
+      "boardLabel": "Installare\n{value}?",
+      "help": "Installa il pacchetto trovato; la scacchiera si riavvia con la nuova versione."
+    },
+    "updates.install_local.confirm.no": {
+      "label": "Annulla",
+      "help": "Torna indietro senza installare."
+    },
+    "field.player.color": {
+      "label": "Colore",
+      "boardLabel": "Colore\n{value}",
+      "help": "Quale colore conduce questo giocatore"
+    },
+    "field.player.type": {
+      "label": "Tipo di giocatore",
+      "boardLabel": "Tipo\n{value}",
+      "help": "Umano, Motore, Mano+Cervello o Lichess"
+    },
+    "field.player.name": {
+      "label": "Nome del giocatore",
+      "boardLabel": "Nome\n{fn:player_name}",
+      "help": "Nome opzionale per le intestazioni PGN"
+    },
+    "field.player.hand_brain_mode": {
+      "label": "Modalità Mano+Cervello",
+      "boardLabel": "Inverso",
+      "help": "Come collaborano l'umano e il motore"
+    },
+    "field.player.engine": {
+      "label": "Motore",
+      "boardLabel": "Motore\n{value}",
+      "help": "Motore scacchistico da usare"
+    },
+    "field.player.think_time": {
+      "label": "Tempo di riflessione",
+      "boardLabel": "Riflessione\n{value}",
+      "help": "Quanto a lungo il motore può pensare per mossa"
+    },
+    "field.player.elo": {
+      "label": "ELO / Stile",
+      "boardLabel": "ELO\n{value}",
+      "help": "Forza o personalità del motore"
+    },
+    "field.display.show_board": {
+      "label": "Mostra scacchiera",
+      "help": "Mostra la scacchiera sullo schermo"
+    },
+    "field.display.sprites": {
+      "label": "Set di pezzi",
+      "help": "Foglio di sprite usato per disegnare i pezzi sulla scacchiera e-paper"
+    },
+    "field.display.text_size": {
+      "label": "Dimensione testo",
+      "boardLabel": "Testo\n{value}",
+      "help": "Dimensione del testo sullo schermo e-paper: menu, commenti del Coach, elenco mosse, orologio e gli schermi di fine partita, preparazione e aiuto. Un testo più grande mostra meno righe e file per schermo."
+    },
+    "field.display.show_clock": {
+      "label": "Mostra orologio",
+      "boardLabel": "Orologio",
+      "help": "Mostra l'orologio della partita e l'indicatore di turno. Le partite a tempo mostrano sempre l'orologio perché il tempo restante resti visibile."
+    },
+    "field.display.show_analysis": {
+      "label": "Mostra analisi",
+      "help": "Mostra il widget di analisi del motore"
+    },
+    "field.display.show_graph": {
+      "label": "Mostra grafico di valutazione",
+      "boardLabel": "Grafico",
+      "help": "Mostra il grafico dello storico di valutazione"
+    },
+    "field.display.led_brightness": {
+      "label": "Luminosità LED",
+      "boardLabel": "LED: {value}",
+      "help": "Livello di luminosità dei LED della scacchiera"
+    },
+    "field.display.pegasus_override_brightness": {
+      "label": "Sovrascrivi luminosità Pegasus",
+      "help": "L'app DGT Chess invia una luminosità LED fissa. Se attivo, per i LED Pegasus vale invece l'impostazione Luminosità LED sopra."
+    },
+    "field.sound.enabled": {
+      "label": "Suono attivo",
+      "help": "Interruttore generale di tutti gli effetti sonori"
+    },
+    "field.sound.piece_events": {
+      "label": "Eventi dei pezzi",
+      "help": "Bip quando i pezzi vengono sollevati o posati"
+    },
+    "field.sound.game_events": {
+      "label": "Eventi di partita",
+      "help": "Bip per scacco, scacco matto e altri eventi della partita"
+    },
+    "field.sound.errors": {
+      "label": "Errori",
+      "help": "Bip in caso di errori"
+    },
+    "field.sound.key_press": {
+      "label": "Pressione tasto",
+      "help": "Bip quando si premono i tasti"
+    },
+    "field.lichess.rated": {
+      "label": "Valida",
+      "boardLabel": "Valida",
+      "help": "Le partite valide contano per il punteggio Lichess di questo account; le amichevoli no.\n\nVale per ogni ricerca che questa scacchiera pubblica, anche una dalla lobby senza nessun giocatore impostato su Lichess."
+    },
+    "field.lichess.api_token": {
+      "label": "Token API",
+      "help": "Crea un token sul server Lichess scelto con i permessi board:play, challenge:read e challenge:write"
+    },
+    "field.lichess.range": {
+      "label": "Intervallo di punteggio",
+      "help": "Intervallo di punteggio preferito degli avversari per l'abbinamento"
+    },
+    "field.system.database_uri": {
+      "label": "URI del database",
+      "help": "Lascia vuoto per lo SQLite predefinito. Accetta qualsiasi URI compatibile con SQLAlchemy."
+    }
+  }
+}

@@ -139,9 +139,9 @@ def test_the_coach_writes_in_the_device_locale(monkeypatch):
     Language setting", which has not existed for some time -- the coach's
     language is derived from the device locale, so the help pointed at a screen
     the user could never find. The help now says the coach follows this setting,
-    and this holds the behaviour that claim rests on. Polish is used because it
+    and this holds the behaviour that claim rests on. Italian is used because it
     was added last, so a mapping that covers only the older languages fails
-    here. How a regression manifests: the helper returns "English" on a Polish
+    here. How a regression manifests: the helper returns "English" on an Italian
     board and the coach writes in English.
 
     The web and the board both call this one function, so they cannot ask for
@@ -149,6 +149,6 @@ def test_the_coach_writes_in_the_device_locale(monkeypatch):
     """
     from universalchess.services import language_service
 
-    monkeypatch.setattr(language_service, "get_language", lambda: "pl")
+    monkeypatch.setattr(language_service, "get_language", lambda: "it")
 
-    assert language_service.current_coach_language_name() == "Polish"
+    assert language_service.current_coach_language_name() == "Italian"

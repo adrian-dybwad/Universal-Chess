@@ -169,10 +169,11 @@ describe('System tab language selector', () => {
     expect(select.value).toBe('en');
     const values = Array.from(select.options).map((o) => o.value);
     // The ten most-spoken languages, which the selector drives for both the UI
-    // and the coach, followed by Dutch and Polish -- neither is in that ten, so
-    // both sit after it in the order the catalog declares them.
+    // and the coach, followed by Dutch, Polish, and Italian -- none of those
+    // three is in that ten, so they sit after it in the order the catalog
+    // declares them.
     expect(values).toEqual([
-      'en', 'es', 'zh', 'hi', 'ar', 'fr', 'ru', 'pt', 'de', 'ja', 'nl', 'pl',
+      'en', 'es', 'zh', 'hi', 'ar', 'fr', 'ru', 'pt', 'de', 'ja', 'nl', 'pl', 'it',
     ]);
   });
 

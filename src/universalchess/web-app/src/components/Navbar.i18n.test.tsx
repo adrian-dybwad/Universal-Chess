@@ -91,6 +91,19 @@ describe('Navbar localization', () => {
     expect(menu.getAllByText('Ustawienia').length).toBeGreaterThan(0);
   });
 
+  it('renders Italian nav labels when the language is Italian', async () => {
+    // Why: Italian is the newest bundle, so it is the one most likely to be left
+    // out of the resources map or of SUPPORTED_LANGUAGES. A regression in either
+    // leaves the navbar English on an Italian device while every other case here
+    // still passes.
+    await i18n.changeLanguage('it');
+    const { container } = renderNavbar();
+    const menu = within(container);
+    expect(menu.getAllByText('Scacchiera').length).toBeGreaterThan(0);
+    expect(menu.getAllByText('Partite').length).toBeGreaterThan(0);
+    expect(menu.getAllByText('Impostazioni').length).toBeGreaterThan(0);
+  });
+
   it('renders French nav labels when the language is French', async () => {
     // Why: French is a shipped UI locale; a regression that only wired Spanish
     // would leave the navbar in English when the device language is French.
