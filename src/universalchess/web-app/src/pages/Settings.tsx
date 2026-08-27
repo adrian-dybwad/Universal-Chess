@@ -4057,9 +4057,9 @@ function ShellCommand({ command }: { command: string }) {
 /**
  * Card whose body collapses behind a header toggle, collapsed by default. Keeps
  * long or secondary sections (Game Database, Diagnostics, Original Centaur
- * troubleshooting) out of the way until
- * opened. Mirrors the SystemInfoCard toggle: a small secondary button carrying
- * aria-expanded, with the shared Show/Hide details labels.
+ * display-driver scan and troubleshooting) out of the way until opened. Mirrors
+ * the SystemInfoCard toggle: a small secondary button carrying aria-expanded,
+ * with the shared Show/Hide details labels.
  */
 function CollapsibleCard({ title, defaultExpanded = false, children }: CollapsibleCardProps) {
   const { t } = useTranslation();
@@ -4199,11 +4199,22 @@ function formatCentaurSpi(diag: CentaurDisplayDiagnostics, notFound: string, tem
 
 /**
  * Original Centaur tab card: SPI, GPIO, and panel class taken from the
- * imported original app (whatever version was uploaded). Reloads when
- * `reloadToken` changes so a successful re-import refreshes the facts.
+ * imported original app (whatever version was uploaded). Collapsed until
+ * Show details; the scan fetch runs on expand so opening the tab does not
+ * walk the uploaded binary. Reloads when `reloadToken` changes while the
+ * body is open so a successful re-import refreshes the facts.
  * Pins used at runtime come from the last Translate Mode launch.
  */
 function CentaurDisplayDriverCard({ reloadToken }: { reloadToken: number }) {
+  const { t } = useTranslation();
+  return (
+    <CollapsibleCard title={t('settingsPage.systemActions.displayDiagTitle')}>
+      <CentaurDisplayDriverDetails reloadToken={reloadToken} />
+    </CollapsibleCard>
+  );
+}
+
+function CentaurDisplayDriverDetails({ reloadToken }: { reloadToken: number }) {
   const { t } = useTranslation();
   const [diag, setDiag] = useState<CentaurDisplayDiagnostics | null>(null);
   const [error, setError] = useState(false);
@@ -4319,8 +4330,7 @@ function CentaurDisplayDriverCard({ reloadToken }: { reloadToken: number }) {
   }
 
   return (
-    <Card className="mb-6">
-      <CardHeader title={t('settingsPage.systemActions.displayDiagTitle')} />
+    <>
       <p className="text-muted mb-4">{t('settingsPage.systemActions.displayDiagIntro')}</p>
       {error && <p className="text-muted">{t('settingsPage.systemActions.displayDiagUnavailable')}</p>}
       {!error && !diag && <p className="text-muted">{t('settingsPage.systemActions.displayDiagLoading')}</p>}
@@ -4343,7 +4353,7 @@ function CentaurDisplayDriverCard({ reloadToken }: { reloadToken: number }) {
           <p className="text-muted mt-4">{t('settingsPage.systemActions.displayDiagDirectModeNote')}</p>
         </>
       )}
-    </Card>
+    </>
   );
 }
 

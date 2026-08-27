@@ -24,7 +24,8 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  *  - an Imported app display driver card reports SPI, GPIO, and panel class
  *    scanned from the uploaded original Centaur tree (not UC's epdconfig), and
  *    does not invent BCM pin numbers when that build only stores the names.
- *    Pins used at runtime come from the last Translate Mode launch.
+ *    Pins used at runtime come from the last Translate Mode launch. The scan
+ *    runs when Show details is opened, not when the tab loads.
  *
  * A regression manifests as: no "Original Centaur" tab; an "Elo"/"Threads"/"Hash"
  * input reappearing; the strength dropdown missing; the action button
@@ -208,6 +209,19 @@ function renderCentaurTab() {
       </Routes>
     </MemoryRouter>
   );
+}
+
+async function expandImportedAppDisplayDriver(): Promise<HTMLElement> {
+  const cardTitle = await screen.findByRole('heading', { name: 'Imported app display driver' });
+  const card = cardTitle.closest('.card') as HTMLElement;
+  await userEvent.click(within(card).getByRole('button', { name: 'Show details' }));
+  return card;
+}
+
+function diagnosticsFetchCount(): number {
+  return vi.mocked(fetch).mock.calls.filter(([url]) =>
+    String(url).includes('/api/system/centaur-display-diagnostics'),
+  ).length;
 }
 
 describe('Original Centaur tab', () => {
@@ -458,6 +472,7 @@ describe('Original Centaur tab', () => {
       },
     });
     renderCentaurTab();
+    await expandImportedAppDisplayDriver();
 
     expect(await screen.findByText('EPaperT5D')).toBeInTheDocument();
     expect(screen.getByText('UC8151D')).toBeInTheDocument();
@@ -492,6 +507,7 @@ describe('Original Centaur tab', () => {
       },
     });
     renderCentaurTab();
+    await expandImportedAppDisplayDriver();
 
     expect(await screen.findByText('EPaperT5D')).toBeInTheDocument();
     expect(screen.getByText(/does not store pin numbers/i)).toBeInTheDocument();
@@ -528,6 +544,7 @@ describe('Original Centaur tab', () => {
       },
     });
     renderCentaurTab();
+    await expandImportedAppDisplayDriver();
 
     expect(await screen.findByText('EPaperT5D')).toBeInTheDocument();
     const runtimeValue = screen.getByText('Pins used at runtime').nextElementSibling;
@@ -569,6 +586,7 @@ describe('Original Centaur tab', () => {
       },
     });
     renderCentaurTab();
+    await expandImportedAppDisplayDriver();
 
     const runtimeValue = (await screen.findByText('Pins used at runtime')).nextElementSibling;
     expect(runtimeValue).toHaveTextContent(
@@ -583,8 +601,33 @@ describe('Original Centaur tab', () => {
     renderCentaurTab();
 
     expect(await screen.findByRole('heading', { name: 'Imported app display driver' })).toBeInTheDocument();
+    expect(screen.queryByText(/Import the original Centaur software to inspect the display driver/i)).toBeNull();
+
+    await expandImportedAppDisplayDriver();
     expect(
       await screen.findByText(/Import the original Centaur software to inspect the display driver/i)
     ).toBeInTheDocument();
+  });
+
+  it('scans the imported app only after Show details is opened', async () => {
+    // Why: walking the uploaded Nuitka binary is the analysis this card exists
+    // to run. Doing it on every visit to the tab stalls the page for a fact
+    // the user has not asked to see. A regression that fetches diagnostics on
+    // mount, or that never fetches after expand, is this test failing.
+    installCentaurFetchMock({ centaurAvailable: true });
+    renderCentaurTab();
+
+    const cardTitle = await screen.findByRole('heading', { name: 'Imported app display driver' });
+    const card = cardTitle.closest('.card') as HTMLElement;
+    const expand = within(card).getByRole('button', { name: 'Show details' });
+    expect(expand).toHaveAttribute('aria-expanded', 'false');
+    expect(diagnosticsFetchCount()).toBe(0);
+    expect(within(card).queryByText('EPaperT5D')).toBeNull();
+
+    await userEvent.click(expand);
+
+    expect(expand).toHaveAttribute('aria-expanded', 'true');
+    expect(await screen.findByText('EPaperT5D')).toBeInTheDocument();
+    expect(diagnosticsFetchCount()).toBe(1);
   });
 });

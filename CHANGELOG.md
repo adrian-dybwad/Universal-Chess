@@ -21,9 +21,10 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   uploaded build actually uses. The tab now scans the imported Centaur
   tree (the `centaur` binary, bundled `spidev.so` / `RPi/_GPIO.so`, and
   any `.py` beside them) for panel class, controller family, SPI device
-  or path template, GPIO numbering, and pin names or numbers. A
-  different SD image updates the card; Universal Chess's own wiring and
-  the translate shim are not used as stand-ins. Pin numbers come from
+  or path template, GPIO numbering, and pin names or numbers. The scan
+  runs when Show details is opened, so visiting the tab does not walk
+  the uploaded binary. A different SD image updates the card; Universal
+  Chess's own wiring and the translate shim are not used as stand-ins. Pin numbers come from
   readable ``EPAPER_RESET = 12`` assignments when a build still has
   them, or from ARM ``mov r0, #12`` next to a load of the pin name when
   Nuitka left that pairing. Official DGT Nuitka 0.6.5 interned the BCM
