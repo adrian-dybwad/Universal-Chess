@@ -47,6 +47,17 @@ IDLE_LOW = 0
 BUFFER_LEN = int(EPD_WIDTH := 128) * 296 // 8  # 4736 bytes for 128x296 @ 1bpp
 
 
+def busy_then_idle(busy, idle):
+    """A fitted panel: BUSY is active on odd samples, idle on even samples."""
+    tick = {"n": 0}
+
+    def read(_pin=None):
+        tick["n"] += 1
+        return busy if tick["n"] % 2 else idle
+
+    return read
+
+
 class ReadBusyPolarityTests(unittest.TestCase):
     """ReadBusy must treat HIGH as busy / LOW as idle (inverse of the V2 driver)."""
 
@@ -55,14 +66,17 @@ class ReadBusyPolarityTests(unittest.TestCase):
         self._orig_digital_read = epdconfig.digital_read
         self._orig_delay_ms = epdconfig.delay_ms
         self._orig_timeout = epd2in9d.BUSY_TIMEOUT_SECONDS
+        self._orig_activity = epd2in9d.BUSY_ACTIVITY_WINDOW_SECONDS
         epdconfig.delay_ms = MagicMock()
         # The driver reads BUSY_TIMEOUT_SECONDS from the V2 module at call time.
         epd2in9d.BUSY_TIMEOUT_SECONDS = TEST_TIMEOUT_SECONDS
+        epd2in9d.BUSY_ACTIVITY_WINDOW_SECONDS = TEST_TIMEOUT_SECONDS
 
     def tearDown(self):
         epdconfig.digital_read = self._orig_digital_read
         epdconfig.delay_ms = self._orig_delay_ms
         epd2in9d.BUSY_TIMEOUT_SECONDS = self._orig_timeout
+        epd2in9d.BUSY_ACTIVITY_WINDOW_SECONDS = self._orig_activity
 
     def test_read_busy_returns_when_pin_low(self):
         # LOW means idle for SSD1680: ReadBusy must return immediately. If the
@@ -77,9 +91,13 @@ class ReadBusyPolarityTests(unittest.TestCase):
         # EPDTimeoutError within the bounded window, not loop forever.
         epdconfig.digital_read = MagicMock(return_value=BUSY_HIGH)
         started = time.monotonic()
-        with self.assertRaises(epd2in9d.EPDTimeoutError):
+        with self.assertRaises(epd2in9d.EPDTimeoutError) as ctx:
             self.epd.ReadBusy()
         self.assertLess(time.monotonic() - started, HANG_GUARD_SECONDS)
+        self.assertEqual(
+            str(ctx.exception),
+            f"SSD1680 BUSY not released within {TEST_TIMEOUT_SECONDS}s",
+        )
 
     def test_read_busy_aborts_when_should_abort_true(self):
         # Interruptible refresh: while the panel is busy (HIGH), a should_abort
@@ -103,6 +121,21 @@ class ReadBusyPolarityTests(unittest.TestCase):
             self.epd.ReadBusy(should_abort=lambda: False)
 
 
+    def test_read_busy_require_activity_raises_when_already_idle(self):
+        # Empty connector with pull-down: pin sits LOW (SSD1680 idle) and never
+        # moves. Without require_activity this returns immediately and init()
+        # reports a working V1. Manifestation if dropped: this call returns None.
+        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+        with self.assertRaises(epd2in9d.EPDTimeoutError) as ctx:
+            self.epd.ReadBusy(require_activity=True)
+        self.assertIn("no panel on the connector", str(ctx.exception))
+
+    def test_read_busy_require_activity_returns_after_busy_then_idle(self):
+        # Fitted V1: SWRESET drives BUSY high, then low.
+        epdconfig.digital_read = MagicMock(side_effect=busy_then_idle(BUSY_HIGH, IDLE_LOW))
+        self.assertIsNone(self.epd.ReadBusy(require_activity=True))
+
+
 class InitContractTests(unittest.TestCase):
     """init() must return 0/-1 (never hang) and emit the SSD1680 command set."""
 
@@ -112,9 +145,11 @@ class InitContractTests(unittest.TestCase):
         self._orig_delay_ms = epdconfig.delay_ms
         self._orig_module_init = epdconfig.module_init
         self._orig_timeout = epd2in9d.BUSY_TIMEOUT_SECONDS
+        self._orig_activity = epd2in9d.BUSY_ACTIVITY_WINDOW_SECONDS
         epdconfig.delay_ms = MagicMock()
         epdconfig.module_init = MagicMock(return_value=0)
         epd2in9d.BUSY_TIMEOUT_SECONDS = TEST_TIMEOUT_SECONDS
+        epd2in9d.BUSY_ACTIVITY_WINDOW_SECONDS = TEST_TIMEOUT_SECONDS
         # Record command opcodes; neutralize data writes and the hardware reset.
         self.commands = []
         self.epd.send_command = lambda c: self.commands.append(c)
@@ -126,14 +161,16 @@ class InitContractTests(unittest.TestCase):
         epdconfig.delay_ms = self._orig_delay_ms
         epdconfig.module_init = self._orig_module_init
         epd2in9d.BUSY_TIMEOUT_SECONDS = self._orig_timeout
+        epd2in9d.BUSY_ACTIVITY_WINDOW_SECONDS = self._orig_activity
 
     def test_init_succeeds_and_emits_ssd1680_sequence(self):
-        # Idle (LOW) panel: init returns 0 and issues the SSD1680-specific
-        # opcodes. SWRESET(0x12), driver-output(0x01), data-entry(0x11), RAM
-        # window(0x44/0x45), update-control(0x21), RAM counters(0x4E/0x4F) and
-        # the LUT register(0x32) must all appear -- none of which the UC8151D
-        # driver sends. Their presence proves the right controller protocol.
-        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+        # Fitted panel (BUSY pulses high then low): init returns 0 and issues
+        # the SSD1680-specific opcodes. SWRESET(0x12), driver-output(0x01),
+        # data-entry(0x11), RAM window(0x44/0x45), update-control(0x21), RAM
+        # counters(0x4E/0x4F) and the LUT register(0x32) must all appear -- none
+        # of which the UC8151D driver sends. Their presence proves the right
+        # controller protocol. Constant idle is the empty-connector case.
+        epdconfig.digital_read = MagicMock(side_effect=busy_then_idle(BUSY_HIGH, IDLE_LOW))
 
         result = self.epd.init()
 
@@ -155,6 +192,18 @@ class InitContractTests(unittest.TestCase):
         self.assertEqual(result, -1)
         self.assertTrue(self.epd.busy_timeout_occurred)
 
+    def test_init_fails_when_busy_stays_idle(self):
+        # Empty connector / pull-down: BUSY is already LOW and never moves.
+        # Manifestation if the activity check is dropped: init() returns 0 and
+        # the System card shows "Panel initialized and responding" as V1.
+        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+
+        result = self.epd.init()
+
+        self.assertEqual(result, -1)
+        self.assertTrue(self.epd.busy_timeout_occurred)
+        self.assertIn("no panel on the connector", self.epd.init_error)
+
 
 class Il3820DriverTests(unittest.TestCase):
     """The IL3820 profile must use the IL3820-native init, not the SSD1680 path.
@@ -173,7 +222,7 @@ class Il3820DriverTests(unittest.TestCase):
         self._orig_digital_read = epdconfig.digital_read
         self._orig_delay_ms = epdconfig.delay_ms
         self._orig_module_init = epdconfig.module_init
-        epdconfig.digital_read = MagicMock(return_value=IDLE_LOW)
+        epdconfig.digital_read = MagicMock(side_effect=busy_then_idle(BUSY_HIGH, IDLE_LOW))
         epdconfig.delay_ms = MagicMock()
         epdconfig.module_init = MagicMock(return_value=0)
 

@@ -107,7 +107,10 @@ class Manager:
         try:
             result = self._epd.init()
             if result != 0:
-                raise RuntimeError("Failed to initialize e-Paper display")
+                detail = getattr(self._epd, "init_error", None) or (
+                    "e-Paper display init returned failure"
+                )
+                raise RuntimeError(detail)
             
             self._scheduler.start()
             time.sleep(0.1)

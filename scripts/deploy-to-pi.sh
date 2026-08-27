@@ -284,18 +284,27 @@ fi
 
 # sudo via --rsync-path has no TTY, so a board whose SSH user cannot
 # NOPASSWD never prompts -- the operator sees "a terminal is required"
-# even in a real terminal. Probe first. ssh exit 255 is unreachable, not
-# "needs a password"; any other non-zero is treated as a passworded sudo.
+# even in a real terminal. Probe first.
+# ssh exit 255 is *not* only "unreachable". BatchMode=yes also exits 255
+# when the host answered "Permission denied" because this key is not in
+# authorized_keys; a password login still works (interactive ssh prompts).
+# That case uses the same TTY staging path as passworded sudo, so later
+# ssh/rsync can prompt. Connection refused / timeout / host-key failure
+# stay fatal.
 ELEVATE_VIA_TTY=0
 if [[ $ELEVATE -eq 1 && $DRY_RUN -eq 0 ]]; then
 	set +e
-	$SSH_OPTS -o BatchMode=yes "$HOST" "sudo -n true" >/dev/null 2>&1
+	probe_err=$($SSH_OPTS -o BatchMode=yes "$HOST" "sudo -n true" 2>&1)
 	probe_rc=$?
 	set -e
 	if [[ $probe_rc -eq 0 ]]; then
 		RSYNC_FLAGS+=(--rsync-path="$REMOTE_RSYNC")
+	elif [[ $probe_rc -eq 255 && "$probe_err" == *"Permission denied"* ]]; then
+		ELEVATE_VIA_TTY=1
+		echo "SSH key not accepted for ${HOST}; staging via password login."
 	elif [[ $probe_rc -eq 255 ]]; then
 		echo "Cannot reach ${HOST} (ssh exit 255); aborting." >&2
+		echo "$probe_err" >&2
 		exit 255
 	else
 		ELEVATE_VIA_TTY=1

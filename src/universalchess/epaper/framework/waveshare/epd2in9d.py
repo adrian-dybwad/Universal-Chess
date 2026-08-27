@@ -80,6 +80,14 @@ UC8151D_BWR_RED_INVERTED = False
 # disables the display instead of hanging.
 BUSY_TIMEOUT_SECONDS = 5.0
 
+# How long a probe will wait to see BUSY leave idle after a command that must
+# make a fitted panel busy (POWER ON 0x04, SSD1680 SWRESET 0x12). An empty
+# connector sits at the resistor's idle level and never moves; without this
+# window init() treats "already idle" as success and the System card reports a
+# working panel. Tight-polled (no 10 ms sleep) so a ~10 ms SWRESET pulse is
+# not missed. Runtime refreshes do not use this check.
+BUSY_ACTIVITY_WINDOW_SECONDS = 0.2
+
 
 class EPDTimeoutError(RuntimeError):
     """Raised when the panel BUSY line never reaches idle within the timeout."""
@@ -199,6 +207,13 @@ class EPD:
         # panel signature). Lets the startup selector distinguish that case --
         # which warrants the SSD1680 fallback -- from other init failures.
         self.busy_timeout_occurred = False
+        # True after a successful init() that observed BUSY leave idle. Later
+        # inits on this instance (live profile switch) skip the activity check:
+        # POWER ON on an already-powered panel may not pulse BUSY, and that
+        # must not be treated as an empty connector.
+        self._busy_activity_confirmed = False
+        # Message from the most recent failed init(), for Manager to surface.
+        self.init_error = None
         # Store the last image sent for partial refresh
         self.buffer = [0xFF] * int(self.width * self.height / 8)
         # Last RED frame sent to the panel (three-color mode). All-0xFF = no red,
@@ -283,37 +298,59 @@ class EPD:
         epdconfig.spi_writebyte2(data)
         epdconfig.digital_write(self.cs_pin, 1)
         
-    def ReadBusy(self, should_abort=None):
+    def ReadBusy(self, should_abort=None, require_activity=False):
         """Poll the panel BUSY line until idle, bounded by BUSY_TIMEOUT_SECONDS.
 
         Waits while the pin reads LOW (busy) and returns once it reads HIGH
         (idle). An unresponsive or incompatible panel -- notably a V1 panel with
-        inverted BUSY polarity, or no panel at all -- never drives the expected
-        idle level, so without a deadline this loop never returns and the
-        display thread hangs. The bounded wait converts that hang into an
-        EPDTimeoutError; init() catches it and returns -1.
+        inverted BUSY polarity -- never drives the expected idle level, so
+        without a deadline this loop never returns and the display thread
+        hangs. The bounded wait converts that hang into an EPDTimeoutError;
+        init() catches it and returns -1.
+
+        ``require_activity`` is the empty-connector probe: a fitted panel
+        drives BUSY low after POWER ON, then high. A disconnected pin sits at
+        the pull resistor and never moves, so "already idle" is not success.
+        Tight-polls for :data:`BUSY_ACTIVITY_WINDOW_SECONDS` looking for the
+        busy edge, then waits for idle as usual. Refresh waits leave this
+        False -- they already know a panel is there.
 
         Args:
             should_abort: optional zero-arg predicate polled each tick. When it
                 returns True (newer frame queued, or shutdown), the wait raises
                 RefreshInterrupted so the caller can abort and restart with the
                 new data. Distinct from EPDTimeoutError (a dead panel).
+            require_activity: if True, BUSY must be observed busy before idle
+                is accepted. Used only by the first init() on an instance.
 
         Raises:
-            EPDTimeoutError: if BUSY does not reach idle within the timeout.
+            EPDTimeoutError: if BUSY does not reach idle within the timeout,
+                or (when require_activity) never left idle.
             RefreshInterrupted: if should_abort() returns True during the wait.
         """
         deadline = time.monotonic() + BUSY_TIMEOUT_SECONDS
-        while(epdconfig.digital_read(self.busy_pin) == 0):  # LOW: busy, HIGH: idle
+        activity_deadline = time.monotonic() + BUSY_ACTIVITY_WINDOW_SECONDS
+        saw_busy = False
+        while True:
+            is_busy = epdconfig.digital_read(self.busy_pin) == 0  # LOW: busy
+            if is_busy:
+                saw_busy = True
+            elif saw_busy or not require_activity:
+                return
+            elif time.monotonic() >= activity_deadline:
+                raise EPDTimeoutError(
+                    f"BUSY stayed idle for {BUSY_ACTIVITY_WINDOW_SECONDS}s after "
+                    "POWER ON; no panel on the connector"
+                )
             if should_abort is not None and should_abort():
                 raise RefreshInterrupted("BUSY wait aborted: newer frame pending")
-            self.send_command(0x71)
-            epdconfig.delay_ms(10)
-            if time.monotonic() >= deadline:
+            if saw_busy and time.monotonic() >= deadline:
                 raise EPDTimeoutError(
-                    f"BUSY not released within {BUSY_TIMEOUT_SECONDS}s; panel "
-                    "unresponsive or incompatible (e.g. inverted BUSY polarity)"
+                    f"BUSY not released within {BUSY_TIMEOUT_SECONDS}s"
                 )
+            if saw_busy:
+                self.send_command(0x71)
+                epdconfig.delay_ms(10)
         
     def TurnOnDisplay(self, should_abort=None):
         self.send_command(0x12)
@@ -331,6 +368,7 @@ class EPD:
         
     def init(self):
         self.busy_timeout_occurred = False
+        self.init_error = None
         if (epdconfig.module_init() != 0):
             return -1
         # EPD hardware init start
@@ -338,17 +376,23 @@ class EPD:
         
         self.send_command(0x04)
         try:
-            self.ReadBusy() #waiting for the electronic paper IC to release the idle signal
+            # First init on this instance must see BUSY leave idle after POWER
+            # ON. An empty connector with a pull-up sits HIGH (already idle)
+            # and used to be reported as a working V2 panel.
+            self.ReadBusy(require_activity=not self._busy_activity_confirmed)
         except EPDTimeoutError as e:
             # Panel never signaled idle: unresponsive or incompatible hardware
-            # (e.g. a V1 panel). Report failure via the documented -1 result so
-            # Manager.initialize() disables the display rather than hanging the
-            # board at startup. This is the one-time startup detection; runtime
-            # refreshes re-call init() and are themselves bounded by the same
-            # timeout, so a display that fails later keeps being retried.
+            # (e.g. a V1 panel), or BUSY never left idle (no panel). Report
+            # failure via the documented -1 result so Manager.initialize()
+            # disables the display rather than hanging the board at startup.
+            # This is the one-time startup detection; runtime refreshes re-call
+            # init() and are themselves bounded by the same timeout, so a
+            # display that fails later keeps being retried.
             self.busy_timeout_occurred = True
+            self.init_error = str(e)
             log.error(f"[EPD] init aborted: {e}")
             return -1
+        self._busy_activity_confirmed = True
 
         self.send_command(0x00)     #panel setting
         if self.three_color:

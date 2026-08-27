@@ -153,6 +153,10 @@ class EPD:
         # True when the most recent init() failed specifically on a BUSY timeout.
         # main reads this to populate the cross-process display-status record.
         self.busy_timeout_occurred = False
+        # True after a successful init() that observed BUSY leave idle. Later
+        # inits on this instance skip the activity check (see UC8151D).
+        self._busy_activity_confirmed = False
+        self.init_error = None
 
     def _red_blank(self) -> list:
         """The 'no red' red-channel buffer in getbuffer_red mask space."""
@@ -222,7 +226,7 @@ class EPD:
         epdconfig.spi_writebyte2(data)
         epdconfig.digital_write(self.cs_pin, 1)
 
-    def ReadBusy(self, timeout_seconds=None, should_abort=None):
+    def ReadBusy(self, timeout_seconds=None, should_abort=None, require_activity=False):
         """Poll BUSY until idle, bounded by a timeout.
 
         SSD1680 BUSY polarity is the INVERSE of the UC8151D V2 driver: the line
@@ -240,6 +244,12 @@ class EPD:
             exactly what blanked the panel (Clear()'s 0xF7 activation timed out at
             5s, so the content draw after it never ran).
 
+        ``require_activity`` is the empty-connector probe: SWRESET (0x12) makes a
+        fitted SSD1680 drive BUSY high, then low. A disconnected pin with
+        pull-down sits LOW (already idle) and never moves, so "already idle"
+        is not success. Tight-polls for BUSY_ACTIVITY_WINDOW_SECONDS looking
+        for the busy edge. Refresh waits leave this False.
+
         Args:
             timeout_seconds: deadline override; defaults to the short
                 BUSY_TIMEOUT_SECONDS read from the V2 module at call time (single
@@ -249,23 +259,39 @@ class EPD:
                 RefreshInterrupted so the caller can abort the in-flight refresh
                 and restart with the new data. Distinct from EPDTimeoutError,
                 which means the panel is unresponsive.
+            require_activity: if True, BUSY must be observed busy before idle
+                is accepted. Used only by the first init() on an instance.
 
         Raises:
-            EPDTimeoutError: if BUSY does not reach idle within the timeout.
+            EPDTimeoutError: if BUSY does not reach idle within the timeout,
+                or (when require_activity) never left idle.
             RefreshInterrupted: if should_abort() returns True during the wait.
         """
         timeout = timeout_seconds if timeout_seconds is not None else epd2in9d.BUSY_TIMEOUT_SECONDS
         deadline = time.monotonic() + timeout
-        while epdconfig.digital_read(self.busy_pin) == 1:  # HIGH: busy, LOW: idle
+        activity_deadline = time.monotonic() + epd2in9d.BUSY_ACTIVITY_WINDOW_SECONDS
+        saw_busy = False
+        while True:
+            is_busy = epdconfig.digital_read(self.busy_pin) == 1  # HIGH: busy
+            if is_busy:
+                saw_busy = True
+            elif saw_busy or not require_activity:
+                return
+            elif time.monotonic() >= activity_deadline:
+                raise EPDTimeoutError(
+                    "SSD1680 BUSY stayed idle for "
+                    f"{epd2in9d.BUSY_ACTIVITY_WINDOW_SECONDS}s after SWRESET; "
+                    "no panel on the connector"
+                )
             if should_abort is not None and should_abort():
                 raise RefreshInterrupted(
                     "SSD1680 BUSY wait aborted: newer frame pending")
-            epdconfig.delay_ms(10)
-            if time.monotonic() >= deadline:
+            if saw_busy and time.monotonic() >= deadline:
                 raise EPDTimeoutError(
-                    f"SSD1680 BUSY not released within {timeout}s; "
-                    "panel unresponsive or not an SSD1680/IL3820-family panel"
+                    f"SSD1680 BUSY not released within {timeout}s"
                 )
+            if saw_busy:
+                epdconfig.delay_ms(10)
 
     def _full_activation_byte(self) -> int:
         """Return the 0x22 (display update control 2) payload for a full refresh.
@@ -369,6 +395,7 @@ class EPD:
         each get their own faithful sequence.
         """
         self.busy_timeout_occurred = False
+        self.init_error = None
         if epdconfig.module_init() != 0:
             return -1
         try:
@@ -381,11 +408,14 @@ class EPD:
                 self._init_ssd1680()
         except EPDTimeoutError as e:
             # Panel never signaled idle: unresponsive or not an SSD16xx-family
-            # panel. Report -1 so Manager.initialize() disables the display
-            # rather than hanging; main records the timeout for the status card.
+            # panel, or BUSY never left idle (no panel). Report -1 so
+            # Manager.initialize() disables the display rather than hanging;
+            # main records the timeout for the status card.
             self.busy_timeout_occurred = True
+            self.init_error = str(e)
             log.error(f"[EPD SSD1680] init aborted: {e}")
             return -1
+        self._busy_activity_confirmed = True
         log.info(
             "[EPD SSD1680] init ok: profile=%s driver=%s use_otp=%s "
             "full_activation=0x%02X high_contrast=%s three_color=%s",
@@ -410,7 +440,7 @@ class EPD:
         """
         self.ReadBusy()
         self.send_command(0x12)  # SWRESET
-        self.ReadBusy()
+        self.ReadBusy(require_activity=not self._busy_activity_confirmed)
 
         self.send_command(0x01)  # driver output control
         self.send_data(0x27)
@@ -453,7 +483,7 @@ class EPD:
         loaded per partial refresh by DisplayPartial().
         """
         self.send_command(0x12)  # SWRESET
-        self.ReadBusy()
+        self.ReadBusy(require_activity=not self._busy_activity_confirmed)
 
         self.send_command(0x01)  # driver output control
         self.send_data(0x27)
@@ -525,7 +555,7 @@ class EPD:
         self.send_command(0x22)  # power on: enable clock + analog (no display)
         self.send_data(0xC0)
         self.send_command(0x20)  # master activation
-        self.ReadBusy()
+        self.ReadBusy(require_activity=not self._busy_activity_confirmed)
 
     def _apply_high_contrast(self):
         """Rewrite source (0x04) and VCOM (0x2C) with higher-contrast voltages.

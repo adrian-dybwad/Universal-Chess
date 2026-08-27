@@ -90,18 +90,24 @@ def _write_shim(
     stdin_log = bin_dir / f"{name}.stdin"
     shim = bin_dir / name
     stderr_line = f'printf "%s\\n" {shlex.quote(stderr)} >&2' if stderr else ":"
-    selective_failure = (
-        f'if [[ "$*" == *{shlex.quote(fail_pattern)}* ]]; then exit {exit_code}; fi\nexit 0'
-        if fail_pattern
-        else f"exit {exit_code}"
-    )
+    if fail_pattern:
+        # Stderr belongs to the failing invocation only. Emitting it on every
+        # ssh call would smear "Permission denied" onto later, successful steps.
+        exit_block = (
+            f'if [[ "$*" == *{shlex.quote(fail_pattern)}* ]]; then\n'
+            f"  {stderr_line}\n"
+            f"  exit {exit_code}\n"
+            f"fi\n"
+            f"exit 0"
+        )
+    else:
+        exit_block = f"{stderr_line}\nexit {exit_code}"
     shim.write_text(
         "#!/usr/bin/env bash\n"
         f'for a in "$@"; do printf "%s\\n" "$a" >> {shlex.quote(str(log))}; done\n'
         f'printf -- "--END--\\n" >> {shlex.quote(str(log))}\n'
         f"cat >> {shlex.quote(str(stdin_log))}\n"
-        f"{stderr_line}\n"
-        f"{selective_failure}\n"
+        f"{exit_block}\n"
     )
     shim.chmod(0o755)
     return log, stdin_log
@@ -132,10 +138,21 @@ def deploy(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
 
-    def run(*args, rsync_exit=0, ssh_exit=0, rsync_stderr="", ssh_fail_pattern=""):
+    def run(
+        *args,
+        rsync_exit=0,
+        ssh_exit=0,
+        rsync_stderr="",
+        ssh_stderr="",
+        ssh_fail_pattern="",
+    ):
         rsync_log, _ = _write_shim(bin_dir, "rsync", rsync_exit, rsync_stderr)
         ssh_log, _ = _write_shim(
-            bin_dir, "ssh", ssh_exit, fail_pattern=ssh_fail_pattern
+            bin_dir,
+            "ssh",
+            ssh_exit,
+            stderr=ssh_stderr,
+            fail_pattern=ssh_fail_pattern,
         )
         env = dict(os.environ)
         env["PATH"] = f"{bin_dir}:{env['PATH']}"
@@ -276,6 +293,40 @@ class TestElevationAndOwnership:
         assert "chown" in joined, joined
         for directory in ("db", "web/static"):
             assert directory in joined, (directory, joined)
+
+    def test_batchmode_permission_denied_is_not_treated_as_unreachable(self, deploy):
+        # Why: BatchMode=yes exits 255 when the authorized_keys file does not
+        # contain this client's key, even though the host is up and password
+        # login works (Orange Pi Zero 2W: interactive ssh prompts, deploy
+        # printed "Cannot reach" and aborted). Manifestation if 255 is always
+        # "unreachable": rsync never runs and the password prompt never appears.
+        proc, rsync_calls, ssh_calls = deploy(
+            ssh_exit=255,
+            ssh_fail_pattern="sudo -n",
+            ssh_stderr="pa@test-board.invalid: Permission denied (publickey,password).",
+        )
+        assert proc.returncode == 0, proc.stderr
+        assert "Cannot reach" not in proc.stderr
+        assert rsync_calls, "rsync was never invoked"
+        argv = rsync_calls[0]
+        assert not any(a.startswith("--rsync-path=") for a in argv), argv
+        assert any("uc-deploy-staging" in a for a in argv), argv
+        apply = [c for c in ssh_calls if "-t" in c]
+        assert apply, ssh_calls
+
+    def test_batchmode_connection_failure_is_still_unreachable(self, deploy):
+        # Inverse: a real 255 (timeout, refused, no route) must still abort
+        # before rsync, not fall through to a password prompt against a host
+        # that is not there. Manifestation if Permission denied is the only
+        # 255 check and it is inverted: a down board hangs in rsync.
+        proc, rsync_calls, _ = deploy(
+            ssh_exit=255,
+            ssh_fail_pattern="sudo -n",
+            ssh_stderr="ssh: connect to host test-board.invalid port 22: Connection timed out",
+        )
+        assert proc.returncode == 255, proc.stderr
+        assert "Cannot reach" in proc.stderr
+        assert rsync_calls == []
 
 
 class TestRuntimeOwnershipIsRestored:

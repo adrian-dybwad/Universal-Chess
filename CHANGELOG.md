@@ -1202,6 +1202,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **`deploy-to-pi.sh` aborted with "Cannot reach" on a board that accepted
+  password SSH**: the sudo-NOPASSWD probe uses `BatchMode=yes`, which
+  exits 255 both when the host is down and when the key is not in
+  `authorized_keys`. Interactive `ssh pa@orangepizero2w.local` prompted
+  for a password and logged in; the deploy treated that 255 as
+  unreachable and never offered a prompt. A BatchMode 255 whose stderr
+  contains `Permission denied` now takes the existing TTY staging path
+  so rsync and `ssh -t sudo` can ask for a password. Connection timeout,
+  refused, and host-key failures still abort.
+
 - **Installing the package on Armbian failed at "Installing python
   packages"**: the postinst builds `/opt/universalchess/.venv` with
   `python3 -m venv`, but nothing declared `python3-venv`, which is where
@@ -1279,6 +1289,26 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   pull-downs the same line (`gpiozero.InputDevice(pull_up=False)`);
   libgpiod now requests `Bias.PULL_DOWN` so a floating BUSY reads LOW and
   the UC8151D probe times out instead of succeeding.
+
+- **An empty e-paper connector was reported as a working panel**: `init()`
+  succeeded whenever BUSY was already at that driver's idle level. Neither
+  controller is readable over SPI, so the wait never required the pin to
+  move. A disconnected BUSY with pull-down sits LOW (SSD1680 idle), so both
+  a Pi and an Orange Pi after the pull-down alignment reported V1
+  "Panel initialized and responding." A disconnected pin with pull-up sits
+  HIGH (UC8151D idle) and reported V2. The first `init()` on an instance
+  now requires BUSY to leave idle after the command that must busy a fitted
+  panel (UC8151D POWER ON, SSD1680 SWRESET, IL3820 power-on). An empty
+  connector fails that probe; a later `init()` on the same instance (live
+  waveform change) does not, because POWER ON on an already-powered panel
+  may not pulse BUSY.
+
+- **A BUSY-timeout on the System card guessed a cause**: the UC8151D wait
+  reported "panel unresponsive or incompatible (e.g. inverted BUSY
+  polarity)" and the SSD1680 wait named "not an SSD1680/IL3820-family
+  panel". Neither is observed -- those are hypotheses for why the pin
+  stayed busy. The messages now state only that BUSY was not released
+  within the wait.
 
 - **Orange Pi e-paper failed with "No module named 'gpiod'" after a
   successful install**: the GPIO dependency was declared as
