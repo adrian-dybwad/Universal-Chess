@@ -153,8 +153,7 @@ def init_display() -> Tuple[Optional[Manager], Optional[SplashScreen]]:
     hint = ds.hint_from_status(prior)
     order = ds.controller_order(hint)
     # Carried forward only when the hint skips the UC8151D probe: that driver is
-    # the only one that can observe the V1 BUSY-timeout signature, and the flag
-    # gates the web UI's display-tuning card.
+    # the only one that can observe the V1 BUSY-timeout signature.
     prior_busy_timeout = bool(prior.get('busy_timeout')) if prior else False
     first, second = order
     hinted = first != ds.CONTROLLER_UC8151D
@@ -186,7 +185,8 @@ def init_display() -> Tuple[Optional[Manager], Optional[SplashScreen]]:
         # Latch the failure for the (separate) web process: the panel never
         # initialized (e.g. a V1 panel that trips the BUSY timeout), so the
         # System card must show "Not responding" rather than the configured V2.
-        # busy_timeout still propagates so the UI reveals the display-tuning card.
+        # busy_timeout still propagates so the next boot can skip the UC8151D
+        # probe; Display tuning stays offered regardless.
         hardware_info.write_display_status(
             initialized=False,
             error=outcome.error,

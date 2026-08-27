@@ -166,13 +166,17 @@ bytes, full always OTP). Profiles live in
 registry — every register LUT is transcribed verbatim from a credited published
 source, never invented (see "Data integrity" in that module).
 
-Exposed in the web UI under **Settings → System → "Display tuning"** as a
+Exposed in the web UI under **Settings → Display → "Display tuning"** as a
 dropdown plus a high-contrast toggle, backed by `GET/POST
-/api/system/display-tuning`. The card is **shown whenever the board reports an
-initialized panel with a known controller** (`_display_tuning_available()` /
-`_active_waveform_controller()`), and the dropdown is **filtered to the active
-controller** so it never offers a table the live driver cannot drive. The card
-title/copy adapt to the active controller (V1 vs V2). The selection is stored in
+/api/system/display-tuning`. The card is **always shown**. When the board
+reports an initialized panel with a known controller
+(`_active_waveform_controller()`), the dropdown is **filtered to the active
+controller** so it never offers a table the live driver cannot drive. When no
+controller is known (init failed, or the board has not reported), **every
+profile is listed** so a waveform can still be persisted for the next boot —
+hiding the card then is the recovery path the user needs. The card
+title/copy adapt to the active controller (V1 vs V2), or explain that no
+panel was detected. The selection is stored in
 `[display] waveform_profile` / `high_contrast` (one key shared across
 controllers; each driver resolves it against its own family, falling back to that
 controller's verified default for a mismatched key — e.g. after a panel swap).
@@ -372,7 +376,8 @@ the board. The live panel is SSD1680, so the SSD1680 driver is the one to tune
   resolution + live-apply handling.
 - `src/universalchess/web/app.py` (`/api/system/display-tuning`,
   `_display_tuning_available`, `_active_waveform_controller`) — web API +
-  visibility gate + active-controller filtering + live-apply command.
+  always-offered card + active-controller filtering (all profiles when none
+  is live) + live-apply command.
 - `src/universalchess/web-app/src/pages/Settings.tsx` (`DisplayTuningCard`) — UI
   dropdown + high-contrast toggle + per-controller copy + source credits.
 - `src/universalchess/web-app/src/pages/Licenses.tsx` — waveform-source credits.

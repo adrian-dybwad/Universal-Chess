@@ -3845,15 +3845,15 @@ def _read_selected_profile_key(controller=None) -> str:
 
 
 def _display_tuning_available() -> bool:
-    """Whether to offer the display-tuning card: whenever a panel is active.
+    """Whether to offer the display-tuning card.
 
-    Both controllers have selectable waveform profiles now (the SSD1680 V1
-    fallback and the primary UC8151D, including replacement-panel variants), so
-    the card is surfaced whenever the board reported an initialized panel with a
-    known controller family. It stays hidden when the display is disabled or the
-    board has not reported yet.
+    Always True. The card is the recovery path when the panel failed to
+    initialize or has not reported yet: hiding it then leaves no way to pick a
+    waveform for the next boot. Live apply is best-effort; persistence still
+    works with no panel. The dropdown still filters to the live controller when
+    one is known (see ``_active_waveform_controller``).
     """
-    return _active_waveform_controller() is not None
+    return True
 
 
 @app.route("/api/system/display-tuning", methods=["GET"])
@@ -3864,24 +3864,26 @@ def api_get_display_tuning():
     profile metadata (key/label/source/url/controller) for the *active*
     controller and the current selection -- no secrets, no raw waveform bytes.
     The list is filtered to the live controller so the UI never offers a table
-    the active driver cannot drive. ``available`` is False until the board
-    reports an initialized panel, hiding the card when there is nothing to tune.
+    the active driver cannot drive. When no controller is known (init failed, or
+    the board has not reported), every profile is listed so a waveform can still
+    be persisted for the next boot. ``available`` is always True: the card is
+    the recovery path when the panel is down, so it must not be hidden.
     """
     try:
         from universalchess.epaper.framework.waveshare import waveform_profiles as wp
         controller = _active_waveform_controller()
         return jsonify({
-            "available": controller is not None,
+            "available": _display_tuning_available(),
             "active_controller": controller,
             "profiles": wp.profiles_metadata(controller),
             "selected": _read_selected_profile_key(controller),
             "high_contrast": display_settings.read_flag("high_contrast"),
             # Three-color (red/white/black) mode. Both the UC8151D (V2) and SSD1680
-            # (V1) drivers can drive tri-color BWR panels, so the toggle is offered
-            # whenever a panel is active; tri-color is a property of the physical
-            # panel, not the controller family.
+            # (V1) drivers can drive tri-color BWR panels. Offered even when no
+            # panel is live so a blank board can still persist the flag for the
+            # next boot.
             "three_color": display_settings.read_flag("three_color"),
-            "three_color_supported": controller is not None,
+            "three_color_supported": True,
             # Update batching (default on): coalesce a rapid burst of refreshes to
             # one refresh of the final frame so the panel does not lag behind when
             # updates arrive faster than it can draw. Applies to every panel, so

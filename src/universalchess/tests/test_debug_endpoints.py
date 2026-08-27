@@ -136,47 +136,45 @@ def test_set_debug_serial_requires_auth(monkeypatch):
     assert resp.status_code == 401
 
 
-def test_display_tuning_available_for_any_initialized_known_controller(monkeypatch):
-    """availability is True for any initialized panel with a known controller.
+def test_display_tuning_available_even_when_no_panel(monkeypatch):
+    """availability is True even when no panel initialized -- that is the recovery path.
 
-    Why this test exists: the card now tunes BOTH controllers (the primary
-    UC8151D, including replacement-panel variants, and the SSD1680 V1 fallback),
-    so it must appear whenever the board reports an initialized panel whose
-    controller maps to a profile family -- not only after a V1 BUSY timeout. It
-    must stay hidden when nothing is reported, the display is disabled, or the
-    controller is unrecognized (no profiles to offer).
+    Why this test exists: hiding the card when init failed, the board had not
+    reported, or the controller was unrecognized left no way to pick a waveform
+    for the next boot. A blank or failed panel is exactly when tuning is needed.
+    The card stays offered; live apply is best-effort and persistence still works
+    with no panel. The active-controller mapping is unchanged: a live V2/V1
+    panel still reports its family so the dropdown can filter.
 
-    How a regression manifests: availability reverts to the busy-timeout gate
-    (hiding the card on a healthy V2 panel) or returns True for a disabled /
-    unknown-controller panel (showing an empty dropdown).
+    How a regression manifests: availability is False when status is missing,
+    initialized is False, or the controller is unrecognized, so the UI hides
+    the only control that can recover the panel.
     """
     from universalchess.board import hardware_info
 
-    # No status yet -> hidden.
     monkeypatch.setattr(hardware_info, "read_display_status", lambda: None)
-    assert webapp._display_tuning_available() is False
+    assert webapp._display_tuning_available() is True
+    assert webapp._active_waveform_controller() is None
 
-    # Disabled panel (init failed) -> hidden even if a controller is named.
     monkeypatch.setattr(hardware_info, "read_display_status",
                         lambda: {"initialized": False, "active_controller": "UC8151D"})
-    assert webapp._display_tuning_available() is False
+    assert webapp._display_tuning_available() is True
+    assert webapp._active_waveform_controller() is None
 
-    # Healthy V2 panel -> available (the new behavior; previously hidden).
     monkeypatch.setattr(hardware_info, "read_display_status",
                         lambda: {"initialized": True, "active_controller": "UC8151D"})
     assert webapp._display_tuning_available() is True
     assert webapp._active_waveform_controller() == "uc8151d"
 
-    # V1 fallback panel -> available.
     monkeypatch.setattr(hardware_info, "read_display_status",
                         lambda: {"initialized": True, "active_controller": "SSD1680"})
     assert webapp._display_tuning_available() is True
     assert webapp._active_waveform_controller() == "ssd16xx"
 
-    # Initialized but an unrecognized controller -> hidden (no profile family).
     monkeypatch.setattr(hardware_info, "read_display_status",
                         lambda: {"initialized": True, "active_controller": "MYSTERY"})
-    assert webapp._display_tuning_available() is False
+    assert webapp._display_tuning_available() is True
+    assert webapp._active_waveform_controller() is None
 
 
 def test_download_debug_log_serves_file(client, monkeypatch, tmp_path):
@@ -271,6 +269,68 @@ def test_get_display_tuning_reports_profiles_and_selection(client, monkeypatch):
         assert set(entry.keys()) == {"key", "label", "source", "url", "controller"}
         assert entry["source"]
         assert entry["controller"] == "uc8151d"
+
+
+def test_get_display_tuning_offers_all_profiles_when_no_panel(client, monkeypatch):
+    """GET with no live controller must still offer the card and every profile.
+
+    Why this test exists: a failed or not-yet-reported panel is the recovery
+    case. The card has to stay available with both controller families in the
+    dropdown so the user can persist a waveform for the next boot. Filtering to
+    an empty list (or setting available False) is what hid the card.
+
+    How a regression manifests: available is False, profiles is empty, or only
+    one family is listed, so there is nothing to select while the panel is down.
+    """
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: None)
+    monkeypatch.setattr(webapp, "_read_selected_profile_key",
+                        lambda controller=None: "gdem029t94")
+    monkeypatch.setattr(display_settings, "read_flag",
+                        lambda name, default=False: default)
+
+    resp = client.get("/api/system/display-tuning")
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body["available"] is True
+    assert body["active_controller"] is None
+    assert body["three_color_supported"] is True
+    families = {entry["controller"] for entry in body["profiles"]}
+    assert families == {"uc8151d", "ssd16xx"}
+    assert {entry["key"] for entry in body["profiles"]} >= {
+        "gdem029t94", "uc8151d_waveshare",
+    }
+
+
+def test_set_display_tuning_persists_profile_when_no_panel(client, monkeypatch):
+    """POST must persist a known profile even when no panel is live.
+
+    Why this test exists: recovery is writing a waveform for the next boot. The
+    endpoint already accepts any known key when the controller is unknown; this
+    pins that a UC8151D key is saved rather than 400'd because no panel is up.
+
+    How a regression manifests: POST returns 400 / writes nothing, so a blank
+    panel cannot be given a profile to try on reboot.
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: None)
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+    monkeypatch.setattr(webapp, "_read_selected_profile_key",
+                        lambda controller=None: "uc8151d_t5d")
+    monkeypatch.setattr(display_settings, "read_flag",
+                        lambda name, default=False: default)
+    import universalchess.services.game_broadcast as gb
+    monkeypatch.setattr(gb, "send_board_command", lambda cmd, params=None: False)
+
+    resp = client.post(
+        "/api/system/display-tuning",
+        data=json.dumps({"profile": "uc8151d_t5d"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body["success"] is True
+    assert body["applied_live"] is False
+    assert saved == [{"display": {"waveform_profile": "uc8151d_t5d"}}]
 
 
 def test_set_display_tuning_persists_and_applies_live(client, monkeypatch):

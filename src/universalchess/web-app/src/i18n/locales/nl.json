@@ -791,6 +791,8 @@
       "descriptionUc8151d": "Als een vervangend paneel bij gedeeltelijke verversingen (bijv. de klok) schaduwen laat zien, uitsmeert of vaag lijkt, probeer dan een ander waveform-profiel. Een volledige verversing gebruikt altijd de ingebouwde waveform van het paneel; alleen de waveform van de gedeeltelijke verversing verandert. Elke keuze wordt direct toegepast met een volledige verversing -- geen herstart nodig.",
       "titleSsd16xx": "Schermafstemming (SSD1680)",
       "descriptionSsd16xx": "Als het paneel leeg, vaag of met schaduwen wordt weergegeven, probeer dan een ander waveform-profiel. Elke keuze wordt direct toegepast met een volledige verversing -- geen herstart nodig -- zodat je ze kunt vergelijken en degene kunt houden die een schoon beeld geeft.",
+      "titleUnknown": "Schermafstemming",
+      "descriptionUnknown": "Er is geen paneel gedetecteerd. Kies een waveform-profiel voor het paneel dat je hebt. De keuze wordt opgeslagen en toegepast bij de volgende start, en direct als het bord draait. UC8151D-profielen zijn voor V2-panelen; SSD1680-profielen voor V1-vervangingspanelen.",
       "waveformLabel": "Waveform-profiel",
       "waveformHelp": "Het recept waarmee het paneel wordt aangestuurd. Built-In gebruikt de eigen fabriekswaveform van het paneel; de andere laden een bekende tabel van de fabrikant.",
       "waveformSource": "Bron van de waveform:",

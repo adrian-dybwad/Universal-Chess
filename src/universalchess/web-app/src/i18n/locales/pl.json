@@ -805,6 +805,8 @@
       "descriptionUc8151d": "Jeśli zamienny panel zostawia zjawy, smuży lub wygląda blado przy odświeżaniu częściowym (np. zegar), spróbuj innego profilu waveform. Pełne odświeżenie zawsze używa wbudowanego waveformu panelu; zmienia się tylko waveform odświeżania częściowego. Każdy wybór jest stosowany natychmiast z pełnym odświeżeniem -- bez ponownego uruchamiania.",
       "titleSsd16xx": "Dostrajanie ekranu (SSD1680)",
       "descriptionSsd16xx": "Jeśli panel jest pusty, blady lub zostawia zjawy, spróbuj innego profilu waveform. Każdy wybór jest stosowany natychmiast z pełnym odświeżeniem -- bez ponownego uruchamiania -- więc możesz je porównać i zachować ten, który daje czysty obraz.",
+      "titleUnknown": "Dostrajanie ekranu",
+      "descriptionUnknown": "Nie wykryto panelu. Wybierz profil waveform dla panelu, który masz. Wybór jest zapisywany i stosowany przy następnym starcie, a od razu, jeśli plansza działa. Profile UC8151D są dla paneli V2; SSD1680 dla zamiennych paneli V1.",
       "waveformLabel": "Profil waveform",
       "waveformHelp": "Przepis, według którego sterowany jest panel. Built-In używa własnego fabrycznego waveformu panelu; pozostałe wczytują znaną tabelę producenta.",
       "waveformSource": "Źródło waveformu:",

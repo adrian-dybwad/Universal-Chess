@@ -1231,6 +1231,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Display tuning disappeared when the panel was the thing that needed
+  tuning**: the Settings card hid itself unless the board had already
+  reported an initialized controller, so a failed init, a board still
+  coming up, or a GET that did not land left no way to pick a waveform
+  for the next boot. The card is always shown. With no live controller
+  it lists every profile (UC8151D and SSD1680) and saves the selection
+  for the next start; live apply remains best-effort when the board is
+  running.
+
 - **`deploy-to-pi.sh` aborted with "Cannot reach" on a board that accepted
   password SSH**: the sudo-NOPASSWD probe uses `BatchMode=yes`, which
   exits 255 both when the host is down and when the key is not in

@@ -798,6 +798,8 @@
       "descriptionUc8151d": "Si un panel de repuesto deja imágenes fantasma, se emborrona o se ve tenue en las actualizaciones parciales (p. ej. el reloj), prueba un perfil de forma de onda distinto. El refresco completo siempre usa la forma de onda integrada del panel; solo cambia la del refresco parcial. Cada selección se aplica de inmediato con un refresco completo, sin reinicio.",
       "titleSsd16xx": "Ajuste de pantalla (SSD1680)",
       "descriptionSsd16xx": "Si el panel está en blanco, tenue o con imágenes fantasma, prueba un perfil de forma de onda distinto. Cada selección se aplica de inmediato con un refresco completo, sin reinicio, para que puedas compararlas y quedarte con la que dé una imagen limpia.",
+      "titleUnknown": "Ajuste de pantalla",
+      "descriptionUnknown": "No se detectó ningún panel. Elige un perfil de forma de onda para el panel que tienes. La selección se guarda y se aplica en el próximo arranque, y en vivo si el tablero está en marcha. Los perfiles UC8151D son para paneles V2; los SSD1680 para paneles de recambio V1.",
       "waveformLabel": "Perfil de forma de onda",
       "waveformHelp": "La receta usada para controlar el panel. Integrado usa la forma de onda de fábrica del propio panel; los demás cargan una tabla conocida del fabricante.",
       "waveformSource": "Fuente de la forma de onda:",

@@ -791,6 +791,8 @@
       "descriptionUc8151d": "If a replacement panel ghosts, smears, or looks faint on partial updates (e.g. the clock), try a different waveform profile. Full refresh always uses the panel's built-in waveform; only the partial-refresh waveform changes. Each selection applies immediately with a full refresh -- no reboot.",
       "titleSsd16xx": "Display tuning (SSD1680)",
       "descriptionSsd16xx": "If the panel is blank, faint, or ghosted, try a different waveform profile. Each selection is applied immediately with a full refresh -- no reboot -- so you can compare them and keep the one that produces a clean image.",
+      "titleUnknown": "Display tuning",
+      "descriptionUnknown": "No panel was detected. Choose a waveform profile for the panel you have. The selection is saved and applied on the next boot, and live if the board is running. UC8151D profiles are for V2 panels; SSD1680 profiles are for V1 replacement panels.",
       "waveformLabel": "Waveform profile",
       "waveformHelp": "The recipe used to drive the panel. Built-In uses the panel's own factory waveform; the others load a known manufacturer table.",
       "waveformSource": "Waveform source:",

@@ -791,6 +791,8 @@
       "descriptionUc8151d": "Yedek bir panel hayalet bırakıyor, lekeliyor veya kısmi güncellemelerde (örn. saat) soluk görünüyorsa başka bir waveform profili dene. Tam yenileme her zaman panelin kendi waveform'unu kullanır; yalnızca kısmi yenileme waveform'u değişir. Her seçim hemen tam yenilemeyle uygulanır -- yeniden başlatma yok.",
       "titleSsd16xx": "Ekran ayarı (SSD1680)",
       "descriptionSsd16xx": "Panel boş, soluk veya hayaletliyse başka bir waveform profili dene. Her seçim hemen tam yenilemeyle uygulanır -- yeniden başlatma yok -- böylece karşılaştırıp temiz görüntü verenini tutabilirsin.",
+      "titleUnknown": "Ekran ayarı",
+      "descriptionUnknown": "Panel algılanmadı. Elindeki panel için bir waveform profili seç. Seçim kaydedilir ve sonraki açılışta uygulanır; tahta çalışıyorsa hemen. UC8151D profilleri V2 paneller içindir; SSD1680 profilleri V1 yedek paneller içindir.",
       "waveformLabel": "Waveform profili",
       "waveformHelp": "Paneli süren reçete. Built-In panelin kendi fabrika waveform'unu kullanır; diğerleri bilinen bir üretici tablosu yükler.",
       "waveformSource": "Waveform kaynağı:",

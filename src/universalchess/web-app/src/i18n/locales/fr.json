@@ -798,6 +798,8 @@
       "descriptionUc8151d": "Si un panneau de remplacement laisse des images fantômes, bave ou paraît pâle sur les mises à jour partielles (ex. l'horloge), essayez un autre profil de forme d'onde. Le rafraîchissement complet utilise toujours la forme d'onde intégrée du panneau ; seule celle du rafraîchissement partiel change. Chaque sélection s'applique immédiatement avec un rafraîchissement complet — pas de redémarrage.",
       "titleSsd16xx": "Réglage de l'affichage (SSD1680)",
       "descriptionSsd16xx": "Si le panneau est blanc, pâle ou avec des images fantômes, essayez un autre profil de forme d'onde. Chaque sélection s'applique immédiatement avec un rafraîchissement complet — pas de redémarrage — pour que vous puissiez les comparer et garder celui qui produit une image nette.",
+      "titleUnknown": "Réglage de l'affichage",
+      "descriptionUnknown": "Aucun panneau n'a été détecté. Choisissez un profil de forme d'onde pour le panneau que vous avez. La sélection est enregistrée et appliquée au prochain démarrage, et immédiatement si le plateau tourne. Les profils UC8151D sont pour les panneaux V2 ; les profils SSD1680 pour les panneaux de remplacement V1.",
       "waveformLabel": "Profil de forme d'onde",
       "waveformHelp": "La recette utilisée pour piloter le panneau. Intégré utilise la forme d'onde d'usine du panneau ; les autres chargent une table connue du fabricant.",
       "waveformSource": "Source de la forme d'onde :",

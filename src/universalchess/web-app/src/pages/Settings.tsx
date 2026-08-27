@@ -2340,8 +2340,9 @@ export function Settings() {
             <MenuContainer catalog={catalog} containerId="settings.display" ctx={gameMenuCtx} />
 
             {/* E-paper waveform/refresh tuning. Lives under Display (not System)
-                because it configures the display hardware; the card self-gates
-                (renders nothing) when no e-paper panel is active. */}
+                because it configures the display hardware. Always shown: a
+                missing or failed panel is the recovery path, not a reason to
+                hide the only control that can pick a waveform for the next boot. */}
             <DisplayTuningCard />
           </section>
         )}
@@ -4374,9 +4375,10 @@ interface WaveformProfile {
 // 'uc8151d' is the primary V2 driver; 'ssd16xx' is the V1-family fallback.
 type WaveformController = 'uc8151d' | 'ssd16xx';
 
-// Per-controller card copy i18n keys. Exhaustive lookup (no default) so a newly
-// added controller family forces an explicit entry rather than silently
-// inheriting the wrong wording. Resolved with `t` at render time.
+// Per-controller card copy i18n keys, plus `unknown` for when no panel has
+// reported. Exhaustive lookup (no default) so a newly added controller family
+// forces an explicit entry rather than silently inheriting the wrong wording.
+// Resolved with `t` at render time.
 const DISPLAY_TUNING_COPY_KEYS = {
   uc8151d: {
     titleKey: 'settingsPage.displayTuning.titleUc8151d',
@@ -4386,17 +4388,20 @@ const DISPLAY_TUNING_COPY_KEYS = {
     titleKey: 'settingsPage.displayTuning.titleSsd16xx',
     descriptionKey: 'settingsPage.displayTuning.descriptionSsd16xx',
   },
-} satisfies Record<WaveformController, { titleKey: string; descriptionKey: string }>;
+  unknown: {
+    titleKey: 'settingsPage.displayTuning.titleUnknown',
+    descriptionKey: 'settingsPage.displayTuning.descriptionUnknown',
+  },
+} satisfies Record<WaveformController | 'unknown', { titleKey: string; descriptionKey: string }>;
 
 function DisplayTuningCard() {
   const { t } = useTranslation();
-  const [available, setAvailable] = useState(false);
   const [activeController, setActiveController] = useState<WaveformController | null>(null);
   const [profiles, setProfiles] = useState<WaveformProfile[]>([]);
   const [selected, setSelected] = useState<string>('');
   const [highContrast, setHighContrast] = useState(false);
   const [threeColor, setThreeColor] = useState(false);
-  const [threeColorSupported, setThreeColorSupported] = useState(false);
+  const [threeColorSupported, setThreeColorSupported] = useState(true);
   const [batchUpdates, setBatchUpdates] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -4405,12 +4410,18 @@ function DisplayTuningCard() {
 
   useEffect(() => {
     fetch(buildApiUrl('/api/system/display-tuning'))
-      .then((r) => (r.ok ? r.json() : null))
+      .then((r) => {
+        if (!r.ok) {
+          throw new Error('display-tuning GET failed');
+        }
+        return r.json();
+      })
       .then((data) => {
         if (!data) return;
-        if (typeof data.available === 'boolean') setAvailable(data.available);
         if (data.active_controller === 'uc8151d' || data.active_controller === 'ssd16xx') {
           setActiveController(data.active_controller);
+        } else {
+          setActiveController(null);
         }
         if (Array.isArray(data.profiles)) setProfiles(data.profiles);
         if (typeof data.selected === 'string') setSelected(data.selected);
@@ -4420,9 +4431,11 @@ function DisplayTuningCard() {
         if (typeof data.batch_updates === 'boolean') setBatchUpdates(data.batch_updates);
       })
       .catch(() => {
-        // Best-effort initial read; the card stays hidden if unavailable.
+        // The card stays on screen: a failed read must not hide the recovery
+        // controls. Persist still works once the GET succeeds on a later visit.
+        setError(t('settingsPage.displayTuning.networkError'));
       });
-  }, []);
+  }, [t]);
 
   // Persist the selection and apply it live: the board re-inits the panel and
   // forces a full refresh, so the change takes effect without a reboot. On 401
@@ -4469,12 +4482,11 @@ function DisplayTuningCard() {
     }
   };
 
-  // Hidden until the board reports an initialized panel with a known
-  // controller. Both controllers have selectable profiles, so the card appears
-  // for V1 and V2; the copy below adapts to whichever drove the panel.
-  if (!available || activeController === null) return null;
-
-  const copy = DISPLAY_TUNING_COPY_KEYS[activeController];
+  // Always shown. A missing panel is the recovery path, not a reason to hide
+  // the only control that can persist a waveform for the next boot. Copy
+  // adapts when a live controller is known; otherwise the unknown keys explain
+  // that the selection is saved for the next init.
+  const copy = DISPLAY_TUNING_COPY_KEYS[activeController ?? 'unknown'];
   const selectedProfile = profiles.find((p) => p.key === selected);
 
   return (

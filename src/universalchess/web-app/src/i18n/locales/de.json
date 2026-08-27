@@ -791,6 +791,8 @@
       "descriptionUc8151d": "Wenn ein Ersatzpanel bei Teilaktualisierungen (z. B. der Uhr) Schatten zeigt, schmiert oder blass aussieht, probieren Sie ein anderes Waveform-Profil. Die vollständige Aktualisierung verwendet immer die eingebaute Waveform des Panels; nur die Waveform der Teilaktualisierung ändert sich. Jede Auswahl wird sofort mit einer vollständigen Aktualisierung angewendet -- ohne Neustart.",
       "titleSsd16xx": "Anzeige-Feinabstimmung (SSD1680)",
       "descriptionSsd16xx": "Wenn das Panel leer, blass oder mit Schatten dargestellt wird, probieren Sie ein anderes Waveform-Profil. Jede Auswahl wird sofort mit einer vollständigen Aktualisierung angewendet -- ohne Neustart -- sodass Sie sie vergleichen und diejenige behalten können, die ein klares Bild liefert.",
+      "titleUnknown": "Anzeige-Feinabstimmung",
+      "descriptionUnknown": "Es wurde kein Panel erkannt. Wählen Sie ein Waveform-Profil für das Panel, das Sie haben. Die Auswahl wird gespeichert und beim nächsten Start angewendet, und sofort, wenn das Brett läuft. UC8151D-Profile gelten für V2-Panels; SSD1680-Profile für V1-Ersatzpanels.",
       "waveformLabel": "Waveform-Profil",
       "waveformHelp": "Das Rezept, mit dem das Panel angesteuert wird. Eingebaut verwendet die werkseigene Waveform des Panels; die anderen laden eine bekannte Herstellertabelle.",
       "waveformSource": "Waveform-Quelle:",

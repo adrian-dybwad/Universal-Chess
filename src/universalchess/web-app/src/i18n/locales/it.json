@@ -798,6 +798,8 @@
       "descriptionUc8151d": "Se un pannello di ricambio lascia aloni, sbava o sembra sbiadito negli aggiornamenti parziali (es. l'orologio), prova un altro profilo waveform. Il refresh completo usa sempre il waveform integrato del pannello; cambia solo il waveform di refresh parziale. Ogni scelta si applica subito con un refresh completo -- senza riavvio.",
       "titleSsd16xx": "Regolazione display (SSD1680)",
       "descriptionSsd16xx": "Se il pannello è vuoto, sbiadito o con aloni, prova un altro profilo waveform. Ogni scelta si applica subito con un refresh completo -- senza riavvio -- così puoi confrontarli e tenere quello che dà un'immagine pulita.",
+      "titleUnknown": "Regolazione display",
+      "descriptionUnknown": "Nessun pannello rilevato. Scegli un profilo waveform per il pannello che hai. La selezione viene salvata e applicata al prossimo avvio, e subito se la scacchiera è in esecuzione. I profili UC8151D sono per i pannelli V2; quelli SSD1680 per i pannelli di ricambio V1.",
       "waveformLabel": "Profilo waveform",
       "waveformHelp": "La ricetta usata per pilotare il pannello. Built-In usa il waveform di fabbrica del pannello; gli altri caricano una tabella nota del produttore.",
       "waveformSource": "Sorgente waveform:",
