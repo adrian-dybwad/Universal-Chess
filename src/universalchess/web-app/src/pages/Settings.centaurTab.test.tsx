@@ -20,13 +20,19 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  *    engine resets strength to Default so a mismatched profile is never written;
  *  - a collapsed Troubleshooting card documents the Windows PowerShell errors
  *    that stop `make-centaur-image.ps1` (current-directory invocation and the
- *    unsigned-script execution policy).
+ *    unsigned-script execution policy);
+ *  - an Imported app display driver card reports SPI, GPIO, and panel class
+ *    scanned from the uploaded original Centaur tree (not UC's epdconfig), and
+ *    does not invent BCM pin numbers when that build only stores the names.
+ *    Pins used at runtime come from the last Translate Mode launch.
  *
  * A regression manifests as: no "Original Centaur" tab; an "Elo"/"Threads"/"Hash"
  * input reappearing; the strength dropdown missing; the action button
  * preceding the engine group again; a Save button returning (and changes not
- * POSTing until it is clicked); or the PowerShell remedies missing / shown
- * expanded so they crowd the import steps.
+ * POSTing until it is clicked); the PowerShell remedies missing / shown
+ * expanded so they crowd the import steps; or the display-driver card missing,
+ * showing Universal Chess pins, or filling BCM numbers the uploaded build does
+ * not contain.
  */
 
 const menuSchema: unknown = menuSchemaFixture;
@@ -70,6 +76,46 @@ interface PostRecord { url: string; body: Record<string, unknown> }
 const STOCKFISH_RUNG = 'Profile-a1b2c3';
 const STOCKFISH_RUNG_LABEL = '1500 ELO';
 
+function emptyCentaurDisplayDiagnostics(centaurAvailable: boolean) {
+  if (!centaurAvailable) {
+    return {
+      installed: false,
+      scanned: false,
+      panel_driver: null,
+      driver_modules: [],
+      controller_family: null,
+      spi_devices: [],
+      spi_path_template: null,
+      spi_library: null,
+      gpio_numbering: null,
+      gpio_backend: null,
+      pin_identifiers: [],
+      pins: { rst: null, dc: null, busy: null, cs: null },
+      observed_gpio_pins: [],
+      observed_spi_devices: [],
+    };
+  }
+  // Default installed payload matches an official Nuitka build: class and
+  // pin *names* are in the binary, BCM integers and a literal /dev/spidevN.M
+  // usually are not.
+  return {
+    installed: true,
+    scanned: true,
+    panel_driver: 'EPaperT5D',
+    driver_modules: ['dgt_epaper.py', 'epaperDef.py', 'epaperT5D.py'],
+    controller_family: 'UC8151D',
+    spi_devices: [],
+    spi_path_template: '/dev/spidev%d.%d',
+    spi_library: 'spidev',
+    gpio_numbering: 'BCM',
+    gpio_backend: 'RPi.GPIO',
+    pin_identifiers: ['EPAPER_BUSY', 'EPAPER_DC', 'EPAPER_RESET'],
+    pins: { rst: null, dc: null, busy: null, cs: null },
+    observed_gpio_pins: [],
+    observed_spi_devices: [],
+  };
+}
+
 // `centaurAvailable` toggles the installed vs. importer branch; the rest of the
 // Centaur endpoints are stubbed to a stopped board, in translate mode unless
 // `directMode` says otherwise. Engine POSTs are recorded so auto-save tests can
@@ -79,6 +125,7 @@ function installCentaurFetchMock(opts: {
   centaurAvailable: boolean;
   enginePostStatus?: number;
   directMode?: boolean;
+  displayDiagnostics?: Record<string, unknown>;
 }) {
   const posts: PostRecord[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
@@ -102,6 +149,9 @@ function installCentaurFetchMock(opts: {
       return jsonResponse(status >= 200 && status < 300 ? { success: true } : { success: false }, status);
     }
     if (url === '/api/system/centaur-engine') return jsonResponse({ engine: 'stockfish', level: STOCKFISH_RUNG, options: {} });
+    if (url === '/api/system/centaur-display-diagnostics') {
+      return jsonResponse(opts.displayDiagnostics ?? emptyCentaurDisplayDiagnostics(opts.centaurAvailable));
+    }
     // Picker rows as /levels reports them: the value is the profile's generated
     // id (what the level setting stores) and the label is projected from the
     // profile's own option values, so the two are deliberately different here.
@@ -381,5 +431,160 @@ describe('Original Centaur tab', () => {
 
     expect(await screen.findByText('Re-import from SD')).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Troubleshooting' })).toBeInTheDocument();
+  });
+
+  it('shows display-driver facts extracted from the imported original app', async () => {
+    // Why: the card must report the uploaded Centaur build's SPI device, GPIO
+    // pins, and panel class -- not Universal Chess's epdconfig. A regression
+    // that drops the card or shows UC pins instead of the payload hides the
+    // only in-app view of what that original version actually drives.
+    installCentaurFetchMock({
+      centaurAvailable: true,
+      displayDiagnostics: {
+        installed: true,
+        scanned: true,
+        panel_driver: 'EPaperT5D',
+        driver_modules: ['epaperT5D.py', 'dgt_epaper.py'],
+        controller_family: 'UC8151D',
+        spi_devices: ['/dev/spidev1.0'],
+        spi_path_template: '/dev/spidev%d.%d',
+        spi_library: 'spidev',
+        gpio_numbering: 'BCM',
+        gpio_backend: 'RPi.GPIO',
+        pin_identifiers: ['EPAPER_BUSY', 'EPAPER_CS', 'EPAPER_DC', 'EPAPER_RESET'],
+        pins: { rst: 12, dc: 16, busy: 7, cs: 18 },
+        observed_gpio_pins: [],
+        observed_spi_devices: [],
+      },
+    });
+    renderCentaurTab();
+
+    expect(await screen.findByText('EPaperT5D')).toBeInTheDocument();
+    expect(screen.getByText('UC8151D')).toBeInTheDocument();
+    expect(screen.getByText('/dev/spidev1.0')).toBeInTheDocument();
+    expect(screen.getByText(/RST BCM 12 \(EPAPER_RESET\)/)).toBeInTheDocument();
+    expect(screen.getByText(/DC BCM 16 \(EPAPER_DC\)/)).toBeInTheDocument();
+    expect(screen.getByText(/BUSY BCM 7 \(EPAPER_BUSY\)/)).toBeInTheDocument();
+    expect(screen.getByText(/CS BCM 18 \(EPAPER_CS\)/)).toBeInTheDocument();
+  });
+
+  it('does not invent pin numbers when the uploaded build only names the lines', async () => {
+    // Why: official Nuitka builds store EPAPER_RESET as a name without a
+    // readable BCM integer. Filling in 12/16/7/18 from UC would describe the
+    // wrong program when a different original version is uploaded.
+    installCentaurFetchMock({
+      centaurAvailable: true,
+      displayDiagnostics: {
+        installed: true,
+        scanned: true,
+        panel_driver: 'EPaperT5D',
+        driver_modules: [],
+        controller_family: 'UC8151D',
+        spi_devices: [],
+        spi_path_template: '/dev/spidev%d.%d',
+        spi_library: 'spidev',
+        gpio_numbering: 'BCM',
+        gpio_backend: 'RPi.GPIO',
+        pin_identifiers: ['EPAPER_RESET', 'EPAPER_DC', 'EPAPER_BUSY'],
+        pins: { rst: null, dc: null, busy: null, cs: null },
+        observed_gpio_pins: [],
+        observed_spi_devices: [],
+      },
+    });
+    renderCentaurTab();
+
+    expect(await screen.findByText('EPaperT5D')).toBeInTheDocument();
+    expect(screen.getByText(/does not store pin numbers/i)).toBeInTheDocument();
+    expect(screen.getByText(/Not recorded yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/RST BCM 12/)).toBeNull();
+  });
+
+  it('shows GPIO pins recorded from the last Translate Mode run', async () => {
+    // Why: official Nuitka builds do not store BCM integers. The card must
+    // show the pins that process actually opened, with this build's pin names
+    // on the same line, persisted after Universal Chess restarts -- not UC's
+    // epdconfig. Direct Mode cannot record them.
+    //
+    // A regression manifests as the runtime row staying on the empty-capture
+    // copy, or as RST BCM 12 appearing from Universal Chess rather than the
+    // observed list.
+    installCentaurFetchMock({
+      centaurAvailable: true,
+      displayDiagnostics: {
+        installed: true,
+        scanned: true,
+        panel_driver: 'EPaperT5D',
+        driver_modules: [],
+        controller_family: 'UC8151D',
+        spi_devices: [],
+        spi_path_template: '/dev/spidev%d.%d',
+        spi_library: 'spidev',
+        gpio_numbering: 'BCM',
+        gpio_backend: 'RPi.GPIO',
+        pin_identifiers: ['EPAPER_RESET', 'EPAPER_DC', 'EPAPER_BUSY'],
+        pins: { rst: null, dc: null, busy: null, cs: null },
+        observed_gpio_pins: [7, 12, 16, 18],
+        observed_spi_devices: ['/dev/spidev1.0'],
+      },
+    });
+    renderCentaurTab();
+
+    expect(await screen.findByText('EPaperT5D')).toBeInTheDocument();
+    const runtimeValue = screen.getByText('Pins used at runtime').nextElementSibling;
+    expect(runtimeValue).toHaveTextContent(
+      'BCM 7, 12, 16, 18 (EPAPER_RESET, EPAPER_DC, EPAPER_BUSY)',
+    );
+    expect(screen.getByText('/dev/spidev1.0')).toBeInTheDocument();
+    expect(screen.getByText(/last time Original Centaur ran in Translate Mode/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Not recorded yet/i)).toBeNull();
+    // Names must not be assigned to specific BCM numbers when the build did
+    // not store that pairing -- RST BCM 12 would be Universal Chess's map.
+    expect(runtimeValue).not.toHaveTextContent('RST BCM 12');
+  });
+
+  it('labels an observed pin with its name only when this build maps that number', async () => {
+    // Why: a readable EPAPER_RESET = 12 in the uploaded tree is a real pairing.
+    // An extra BCM the process also wiggled must still appear, unlabeled,
+    // so a stray LED or CS line is visible instead of dropped.
+    //
+    // A regression that applies RST/DC/BUSY/CS to every observed pin from UC,
+    // or that hides BCM 25, is this test failing.
+    installCentaurFetchMock({
+      centaurAvailable: true,
+      displayDiagnostics: {
+        installed: true,
+        scanned: true,
+        panel_driver: 'EPaperT5D',
+        driver_modules: [],
+        controller_family: 'UC8151D',
+        spi_devices: [],
+        spi_path_template: null,
+        spi_library: 'spidev',
+        gpio_numbering: 'BCM',
+        gpio_backend: 'RPi.GPIO',
+        pin_identifiers: ['EPAPER_RESET', 'EPAPER_DC', 'EPAPER_BUSY'],
+        pins: { rst: 12, dc: 16, busy: 7, cs: null },
+        observed_gpio_pins: [7, 12, 16, 25],
+        observed_spi_devices: ['/dev/spidev1.0'],
+      },
+    });
+    renderCentaurTab();
+
+    const runtimeValue = (await screen.findByText('Pins used at runtime')).nextElementSibling;
+    expect(runtimeValue).toHaveTextContent(
+      'BUSY BCM 7 (EPAPER_BUSY), RST BCM 12 (EPAPER_RESET), DC BCM 16 (EPAPER_DC), BCM 25',
+    );
+  });
+
+  it('tells the user to import Centaur before display-driver facts exist', async () => {
+    // Why: the tab is reachable before an import. The card must stay visible
+    // and say the scan needs an uploaded app, not show an empty grid or UC pins.
+    installCentaurFetchMock({ centaurAvailable: false });
+    renderCentaurTab();
+
+    expect(await screen.findByRole('heading', { name: 'Imported app display driver' })).toBeInTheDocument();
+    expect(
+      await screen.findByText(/Import the original Centaur software to inspect the display driver/i)
+    ).toBeInTheDocument();
   });
 });

@@ -914,6 +914,119 @@ def test_interrupted_import_is_recorded_with_the_progress_it_reached(
     assert "45%" in events[0]["message"]
 
 
+# --- Imported Centaur app display-driver probe --------------------------------
+
+
+def test_centaur_display_diagnostics_extracts_from_imported_tree(
+    client, monkeypatch, tmp_path
+):
+    """GET centaur-display-diagnostics must read the uploaded Centaur tree.
+
+    Why this test exists: the Original Centaur card shows SPI/GPIO/panel class
+    from the imported original app, so a different SD image changes the report.
+    The endpoint is the thin wrapper over that scan; if it stopped calling the
+    inspector or pointed at Universal Chess's epdconfig instead, the card would
+    freeze on UC's pins regardless of what was uploaded.
+
+    How a regression manifests: the payload lacks EPaperT5D / ``/dev/spidev1.0``
+    from the tree, or fills pin numbers that the blob does not contain.
+    """
+    from universalchess.services.centaur_display import inspect_app as inspect_mod
+
+    app_dir = tmp_path / "centaur_home"
+    (app_dir / "engines").mkdir(parents=True)
+    (app_dir / "fonts").mkdir()
+    (app_dir / "centaur").write_bytes(
+        b"EPaperT5D\0/dev/spidev1.0\0EPAPER_RESET\0EPAPER_DC\0EPAPER_BUSY\0BCM\0"
+    )
+    monkeypatch.setattr(inspect_mod, "CENTAUR_HOME", str(app_dir))
+    monkeypatch.setattr(
+        "universalchess.services.centaur_display.observed_io.read_observed_io",
+        lambda **_kwargs: {"gpio_pins": [], "spi_devices": []},
+    )
+
+    resp = client.get("/api/system/centaur-display-diagnostics")
+
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body["installed"] is True
+    assert body["scanned"] is True
+    assert body["panel_driver"] == "EPaperT5D"
+    assert body["spi_devices"] == ["/dev/spidev1.0"]
+    assert body["pins"] == {"rst": None, "dc": None, "busy": None, "cs": None}
+    assert "EPAPER_RESET" in body["pin_identifiers"]
+    assert body["observed_gpio_pins"] == []
+    assert body["observed_spi_devices"] == []
+
+
+def test_centaur_display_diagnostics_reports_missing_install(client, monkeypatch, tmp_path):
+    """GET centaur-display-diagnostics must not invent wiring when Centaur is absent.
+
+    Why this test exists: the tab is shown before any import. An empty payload
+    with installed=false is the honest answer; defaulting to UC's BCM 12/16/7/18
+    would describe the wrong program.
+
+    How a regression manifests: installed is true, or pins/spi are populated
+    without an app tree.
+    """
+    from universalchess.services.centaur_display import inspect_app as inspect_mod
+
+    monkeypatch.setattr(inspect_mod, "CENTAUR_HOME", str(tmp_path / "no-centaur"))
+    monkeypatch.setattr(
+        "universalchess.services.centaur_display.observed_io.read_observed_io",
+        lambda **_kwargs: {"gpio_pins": [], "spi_devices": []},
+    )
+
+    resp = client.get("/api/system/centaur-display-diagnostics")
+
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body["installed"] is False
+    assert body["scanned"] is False
+    assert body["panel_driver"] is None
+    assert body["spi_devices"] == []
+    assert body["pins"] == {"rst": None, "dc": None, "busy": None, "cs": None}
+    assert body["observed_gpio_pins"] == []
+    assert body["observed_spi_devices"] == []
+
+
+def test_centaur_display_diagnostics_includes_runtime_pins_from_last_translate_run(
+    client, monkeypatch, tmp_path
+):
+    """GET centaur-display-diagnostics must surface shim-observed GPIO/SPI.
+
+    Why this test exists: official Nuitka builds do not store BCM numbers as
+    readable constants. Translate Mode records the pins that process actually
+    opened; the card reads them after Universal Chess restarts. Copying UC's
+    12/16/7/18 into observed_gpio_pins without a file would invent wiring.
+
+    How a regression manifests: observed_gpio_pins is empty despite a recorded
+    run, or it equals UC's map when the file listed different pins.
+    """
+    from universalchess.services.centaur_display import inspect_app as inspect_mod
+    from universalchess.services.centaur_display import observed_io as observed_mod
+
+    app_dir = tmp_path / "centaur_home"
+    (app_dir / "engines").mkdir(parents=True)
+    (app_dir / "fonts").mkdir()
+    (app_dir / "centaur").write_bytes(b"EPaperT5D\0EPAPER_RESET\0BCM\0")
+    monkeypatch.setattr(inspect_mod, "CENTAUR_HOME", str(app_dir))
+    observed_path = tmp_path / "centaur_io_observed.json"
+    observed_mod.write_observed_io(
+        [18, 7, 12, 16], ["/dev/spidev1.0"], path=observed_path
+    )
+    monkeypatch.setattr(observed_mod, "DEFAULT_PATH", str(observed_path))
+
+    resp = client.get("/api/system/centaur-display-diagnostics")
+
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body["panel_driver"] == "EPaperT5D"
+    assert body["pins"] == {"rst": None, "dc": None, "busy": None, "cs": None}
+    assert body["observed_gpio_pins"] == [7, 12, 16, 18]
+    assert body["observed_spi_devices"] == ["/dev/spidev1.0"]
+
+
 # --- Centaur engine proxy config ---------------------------------------------
 
 

@@ -47,7 +47,13 @@
  *      and rendered on the installed panel.
  *
  * Wire format (matches services/centaur_display/protocol.py):
- *      uint8 dc ; uint32 length (LE) ; length bytes payload
+ *      uint8 kind ; uint32 length (LE) ; length bytes payload
+ *   kind 0/1 = SPI command/data (the DC line)
+ *   kind 2   = GPIO bitmask (4-byte LE, bit N = BCM pin N that this process wrote)
+ *   kind 3   = SPI device path (ASCII, e.g. /dev/spidev1.0)
+ *
+ * GPIO/SPI observation is reported from normal context (open/write/ioctl), never
+ * from the SIGSEGV handler. Direct Mode does not load this shim.
  *
  * Environment:
  *   UC_CENTAUR_DISPLAY_SOCK  gateway socket path (default below)
@@ -93,6 +99,14 @@
 #define GPSET0 7   /* write 1-bits -> drive pin high */
 #define GPCLR0 10  /* write 1-bits -> drive pin low  */
 #define GPLEV0 13  /* read -> current pin levels     */
+#define GPFSEL0 0  /* 3 bits per pin, BCM 0-9        */
+#define GPFSEL1 1  /* BCM 10-19                      */
+#define GPFSEL2 2  /* BCM 20-29                      */
+#define GPPUDCLK0 38
+
+#define RECORD_GPIO_PINS 2
+#define RECORD_SPI_PATH  3
+#define BCM_PIN_MASK     0x0FFFFFFFu  /* header pins BCM 0-27 */
 
 #define DEFAULT_SOCK "/run/universalchess/centaur-display.sock"
 
@@ -205,6 +219,14 @@ static void dbg_emit(const char *s) {
 /* DC tag used for the next SPI transfer: 0 = command, 1 = data. */
 static int dc_state = 0;
 
+/* BCM pins this process has written (GPFSEL / GPSET / GPCLR / GPPUDCLK).
+ * Accumulated in the SIGSEGV handler with no syscalls; sent from open/write. */
+static volatile uint32_t observed_pins = 0;
+static uint32_t last_gpfsel[3];
+static uint32_t sent_pin_mask = 0;
+static char noted_spi_path[64];
+static int spi_path_sent = 0;
+
 /* -------------------------------------------------------------------------
  * Gateway socket
  * ---------------------------------------------------------------------- */
@@ -240,11 +262,103 @@ static void gw_send_all_locked(const unsigned char *buf, size_t n) {
     }
 }
 
+static void observe_pins(uint32_t mask) {
+    observed_pins |= (mask & BCM_PIN_MASK);
+}
+
+static void observe_gpfsel(uint32_t reg, uint32_t value) {
+    if (reg > 2) return;
+    uint32_t old = last_gpfsel[reg];
+    last_gpfsel[reg] = value;
+    uint32_t changed = 0;
+    for (int i = 0; i < 10; i++) {
+        unsigned old_fn = (old >> (i * 3)) & 7u;
+        unsigned new_fn = (value >> (i * 3)) & 7u;
+        if (old_fn == new_fn) continue;
+        int bcm = (int)reg * 10 + i;
+        if (bcm <= 27)
+            changed |= (1u << bcm);
+    }
+    if (changed)
+        observe_pins(changed);
+}
+
+/* After Thumb degrade, GPFSEL stores land in the shadow instead of trapping.
+ * Reading non-input functions recovers those pins. Do not read GPLEV0: that
+ * register is seeded with UC's hardcoded BUSY bit, which is not Centaur's map. */
+static void absorb_shadow_gpfsel(void) {
+    if (!gpio_shadow) return;
+    for (int r = 0; r < 3; r++) {
+        uint32_t word = gpio_shadow[r];
+        for (int i = 0; i < 10; i++) {
+            int bcm = r * 10 + i;
+            if (bcm > 27) break;
+            if ((word >> (i * 3)) & 7u)
+                observe_pins(1u << bcm);
+        }
+    }
+    observe_pins((uint32_t)gpio_shadow[GPSET0]);
+    observe_pins((uint32_t)gpio_shadow[GPCLR0]);
+    observe_pins((uint32_t)gpio_shadow[GPPUDCLK0]);
+}
+
+static void pack_record_hdr(unsigned char hdr[5], unsigned kind, uint32_t len) {
+    hdr[0] = (unsigned char)kind;
+    hdr[1] = (unsigned char)(len & 0xFF);
+    hdr[2] = (unsigned char)((len >> 8) & 0xFF);
+    hdr[3] = (unsigned char)((len >> 16) & 0xFF);
+    hdr[4] = (unsigned char)((len >> 24) & 0xFF);
+}
+
+/* Caller holds lk. Sends GPIO/SPI observations that have grown since last send. */
+static void send_io_updates_locked(void) {
+    absorb_shadow_gpfsel();
+    gw_connect_locked();
+    if (gw_fd < 0) return;
+
+    uint32_t snap = observed_pins;
+    if (snap != 0 && snap != sent_pin_mask) {
+        unsigned char hdr[5];
+        unsigned char body[4];
+        pack_record_hdr(hdr, RECORD_GPIO_PINS, 4);
+        body[0] = (unsigned char)(snap & 0xFF);
+        body[1] = (unsigned char)((snap >> 8) & 0xFF);
+        body[2] = (unsigned char)((snap >> 16) & 0xFF);
+        body[3] = (unsigned char)((snap >> 24) & 0xFF);
+        gw_send_all_locked(hdr, sizeof(hdr));
+        gw_send_all_locked(body, sizeof(body));
+        if (gw_fd >= 0)
+            sent_pin_mask = snap;
+        else
+            return;
+    }
+    if (noted_spi_path[0] && !spi_path_sent) {
+        uint32_t len = (uint32_t)strlen(noted_spi_path);
+        unsigned char hdr[5];
+        pack_record_hdr(hdr, RECORD_SPI_PATH, len);
+        gw_send_all_locked(hdr, sizeof(hdr));
+        gw_send_all_locked((const unsigned char *)noted_spi_path, len);
+        if (gw_fd >= 0)
+            spi_path_sent = 1;
+    }
+}
+
+static void note_spidev_open(const char *path) {
+    if (!path || strncmp(path, "/dev/spidev", 11) != 0) return;
+    pthread_mutex_lock(&lk);
+    if (strcmp(noted_spi_path, path) != 0) {
+        snprintf(noted_spi_path, sizeof(noted_spi_path), "%s", path);
+        spi_path_sent = 0;
+    }
+    send_io_updates_locked();
+    pthread_mutex_unlock(&lk);
+}
+
 /* Forward one SPI transfer to the gateway, tagged with the current DC state. */
 static void forward_xfer(const unsigned char *buf, uint32_t len) {
     if (!len) return;
     pthread_mutex_lock(&lk);
-    gw_connect_locked();
+    send_io_updates_locked();
     unsigned char hdr[5];
     hdr[0] = (unsigned char)(dc_state ? 1 : 0);
     hdr[1] = (unsigned char)(len & 0xFF);
@@ -312,11 +426,16 @@ static void track_gpio_write(uint32_t word_idx, uint32_t value) {
     if (word_idx == GPSET0) {
         pin_levels |= value;                 /* set listed pins high */
         if (value & (1u << PIN_DC)) dc_state = 1;
+        observe_pins(value);
     } else if (word_idx == GPCLR0) {
         pin_levels &= ~value;                /* drive listed pins low */
         if (value & (1u << PIN_DC)) dc_state = 0;
+        observe_pins(value);
+    } else if (word_idx <= GPFSEL2) {
+        observe_gpfsel(word_idx, value);
+    } else if (word_idx == GPPUDCLK0) {
+        observe_pins(value);
     }
-    /* GPFSEL/GPPUD/etc: ignored -- no real pins, and not read back by centaur. */
 }
 
 /* -------------------------------------------------------------------------
@@ -416,6 +535,7 @@ static void *make_gpio_shadow(size_t length) {
     gpio_shadow = (volatile uint32_t *)p;
     gpio_shadow_len = len;
     pin_levels = 0;
+    last_gpfsel[0] = last_gpfsel[1] = last_gpfsel[2] = 0;
     refresh_gplev();                 /* seed BUSY idle before centaur reads it */
     {
         char b[96];
@@ -518,8 +638,15 @@ int open(const char *path, int flags, ...) {
     }
     if (!real_open) real_open = dlsym(RTLD_NEXT, "open");
     if (spoof_gpiomem && is_gpiomem_path(path)) return open_gpiomem_substitute();
-    if (is_absent_spidev_path(path)) return open_spidev_substitute();
-    return real_open(path, flags, mode);
+    if (is_absent_spidev_path(path)) {
+        int fd = open_spidev_substitute();
+        if (fd >= 0) note_spidev_open(path);
+        return fd;
+    }
+    int fd = real_open(path, flags, mode);
+    if (fd >= 0 && path && strncmp(path, "/dev/spidev", 11) == 0)
+        note_spidev_open(path);
+    return fd;
 }
 
 int open64(const char *path, int flags, ...) {
@@ -529,8 +656,15 @@ int open64(const char *path, int flags, ...) {
     }
     if (!real_open64) real_open64 = dlsym(RTLD_NEXT, "open64");
     if (spoof_gpiomem && is_gpiomem_path(path)) return open_gpiomem_substitute();
-    if (is_absent_spidev_path(path)) return open_spidev_substitute();
-    return real_open64(path, flags, mode);
+    if (is_absent_spidev_path(path)) {
+        int fd = open_spidev_substitute();
+        if (fd >= 0) note_spidev_open(path);
+        return fd;
+    }
+    int fd = real_open64(path, flags, mode);
+    if (fd >= 0 && path && strncmp(path, "/dev/spidev", 11) == 0)
+        note_spidev_open(path);
+    return fd;
 }
 
 FILE *fopen(const char *path, const char *mode) {

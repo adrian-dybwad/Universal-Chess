@@ -15,6 +15,34 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Original Centaur tab shows the imported app's display driver**: Direct
+  Mode on a V1 PCB paints nothing because that original software speaks
+  UC8151D on its own GPIO/SPI map, but Settings had no view of what the
+  uploaded build actually uses. The tab now scans the imported Centaur
+  tree (the `centaur` binary, bundled `spidev.so` / `RPi/_GPIO.so`, and
+  any `.py` beside them) for panel class, controller family, SPI device
+  or path template, GPIO numbering, and pin names or numbers. A
+  different SD image updates the card; Universal Chess's own wiring and
+  the translate shim are not used as stand-ins. Pin numbers come from
+  readable ``EPAPER_RESET = 12`` assignments when a build still has
+  them, or from ARM ``mov r0, #12`` next to a load of the pin name when
+  Nuitka left that pairing. Official DGT Nuitka 0.6.5 interned the BCM
+  integers as shared small ints with no static name pairing, so those
+  uploads show the pin names and the "not stored as readable constants"
+  note rather than invented 12/16/7/18. They are never filled in from
+  Universal Chess's map.
+
+- **Original Centaur tab shows GPIO/SPI used at runtime**: official DGT
+  Nuitka builds do not store BCM pin numbers as readable constants, so
+  the static scan above cannot list them. In Translate Mode the display
+  shim now reports every GPIO line and ``/dev/spidev`` node that process
+  actually opens; the gateway writes the set so the diagnostics card can
+  show those numbers after Universal Chess restarts, with this build's pin
+  names on the same line. A name is attached to a specific BCM pin only
+  when that build stored the pairing; otherwise the names are listed
+  beside the numbers rather than assigned from Universal Chess's map.
+  Direct Mode does not load the shim and cannot record pins.
+
 - **Display probe result is recorded in the Settings event log**: startup
   wrote the outcome only to the board log and `display_status.json`.
   Overlay missing, gpiochip/spidev permission errors, and other

@@ -14,16 +14,28 @@ import logging
 import os
 import socket
 import threading
-from typing import Callable, Optional
+from typing import Callable, List, Optional
 
 from PIL import Image
 
 from .decoder import CentaurDisplayDecoder
-from .protocol import ReadFn, read_record
+from .observed_io import write_observed_io
+from .protocol import (
+    RECORD_GPIO_PINS,
+    RECORD_SPI_COMMAND,
+    RECORD_SPI_DATA,
+    RECORD_SPI_PATH,
+    ReadFn,
+    decode_gpio_mask,
+    decode_spi_path,
+    gpio_mask_to_pins,
+    read_record,
+)
 
 log = logging.getLogger(__name__)
 
 RenderFn = Callable[[Image.Image], object]
+PersistObservedIo = Callable[[List[int], List[str]], None]
 
 
 def render_and_signal(render_fn: RenderFn, event: threading.Event) -> RenderFn:
@@ -53,26 +65,69 @@ class CentaurDisplayGateway:
         render_fn: Called with each decoded PIL frame (e.g. display_frame). Its
             return value is ignored.
         decoder: Decoder to use; a fresh ``CentaurDisplayDecoder`` by default.
+        persist_observed_io: Called with the BCM pins and SPI paths seen on
+            this connection whenever an observation record arrives. Defaults to
+            writing ``centaur_io_observed.json`` so the Settings card can show
+            them after Universal Chess restarts. Observation kinds must not
+            reach the framebuffer decoder (kinds 2/3 look like DC-high data).
     """
 
-    def __init__(self, render_fn: RenderFn, decoder: Optional[CentaurDisplayDecoder] = None):
+    def __init__(
+        self,
+        render_fn: RenderFn,
+        decoder: Optional[CentaurDisplayDecoder] = None,
+        persist_observed_io: Optional[PersistObservedIo] = None,
+    ):
         self._render_fn = render_fn
         self._decoder = decoder if decoder is not None else CentaurDisplayDecoder()
+        self._persist_observed = (
+            persist_observed_io if persist_observed_io is not None else write_observed_io
+        )
 
     def run_stream(self, read_fn: ReadFn) -> None:
         """Consume records from ``read_fn`` until EOF, rendering completed frames.
 
-        Each record is fed to the decoder; whenever a refresh opcode completes a
-        frame, ``render_fn`` is invoked with it. Returns when the stream closes.
+        SPI records (kind 0/1) are fed to the decoder; whenever a refresh opcode
+        completes a frame, ``render_fn`` is invoked with it. GPIO/SPI observation
+        records are persisted and never decoded as panel data. Returns when the
+        stream closes.
         """
+        gpio_pins: set[int] = set()
+        spi_devices: List[str] = []
         while True:
             record = read_record(read_fn)
             if record is None:
                 return
-            dc, payload = record
-            frame = self._decoder.feed(dc, payload)
+            kind, payload = record
+            if kind == RECORD_GPIO_PINS:
+                mask = decode_gpio_mask(payload)
+                if mask is None:
+                    log.warning("ignoring GPIO observation with length %s", len(payload))
+                    continue
+                gpio_pins.update(gpio_mask_to_pins(mask))
+                self._persist_observation(sorted(gpio_pins), list(spi_devices))
+                continue
+            if kind == RECORD_SPI_PATH:
+                path = decode_spi_path(payload)
+                if path is None:
+                    log.warning("ignoring SPI path observation of %s bytes", len(payload))
+                    continue
+                if path not in spi_devices:
+                    spi_devices.append(path)
+                    self._persist_observation(sorted(gpio_pins), list(spi_devices))
+                continue
+            if kind not in (RECORD_SPI_COMMAND, RECORD_SPI_DATA):
+                log.warning("ignoring unknown centaur-display record kind %s", kind)
+                continue
+            frame = self._decoder.feed(kind, payload)
             if frame is not None:
                 self._render_fn(frame)
+
+    def _persist_observation(self, gpio_pins: List[int], spi_devices: List[str]) -> None:
+        try:
+            self._persist_observed(gpio_pins, spi_devices)
+        except OSError:
+            log.exception("failed to persist centaur IO observation")
 
     def serve(self, socket_path: str = DEFAULT_SOCKET_PATH,
               stop_check: Optional[Callable[[], bool]] = None) -> None:

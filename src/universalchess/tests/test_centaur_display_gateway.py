@@ -22,7 +22,12 @@ from PIL import Image, ImageChops
 
 from universalchess.epaper.framework.waveshare.epd2in9d import pack_image_to_buffer
 from universalchess.services.centaur_display import PANEL_WIDTH, PANEL_HEIGHT
-from universalchess.services.centaur_display.protocol import encode_record, read_record
+from universalchess.services.centaur_display.protocol import (
+    encode_gpio_pins,
+    encode_record,
+    encode_spi_path,
+    read_record,
+)
 from universalchess.services.centaur_display.gateway import (
     CentaurDisplayGateway,
     ThreadedGatewayServer,
@@ -106,6 +111,34 @@ def test_read_record_returns_none_on_clean_eof():
     assert read_record(_reader(b"")) is None
 
 
+def test_gpio_and_spi_observation_records_round_trip():
+    """Observation kinds must keep their kind byte and payload, distinct from DC.
+
+    Why this test exists: the shim reports BCM pin bitmasks and the opened
+    ``/dev/spidev`` path as kinds 2/3. Collapsing those onto dc=0/1 would feed a
+    pin bitmask into the decoder as a command or data transfer.
+
+    How a regression manifests: the parsed kind is 0 or 1, or the pin list is not
+    [7, 12, 16, 18].
+    """
+    from universalchess.services.centaur_display.protocol import (
+        RECORD_GPIO_PINS,
+        RECORD_SPI_PATH,
+        decode_gpio_mask,
+        decode_spi_path,
+        gpio_mask_to_pins,
+    )
+
+    mask = (1 << 7) | (1 << 12) | (1 << 16) | (1 << 18)
+    kind, payload = read_record(_reader(encode_gpio_pins(mask)))
+    assert kind == RECORD_GPIO_PINS
+    assert gpio_mask_to_pins(decode_gpio_mask(payload)) == [7, 12, 16, 18]
+
+    kind, payload = read_record(_reader(encode_spi_path("/dev/spidev1.0")))
+    assert kind == RECORD_SPI_PATH
+    assert decode_spi_path(payload) == "/dev/spidev1.0"
+
+
 # ---------------------------------------------------------------------------
 # Gateway stream processing
 # ---------------------------------------------------------------------------
@@ -160,6 +193,78 @@ def test_gateway_stops_cleanly_on_eof_without_rendering_partial():
     gateway.run_stream(_reader(partial))
 
     assert rendered == []
+
+
+def test_gateway_routes_gpio_and_spi_observations_away_from_the_decoder():
+    """Kinds 2/3 must persist IO facts and never reach decoder.feed.
+
+    Why this test exists: decoder.feed treats any kind other than 0 as data, so
+    a GPIO bitmask sent as kind 2 would append four bytes to the framebuffer.
+    The Settings card also only learns pins if persist is called.
+
+    How a regression manifests: spy.feeds contains kind 2/3, or persisted stays
+    empty while a GPIO record was on the stream.
+    """
+    class SpyDecoder:
+        def __init__(self):
+            self.feeds = []
+
+        def feed(self, dc, payload):
+            self.feeds.append((dc, payload))
+            return None
+
+    persisted = []
+    spy = SpyDecoder()
+    gateway = CentaurDisplayGateway(
+        render_fn=lambda _frame: None,
+        decoder=spy,
+        persist_observed_io=lambda pins, spi: persisted.append((pins, list(spi))),
+    )
+    mask = (1 << 7) | (1 << 12) | (1 << 16) | (1 << 18)
+    blob = (
+        encode_gpio_pins(mask)
+        + encode_spi_path("/dev/spidev1.0")
+        + encode_record(DC_COMMAND, bytes([0x01]))
+    )
+    gateway.run_stream(_reader(blob))
+
+    assert spy.feeds == [(DC_COMMAND, bytes([0x01]))]
+    assert persisted == [
+        ([7, 12, 16, 18], []),
+        ([7, 12, 16, 18], ["/dev/spidev1.0"]),
+    ]
+
+
+def test_gateway_gpio_record_mid_frame_does_not_corrupt_the_image():
+    """An observation between RAM-write and pixels must still render exactly.
+
+    Why this test exists: the shim sends GPIO/SPI snapshots as soon as the mask
+    grows, which can land in the middle of a frame. Feeding those bytes as DC
+    data would change the reconstructed image.
+
+    How a regression manifests: zero renders, or a bbox difference against the
+    original pattern.
+    """
+    original = _pattern_image()
+    packed = bytes(pack_image_to_buffer(original, PANEL_WIDTH, PANEL_HEIGHT))
+    blob = (
+        encode_record(DC_COMMAND, bytes([0x13]))
+        + encode_gpio_pins((1 << 16) | (1 << 12))
+        + encode_record(DC_DATA, packed)
+        + encode_spi_path("/dev/spidev1.0")
+        + encode_record(DC_COMMAND, bytes([0x12]))
+    )
+    rendered = []
+    persisted = []
+    gateway = CentaurDisplayGateway(
+        render_fn=rendered.append,
+        persist_observed_io=lambda pins, spi: persisted.append((pins, list(spi))),
+    )
+    gateway.run_stream(_reader(blob))
+
+    assert len(rendered) == 1
+    assert ImageChops.difference(rendered[0].convert("1"), original.convert("1")).getbbox() is None
+    assert persisted[-1] == ([12, 16], ["/dev/spidev1.0"])
 
 
 def test_render_and_signal_sets_event_after_successful_render():

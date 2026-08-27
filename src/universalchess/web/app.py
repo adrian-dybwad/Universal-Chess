@@ -4217,6 +4217,33 @@ def api_system_run_centaur():
     return _system_board_action("run_centaur", "Launching original Centaur software")
 
 
+@app.route("/api/system/centaur-display-diagnostics", methods=["GET"])
+def api_get_centaur_display_diagnostics():
+    """Report the imported original Centaur app's own e-paper wiring.
+
+    Read-only and unauthenticated like the other GET probes. The Original
+    Centaur tab uses this to show the SPI device, GPIO pin names/numbers, and
+    panel class extracted from whatever build was uploaded -- not from
+    Universal Chess's epdconfig. Pin numbers used at runtime come from the
+    last Translate Mode launch (the shim records which lines that process
+    opened). A missing install returns ``installed`` false with empty driver
+    fields rather than inventing a pin map.
+    """
+    try:
+        from universalchess.services.centaur_display.inspect_app import (
+            inspect_centaur_app_display,
+        )
+        from universalchess.services.centaur_display.observed_io import read_observed_io
+
+        payload = inspect_centaur_app_display()
+        observed = read_observed_io()
+        payload["observed_gpio_pins"] = observed["gpio_pins"]
+        payload["observed_spi_devices"] = observed["spi_devices"]
+        return jsonify(payload)
+    except Exception as e:
+        return _internal_error(e)
+
+
 @app.route("/api/system/centaur-mode", methods=["GET"])
 def api_get_centaur_mode():
     """Report whether Original Centaur launches in direct mode.

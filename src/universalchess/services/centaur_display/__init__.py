@@ -9,8 +9,9 @@ framebuffer image and renders it through UC's driver stack
 
 Modules:
     decoder: Pure per-controller SPI-stream -> framebuffer-image decoder.
-    protocol: Wire format (DC-tagged records) between the shim and the gateway.
+    protocol: Wire format (DC-tagged SPI records plus GPIO/SPI observation).
     gateway: Socket endpoint that decodes the stream and renders each frame.
+    observed_io: Last Translate Mode pin/SPI snapshot for the Settings card.
     shim_builder: Compiles the LD_PRELOAD shim on-device from shipped source.
 """
 

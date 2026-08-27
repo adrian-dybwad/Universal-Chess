@@ -4103,6 +4103,251 @@ function DiagnosticsCard() {
 }
 
 
+// Facts extracted from the imported original Centaur binary/tree (not from
+// Universal Chess's epdconfig). Pin numbers are null when that build stores
+// only names; the UI must not fill in UC's BCM map.
+interface CentaurDisplayPins {
+  rst: number | null;
+  dc: number | null;
+  busy: number | null;
+  cs: number | null;
+}
+
+interface CentaurDisplayDiagnostics {
+  installed: boolean;
+  scanned: boolean;
+  panel_driver: string | null;
+  driver_modules: string[];
+  controller_family: string | null;
+  spi_devices: string[];
+  spi_path_template: string | null;
+  spi_library: string | null;
+  gpio_numbering: string | null;
+  gpio_backend: string | null;
+  pin_identifiers: string[];
+  pins: CentaurDisplayPins;
+  observed_gpio_pins: number[];
+  observed_spi_devices: string[];
+}
+
+const CENTAUR_PIN_ROLES = {
+  rst: 'RST',
+  dc: 'DC',
+  busy: 'BUSY',
+  cs: 'CS',
+} satisfies Record<keyof CentaurDisplayPins, string>;
+
+const CENTAUR_PIN_NAME_PATTERNS = {
+  rst: /^(EPAPER_RESET|RST_PIN)$/,
+  dc: /^(EPAPER_DC|DC_PIN)$/,
+  busy: /^(EPAPER_BUSY|BUSY_PIN)$/,
+  cs: /^(EPAPER_CS|CS_PIN)$/,
+} satisfies Record<keyof CentaurDisplayPins, RegExp>;
+
+function formatCentaurPinNumbers(
+  pins: CentaurDisplayPins,
+  numbering: string | null,
+  identifiers: string[],
+): string | null {
+  const prefix = numbering === 'BCM' ? 'BCM ' : '';
+  const parts = (Object.keys(CENTAUR_PIN_ROLES) as Array<keyof CentaurDisplayPins>)
+    .filter((role) => typeof pins[role] === 'number')
+    .map((role) => {
+      const numbered = `${CENTAUR_PIN_ROLES[role]} ${prefix}${pins[role]}`;
+      const name = identifiers.find((id) => CENTAUR_PIN_NAME_PATTERNS[role].test(id));
+      return name ? `${numbered} (${name})` : numbered;
+    });
+  return parts.length > 0 ? parts.join(', ') : null;
+}
+
+function formatObservedRuntimePins(
+  observed: number[],
+  pins: CentaurDisplayPins,
+  identifiers: string[],
+): string {
+  const roleByNumber = new Map<number, keyof CentaurDisplayPins>();
+  (Object.keys(CENTAUR_PIN_ROLES) as Array<keyof CentaurDisplayPins>).forEach((role) => {
+    const number = pins[role];
+    if (typeof number === 'number') roleByNumber.set(number, role);
+  });
+
+  const usedNames = new Set<string>();
+  let anyLabeled = false;
+  const parts = observed.map((bcm) => {
+    const role = roleByNumber.get(bcm);
+    if (!role) return `BCM ${bcm}`;
+    anyLabeled = true;
+    const name = identifiers.find((id) => CENTAUR_PIN_NAME_PATTERNS[role].test(id));
+    if (name) usedNames.add(name);
+    const numbered = `${CENTAUR_PIN_ROLES[role]} BCM ${bcm}`;
+    return name ? `${numbered} (${name})` : numbered;
+  });
+
+  const unpairedNames = identifiers.filter((id) => !usedNames.has(id));
+  const joined = anyLabeled ? parts.join(', ') : `BCM ${observed.join(', ')}`;
+  if (unpairedNames.length === 0) return joined;
+  return `${joined} (${unpairedNames.join(', ')})`;
+}
+
+function formatCentaurSpi(diag: CentaurDisplayDiagnostics, notFound: string, templateLabel: (t: string) => string): string {
+  if ((diag.observed_spi_devices ?? []).length > 0) return diag.observed_spi_devices.join(', ');
+  if (diag.spi_devices.length > 0) return diag.spi_devices.join(', ');
+  if (diag.spi_path_template) return templateLabel(diag.spi_path_template);
+  if (diag.spi_library) return diag.spi_library;
+  return notFound;
+}
+
+/**
+ * Original Centaur tab card: SPI, GPIO, and panel class taken from the
+ * imported original app (whatever version was uploaded). Reloads when
+ * `reloadToken` changes so a successful re-import refreshes the facts.
+ * Pins used at runtime come from the last Translate Mode launch.
+ */
+function CentaurDisplayDriverCard({ reloadToken }: { reloadToken: number }) {
+  const { t } = useTranslation();
+  const [diag, setDiag] = useState<CentaurDisplayDiagnostics | null>(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    fetch(buildApiUrl('/api/system/centaur-display-diagnostics'))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!active) return;
+        if (!data || typeof data.installed !== 'boolean') {
+          setDiag(null);
+          setError(true);
+          return;
+        }
+        setError(false);
+        setDiag({
+          ...(data as CentaurDisplayDiagnostics),
+          observed_gpio_pins: Array.isArray(data.observed_gpio_pins)
+            ? data.observed_gpio_pins.filter((n: unknown) => typeof n === 'number')
+            : [],
+          observed_spi_devices: Array.isArray(data.observed_spi_devices)
+            ? data.observed_spi_devices.filter((s: unknown) => typeof s === 'string')
+            : [],
+        });
+      })
+      .catch(() => {
+        if (active) {
+          setDiag(null);
+          setError(true);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [reloadToken]);
+
+  const notFound = t('settingsPage.systemActions.displayDiagNotFound');
+  const observedPins = diag?.observed_gpio_pins ?? [];
+  const pinNumbers = diag
+    ? formatCentaurPinNumbers(
+        diag.pins ?? { rst: null, dc: null, busy: null, cs: null },
+        diag.gpio_numbering,
+        diag.pin_identifiers ?? [],
+      )
+    : null;
+
+  const rows: { id: string; label: string; value: string }[] = [];
+  if (diag?.scanned) {
+    rows.push({
+      id: 'driver',
+      label: t('settingsPage.systemActions.displayDiagDriver'),
+      value: diag.panel_driver || notFound,
+    });
+    rows.push({
+      id: 'controller',
+      label: t('settingsPage.systemActions.displayDiagController'),
+      value: diag.controller_family || notFound,
+    });
+    if (diag.driver_modules.length > 0) {
+      rows.push({
+        id: 'modules',
+        label: t('settingsPage.systemActions.displayDiagModules'),
+        value: diag.driver_modules.join(', '),
+      });
+    }
+    rows.push({
+      id: 'spi',
+      label: t('settingsPage.systemActions.displayDiagSpi'),
+      value: formatCentaurSpi(
+        diag,
+        notFound,
+        (template) => t('settingsPage.systemActions.displayDiagSpiTemplate', { template }),
+      ),
+    });
+    rows.push({
+      id: 'gpio-num',
+      label: t('settingsPage.systemActions.displayDiagGpioNumbering'),
+      value: diag.gpio_numbering || notFound,
+    });
+    rows.push({
+      id: 'gpio-lib',
+      label: t('settingsPage.systemActions.displayDiagGpioBackend'),
+      value: diag.gpio_backend || notFound,
+    });
+    rows.push({
+      id: 'observed-pins',
+      label: t('settingsPage.systemActions.displayDiagObservedPins'),
+      value: observedPins.length > 0
+        ? formatObservedRuntimePins(
+            observedPins,
+            diag.pins ?? { rst: null, dc: null, busy: null, cs: null },
+            diag.pin_identifiers ?? [],
+          )
+        : t('settingsPage.systemActions.displayDiagObservedPinsEmpty'),
+    });
+    rows.push({
+      id: 'pins',
+      label: t('settingsPage.systemActions.displayDiagPins'),
+      value:
+        pinNumbers
+        || (diag.pin_identifiers.length > 0
+          ? t('settingsPage.systemActions.displayDiagPinsNotNumeric')
+          : notFound),
+    });
+    if (!pinNumbers && diag.pin_identifiers.length > 0) {
+      rows.push({
+        id: 'pin-names',
+        label: t('settingsPage.systemActions.displayDiagPinNames'),
+        value: diag.pin_identifiers.join(', '),
+      });
+    }
+  }
+
+  return (
+    <Card className="mb-6">
+      <CardHeader title={t('settingsPage.systemActions.displayDiagTitle')} />
+      <p className="text-muted mb-4">{t('settingsPage.systemActions.displayDiagIntro')}</p>
+      {error && <p className="text-muted">{t('settingsPage.systemActions.displayDiagUnavailable')}</p>}
+      {!error && !diag && <p className="text-muted">{t('settingsPage.systemActions.displayDiagLoading')}</p>}
+      {diag && !diag.scanned && (
+        <p className="text-muted">{t('settingsPage.systemActions.displayDiagNotInstalled')}</p>
+      )}
+      {diag?.scanned && (
+        <>
+          <dl className="system-info-grid">
+            {rows.map((row) => (
+              <div key={row.id} style={{ display: 'contents' }}>
+                <dt className="text-muted">{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+          {observedPins.length > 0 && (
+            <p className="text-muted mt-2">{t('settingsPage.systemActions.displayDiagObservedPinsHint')}</p>
+          )}
+          <p className="text-muted mt-4">{t('settingsPage.systemActions.displayDiagDirectModeNote')}</p>
+        </>
+      )}
+    </Card>
+  );
+}
+
+
 // A waveform profile as reported by /api/system/display-tuning. The dropdown is
 // driven entirely by the backend registry (waveform_profiles.py), filtered to
 // the active controller, so adding a profile there is enough -- no change here.
@@ -4500,6 +4745,9 @@ function CentaurSettings() {
   const [centaurLevel, setCentaurLevel] = useState('Default');
   const [engineLevels, setEngineLevels] = useState<{ value: string; label: string }[]>([]);
   const [engineBusy, setEngineBusy] = useState(false);
+  // Bumped after a successful import so the display-driver card re-reads the
+  // newly copied original app instead of keeping the previous scan.
+  const [displayDiagNonce, setDisplayDiagNonce] = useState(0);
 
   useEffect(() => {
     fetch(buildApiUrl('/api/system/info'))
@@ -4692,6 +4940,7 @@ function CentaurSettings() {
             setImportResult({ ok: true, text: t('settingsPage.systemActions.importedSuccess') });
             setCentaurAvailable(true);
             setShowImport(true);
+            setDisplayDiagNonce((n) => n + 1);
           } else {
             setImportResult({ ok: false, text: s.result.error || t('settingsPage.systemActions.importFailed') });
           }
@@ -4949,6 +5198,8 @@ function CentaurSettings() {
           </>
         )}
       </Card>
+
+      <CentaurDisplayDriverCard reloadToken={displayDiagNonce} />
 
       {/* Collapsed by default: the import steps stay short, and this card is
           always on the tab (not gated on the importer) so a Windows user who
