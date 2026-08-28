@@ -43,7 +43,11 @@ interface LichessLobbyCardProps {
 /**
  * Web twin of the board Lichess lobby. Catalog children of ``players.lichess``
  * are Account (picker + nested Accounts), Rated, Ongoing Games, Challenges,
- * Seek New Game.
+ * Seek New Game. Rated and the play rows stay hidden until a Lichess account
+ * exists: without one they cannot seek, list games, or put a rating at stake,
+ * and the empty/no-token copy duplicated the Accounts control already on the
+ * card. A failed or unauthorized account list is not treated as empty, so
+ * those rows are not buried behind a false "add an account" state.
  */
 export function LichessLobbyCard({
   catalog,
@@ -75,6 +79,13 @@ export function LichessLobbyCard({
   // there is no second slot whose account has to be held back.
   const lichessAccounts = accounts.filter((a) => a.type === 'lichess');
   const selectableAccounts = accountsState === 'ready' ? lichessAccounts : [];
+  // Play features need a login. Hide them only for a confirmed empty store
+  // (and while that list is still loading, so Rated cannot flash then vanish).
+  // Failed and unauthorized must keep the rows: those are not "no accounts".
+  const showPlayFeatures =
+    lichessAccounts.length > 0 ||
+    accountsState === 'failed' ||
+    accountsState === 'unauthorized';
 
   const fetchOngoing = useCallback(async () => {
     setOngoingState('loading');
@@ -129,9 +140,12 @@ export function LichessLobbyCard({
   }, []);
 
   useEffect(() => {
+    if (!showPlayFeatures) {
+      return;
+    }
     void fetchOngoing();
     void fetchChallenges();
-  }, [fetchOngoing, fetchChallenges, accountId]);
+  }, [fetchOngoing, fetchChallenges, accountId, showPlayFeatures]);
 
   const startJoin = useCallback(
     async function runStart(body: Record<string, string>, key: string) {
@@ -230,8 +244,9 @@ export function LichessLobbyCard({
 
       {/* Rated has no list behind it, so it renders as the plain catalog
           control rather than a titled section: the toggle carries its own
-          label and help. */}
-      {byId['field.lichess.rated'] && (
+          label and help. Gated with the play rows: a rating cannot be put
+          at stake until an account exists. */}
+      {showPlayFeatures && byId['field.lichess.rated'] && (
         <CatalogField
           node={byId['field.lichess.rated']}
           value={rated}
@@ -239,96 +254,100 @@ export function LichessLobbyCard({
         />
       )}
 
-      <LobbySection node={byId['lichess.ongoing']}>
-        <LobbyListState
-          state={ongoingState}
-          onRetry={fetchOngoing}
-          onSignIn={() => onUnauthorized(() => fetchOngoing())}
-          emptyLabel={t('settingsPage.lichessLobby.noOngoing')}
-          count={ongoing.length}
-        >
-          <ul className="lichess-lobby-list">
-            {ongoing.map((game) => {
-              const key = `ongoing:${game.id}`;
-              const color = game.color === 'white' ? 'W' : 'B';
-              return (
-                <li key={game.id}>
-                  <ConfirmableRow
-                    label={`${game.opponent} (${game.rating}) ${color}`}
-                    busy={busyKey === key}
-                    confirm={confirmKey === key}
-                    confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}
-                    onClick={() => requestStart({ mode: 'ongoing', game_id: game.id }, key)}
-                    onConfirm={() => void startJoin({ mode: 'ongoing', game_id: game.id }, key)}
-                    onCancel={() => setConfirmKey(null)}
-                  />
-                </li>
-              );
-            })}
-          </ul>
-        </LobbyListState>
-      </LobbySection>
+      {showPlayFeatures && (
+        <>
+          <LobbySection node={byId['lichess.ongoing']}>
+            <LobbyListState
+              state={ongoingState}
+              onRetry={fetchOngoing}
+              onSignIn={() => onUnauthorized(() => fetchOngoing())}
+              emptyLabel={t('settingsPage.lichessLobby.noOngoing')}
+              count={ongoing.length}
+            >
+              <ul className="lichess-lobby-list">
+                {ongoing.map((game) => {
+                  const key = `ongoing:${game.id}`;
+                  const color = game.color === 'white' ? 'W' : 'B';
+                  return (
+                    <li key={game.id}>
+                      <ConfirmableRow
+                        label={`${game.opponent} (${game.rating}) ${color}`}
+                        busy={busyKey === key}
+                        confirm={confirmKey === key}
+                        confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}
+                        onClick={() => requestStart({ mode: 'ongoing', game_id: game.id }, key)}
+                        onConfirm={() => void startJoin({ mode: 'ongoing', game_id: game.id }, key)}
+                        onCancel={() => setConfirmKey(null)}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            </LobbyListState>
+          </LobbySection>
 
-      <LobbySection node={byId['lichess.challenges']}>
-        <LobbyListState
-          state={challengeState}
-          onRetry={fetchChallenges}
-          onSignIn={() => onUnauthorized(() => fetchChallenges())}
-          emptyLabel={t('settingsPage.lichessLobby.noChallenges')}
-          count={challenges.length}
-        >
-          <ul className="lichess-lobby-list">
-            {challenges.map((row) => {
-              const key = `challenge:${row.direction}:${row.id}`;
-              const prefix = row.direction === 'in' ? 'IN' : 'OUT';
-              return (
-                <li key={key}>
-                  <ConfirmableRow
-                    label={`${prefix}: ${row.name} (${row.rating})`}
-                    busy={busyKey === key}
-                    confirm={confirmKey === key}
-                    confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}
-                    onClick={() =>
-                      requestStart(
-                        {
-                          mode: 'challenge',
-                          challenge_id: row.id,
-                          challenge_direction: row.direction,
-                        },
-                        key,
-                      )
-                    }
-                    onConfirm={() =>
-                      void startJoin(
-                        {
-                          mode: 'challenge',
-                          challenge_id: row.id,
-                          challenge_direction: row.direction,
-                        },
-                        key,
-                      )
-                    }
-                    onCancel={() => setConfirmKey(null)}
-                  />
-                </li>
-              );
-            })}
-          </ul>
-        </LobbyListState>
-      </LobbySection>
+          <LobbySection node={byId['lichess.challenges']}>
+            <LobbyListState
+              state={challengeState}
+              onRetry={fetchChallenges}
+              onSignIn={() => onUnauthorized(() => fetchChallenges())}
+              emptyLabel={t('settingsPage.lichessLobby.noChallenges')}
+              count={challenges.length}
+            >
+              <ul className="lichess-lobby-list">
+                {challenges.map((row) => {
+                  const key = `challenge:${row.direction}:${row.id}`;
+                  const prefix = row.direction === 'in' ? 'IN' : 'OUT';
+                  return (
+                    <li key={key}>
+                      <ConfirmableRow
+                        label={`${prefix}: ${row.name} (${row.rating})`}
+                        busy={busyKey === key}
+                        confirm={confirmKey === key}
+                        confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}
+                        onClick={() =>
+                          requestStart(
+                            {
+                              mode: 'challenge',
+                              challenge_id: row.id,
+                              challenge_direction: row.direction,
+                            },
+                            key,
+                          )
+                        }
+                        onConfirm={() =>
+                          void startJoin(
+                            {
+                              mode: 'challenge',
+                              challenge_id: row.id,
+                              challenge_direction: row.direction,
+                            },
+                            key,
+                          )
+                        }
+                        onCancel={() => setConfirmKey(null)}
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
+            </LobbyListState>
+          </LobbySection>
 
-      <LobbySection node={byId['lichess.new_game']}>
-        <ConfirmableRow
-          label={byId['lichess.new_game']?.label ?? 'Seek New Game'}
-          busy={busyKey === 'new'}
-          confirm={confirmKey === 'new'}
-          confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}
-          primary
-          onClick={() => requestStart({ mode: 'new' }, 'new')}
-          onConfirm={() => void startJoin({ mode: 'new' }, 'new')}
-          onCancel={() => setConfirmKey(null)}
-        />
-      </LobbySection>
+          <LobbySection node={byId['lichess.new_game']}>
+            <ConfirmableRow
+              label={byId['lichess.new_game']?.label ?? 'Seek New Game'}
+              busy={busyKey === 'new'}
+              confirm={confirmKey === 'new'}
+              confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}
+              primary
+              onClick={() => requestStart({ mode: 'new' }, 'new')}
+              onConfirm={() => void startJoin({ mode: 'new' }, 'new')}
+              onCancel={() => setConfirmKey(null)}
+            />
+          </LobbySection>
+        </>
+      )}
     </Card>
   );
 }

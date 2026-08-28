@@ -1231,6 +1231,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Web Lichess lobby hid nothing when no accounts were saved**: Settings →
+  Players still drew Rated, Ongoing Games, Challenges, and Seek New Game
+  against an empty store, so the card offered play controls that cannot
+  run and a no-token empty state that told the user to add an account
+  while Accounts was already on the card. Those rows now appear only
+  once a Lichess login exists. A failed or unauthorized account list is
+  not treated as empty, so the rows are not buried behind a false
+  "add an account" state. The board lobby is unchanged.
+
 - **Display tuning disappeared when the panel was the thing that needed
   tuning**: the Settings card hid itself unless the board had already
   reported an initialized controller, so a failed init, a board still

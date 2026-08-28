@@ -2065,9 +2065,10 @@ export function Settings() {
             {renderPlayerCard('player2', t('settingsPage.player2Title'))}
 
             {/* Web twin of the board Lichess lobby. Catalog children of
-                players.lichess: Account (picker + nested Accounts), Rated,
-                Ongoing Games, Challenges, Seek New Game. The board still opens
-                this as an action; the web walks the same hierarchy here. */}
+                players.lichess: Account (picker + nested Accounts), then
+                Rated, Ongoing Games, Challenges, Seek New Game when a
+                Lichess account exists. The board still opens this as an
+                action; the web walks the same hierarchy here. */}
             {catalog && (
               <LichessLobbyCard
                 catalog={catalog}

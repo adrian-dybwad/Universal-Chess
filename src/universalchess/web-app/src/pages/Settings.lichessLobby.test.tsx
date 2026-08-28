@@ -65,13 +65,15 @@ class MockEventSource {
   removeEventListener(): void {}
 }
 
-function mockLobbyFetch() {
+function mockLobbyFetch(options?: { accounts?: unknown; accountsStatus?: number }) {
+  const accountsBody = options?.accounts ?? accountsPayload;
+  const accountsStatus = options?.accountsStatus ?? 200;
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
     const method = ((init?.method as string) ?? 'GET').toUpperCase();
     if (url === '/api/menu-schema') return jsonResponse(menuSchema);
     if (url === '/api/settings' && method === 'GET') return jsonResponse(settingsPayload);
     if (url === '/api/settings' && method === 'POST') return jsonResponse({ success: true });
-    if (url === '/api/accounts') return jsonResponse(accountsPayload);
+    if (url === '/api/accounts') return jsonResponse(accountsBody, accountsStatus);
     if (url === '/api/engines/all') return jsonResponse([]);
     if (url === '/api/sprites') return jsonResponse(['default']);
     if (url === '/api/agents') return jsonResponse({ agents: [] });
@@ -141,6 +143,42 @@ describe('Settings Lichess lobby card', () => {
     ]);
     expect(screen.getByRole('button', { name: 'Accounts' })).toBeInTheDocument();
     expect(screen.queryByLabelText('Server')).not.toBeInTheDocument();
+  });
+
+  it('hides Rated and the play rows when no Lichess accounts are saved', async () => {
+    // Rated, Ongoing Games, Challenges, and Seek New Game require an account.
+    // Drawing them against an empty store is a lobby that cannot be used, plus
+    // a no-token empty state that tells the user to add an account while
+    // Accounts is already on the card. A regression draws those rows (or the
+    // Rated toggle) when GET /api/accounts returns [].
+    mockLobbyFetch({ accounts: { accounts: [] } });
+    renderPlayers();
+    expect(await screen.findByText(/no accounts yet/i)).toBeInTheDocument();
+    const lobby = document.querySelector('.lichess-lobby');
+    expect(lobby).not.toBeNull();
+    expect([...lobby!.querySelectorAll('.lichess-lobby-heading')].map((el) => el.textContent)).toEqual([
+      'Account',
+    ]);
+    expect(screen.queryByLabelText('Rated')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Seek New Game' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Accounts' })).toBeInTheDocument();
+  });
+
+  it('does not hide Rated and the play rows when the account list is unauthorized', async () => {
+    // A 401 is not an empty store: hiding play features the way a true empty
+    // list does would bury Rated / Ongoing / Seek behind a sign-in that only
+    // the account picker offers. A regression drops those rows on 401 the same
+    // way it used to collapse the picker to Default-only.
+    mockLobbyFetch({ accountsStatus: 401 });
+    renderPlayers();
+    expect(await screen.findByLabelText('Rated')).toBeInTheDocument();
+    const lobby = document.querySelector('.lichess-lobby');
+    expect([...lobby!.querySelectorAll('.lichess-lobby-heading')].map((el) => el.textContent)).toEqual([
+      'Account',
+      'Ongoing Games',
+      'Challenges',
+      'Seek New Game',
+    ]);
   });
 
   it('offers Rated in the lobby and not on the player card', async () => {
