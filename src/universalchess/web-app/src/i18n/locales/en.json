@@ -919,6 +919,7 @@
       "uptime": "Uptime",
       "load": "Load (1m)",
       "device": "Device",
+      "os": "Operating system",
       "kernel": "Kernel",
       "wifiBtChip": "Wi-Fi / BT chip",
       "wifiFirmware": "Wi-Fi firmware",

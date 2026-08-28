@@ -926,6 +926,7 @@
       "uptime": "Temps d'activité",
       "load": "Charge (1 min)",
       "device": "Appareil",
+      "os": "Système d'exploitation",
       "kernel": "Noyau",
       "wifiBtChip": "Puce Wi-Fi / BT",
       "wifiFirmware": "Micrologiciel Wi-Fi",

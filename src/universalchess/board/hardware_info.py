@@ -1,12 +1,12 @@
-"""Static hardware identity: wireless chip, firmware/OS versions, and display.
+"""Static hardware identity: wireless chip, firmware/OS versions, display, and OS edition.
 
 Why this is separate from :mod:`universalchess.board.system_info`:
   ``system_info`` reports *telemetry* -- numbers that change every second (CPU,
   memory, uptime) and are polled on an interval. This module reports *identity*
   -- facts fixed for the life of a boot (which wireless part is fitted, the
-  kernel/firmware versions, the e-paper panel). Mixing the two would make the
-  telemetry card re-run kernel-log parsing on every 5-second poll. Identity is
-  gathered once and cached.
+  kernel/firmware versions, the e-paper panel, the OS distro and edition).
+  Mixing the two would make the telemetry card re-run kernel-log parsing on
+  every 5-second poll. Identity is gathered once and cached.
 
   The wireless part is read from the kernel log, which names the Broadcom
   stepping the advertising verdict depends on, and falls back to the part the
@@ -184,12 +184,22 @@ class HardwareInfo:
     # IL3820 opt-in), or None when the display is disabled / not yet reported.
     display_busy_timeout: bool
     display_active_controller: Optional[str]
+    # Distro identity for the Operating system row. ``os_pretty_name`` is
+    # os-release PRETTY_NAME, rewritten to "Raspberry Pi OS {VERSION}" when
+    # the board is Raspberry Pi OS (that distro's 64-bit image still IDs as
+    # Debian). ``os_variant`` is Lite/Desktop/Full/Server/Minimal when a signal
+    # actually names the edition; None rather than a guessed "Lite" on a
+    # generic headless Debian.
+    os_pretty_name: Optional[str]
+    os_variant: Optional[str]
 
     def to_dict(self) -> dict:
         """Flat, JSON-serializable contract consumed by the React System card."""
         return {
             "pi_model": self.pi_model,
             "kernel_release": self.kernel_release,
+            "os_pretty_name": self.os_pretty_name,
+            "os_variant": self.os_variant,
             "wireless_chip": self.wireless_chip,
             "wifi_firmware_version": self.wifi_firmware_version,
             "wifi_firmware_package": self.wifi_firmware_package,
@@ -228,6 +238,11 @@ class HardwareInfoSource:
     # makes no claim. Used only when the kernel log names no part (see
     # collect_hardware_info).
     declared_wireless_chip: Callable[[], Optional[str]]
+    # Raw /etc/os-release, /etc/rpi-issue, and the systemd default-target unit
+    # name (e.g. multi-user.target). Empty string when the file is absent.
+    os_release: Callable[[], str]
+    rpi_issue: Callable[[], str]
+    systemd_default_target: Callable[[], str]
 
 
 # ---------------------------------------------------------------------------
@@ -285,6 +300,224 @@ def parse_dpkg_version(dpkg_status: str, package: str) -> Optional[str]:
         version = re.search(r"^Version:\s*(.+?)\s*$", stanza, re.MULTILINE)
         return version.group(1) if version else None
     return None
+
+
+# os-release KEY=value; PRETTY_NAME is quoted, ID often is not.
+_OS_RELEASE_LINE = re.compile(r"^([A-Z_][A-Z0-9_]*)=(.*)$")
+# pi-gen writes "stageN" on the Generated-using line of /etc/rpi-issue.
+_RPI_ISSUE_STAGE = re.compile(r"\bstage(\d)\b")
+# pi-gen stages: 0–2 Lite, 3–4 Desktop, 5+ Full (desktop + recommended software).
+_PIGEN_DESKTOP_MIN_STAGE = 3
+_PIGEN_FULL_MIN_STAGE = 5
+
+# Packages that mean a graphical session is installed (Raspberry Pi OS Desktop
+# plus the common Debian/Armbian display managers and desktop environments).
+_DESKTOP_PACKAGES: tuple[str, ...] = (
+    "raspberrypi-ui-mods",
+    "lightdm",
+    "gdm3",
+    "sddm",
+    "lxde-core",
+    "lxqt-session",
+    "xfce4-session",
+    "gnome-session",
+    "plasma-desktop",
+    "labwc",
+    "wayfire",
+    "weston",
+)
+# Packages that exist on Raspberry Pi OS (Lite and Desktop) and not on a
+# generic Debian/Armbian image. Used to rewrite Debian's PRETTY_NAME and to
+# label a headless Pi OS image Lite.
+_RASPI_OS_PACKAGES: tuple[str, ...] = (
+    "raspberrypi-sys-mods",
+    "raspi-config",
+    "raspberrypi-archive-keyring",
+)
+# VARIANT / VARIANT_ID aliases. Unknown strings pass through unchanged.
+_VARIANT_ALIASES: dict[str, str] = {
+    "desktop": "Desktop",
+    "server": "Server",
+    "minimal": "Minimal",
+    "lite": "Lite",
+    "full": "Full",
+    "cli": "Minimal",
+    "min": "Minimal",
+    "xfce": "Desktop",
+    "gnome": "Desktop",
+    "kde": "Desktop",
+    "cinnamon": "Desktop",
+    "mate": "Desktop",
+    "lxde": "Desktop",
+    "lxqt": "Desktop",
+    "i3": "Desktop",
+    "sway": "Desktop",
+    "labwc": "Desktop",
+    "wayfire": "Desktop",
+}
+
+
+def parse_os_release(text: str) -> dict[str, str]:
+    """Parse ``/etc/os-release`` KEY=value text into a dict.
+
+    Values may be bare, single-quoted, or double-quoted. Comments and blank
+    lines are skipped. Returns an empty dict for empty or unparseable text --
+    never invented keys -- so a missing file cannot fabricate a distro name.
+    """
+    parsed: dict[str, str] = {}
+    if not text:
+        return parsed
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        match = _OS_RELEASE_LINE.match(line)
+        if not match:
+            continue
+        parsed[match.group(1)] = _unquote_os_release_value(match.group(2))
+    return parsed
+
+
+def _unquote_os_release_value(value: str) -> str:
+    """Strip matching quotes from an os-release value; leave bare values intact."""
+    quote = value[:1]
+    if quote in "\"'" and value.endswith(quote) and len(value) > 1:
+        inner = value[1:-1]
+        if quote == '"':
+            return inner.replace("\\\\", "\\").replace('\\"', '"')
+        return inner
+    return value
+
+
+def parse_rpi_issue_stage(rpi_issue: str) -> Optional[int]:
+    """Return the pi-gen stage number from ``/etc/rpi-issue``, or ``None``.
+
+    stage2 is Raspberry Pi OS Lite, stage3/4 Desktop, stage5 Full. ``None``
+    when the file is absent or has no stage token -- the caller must not
+    invent Lite vs Desktop from an empty string.
+    """
+    if not rpi_issue:
+        return None
+    match = _RPI_ISSUE_STAGE.search(rpi_issue)
+    return int(match.group(1)) if match else None
+
+
+def derive_os_identity(
+    os_release_text: str,
+    dpkg_status: str,
+    default_target: str,
+    rpi_issue: str,
+) -> tuple[Optional[str], Optional[str]]:
+    """Return ``(pretty_name, variant)`` from injected OS identity files.
+
+    Priority for variant (first match wins), because no single file is
+    reliable across the boards this product runs on:
+
+    1. os-release ``VARIANT`` / ``VARIANT_ID`` -- Armbian declares Server or
+       Desktop here; Raspberry Pi OS does not set it.
+    2. An installed desktop package (``raspberrypi-ui-mods``, a display
+       manager, a DE session). Current state: a Lite image that later gained
+       a desktop must show Desktop, not the original pi-gen stage.
+    3. pi-gen stage in ``/etc/rpi-issue`` -- Lite / Desktop / Full for
+       Raspberry Pi OS when packages do not already decide.
+    4. systemd ``graphical.target`` -- Desktop only; ``multi-user.target``
+       is not mapped to Lite, because that is also a generic Debian server.
+    5. Raspberry Pi OS with none of the above -- Lite.
+
+    Pretty name is os-release ``PRETTY_NAME``, rewritten to
+    ``Raspberry Pi OS {VERSION}`` when the board is Raspberry Pi OS (64-bit
+    images still ID as Debian). A generic Debian/Armbian pretty name is left
+    alone. Either field is ``None`` when there is no signal, never a guessed
+    distro or a "Lite" label on a headless Debian that is not Pi OS.
+    """
+    os_release = parse_os_release(os_release_text)
+    is_raspi = _is_raspberry_pi_os(os_release, dpkg_status, rpi_issue)
+    pretty = _os_pretty_name(os_release, is_raspi=is_raspi)
+    variant = _os_variant(
+        os_release,
+        dpkg_status,
+        default_target,
+        rpi_issue,
+        is_raspi=is_raspi,
+    )
+    return pretty, variant
+
+
+def _is_raspberry_pi_os(
+    os_release: dict[str, str], dpkg_status: str, rpi_issue: str
+) -> bool:
+    distro_id = os_release.get("ID", "").lower()
+    if distro_id in {"raspbian", "raspios"}:
+        return True
+    if rpi_issue.strip():
+        return True
+    return any(
+        parse_dpkg_version(dpkg_status, package) is not None
+        for package in _RASPI_OS_PACKAGES
+    )
+
+
+def _os_pretty_name(os_release: dict[str, str], *, is_raspi: bool) -> Optional[str]:
+    pretty = os_release.get("PRETTY_NAME") or None
+    version = os_release.get("VERSION") or None
+    name = os_release.get("NAME") or None
+    if is_raspi:
+        if version:
+            return f"Raspberry Pi OS {version}"
+        return "Raspberry Pi OS"
+    if pretty:
+        return pretty
+    if name and version:
+        return f"{name} {version}"
+    return name
+
+
+def _variant_from_pigen_stage(stage: Optional[int]) -> Optional[str]:
+    """Map a pi-gen stage number to Lite/Desktop/Full, or ``None`` if unknown."""
+    if stage is None:
+        return None
+    if stage >= _PIGEN_FULL_MIN_STAGE:
+        return "Full"
+    if stage >= _PIGEN_DESKTOP_MIN_STAGE:
+        return "Desktop"
+    return "Lite"
+
+
+def _os_variant(
+    os_release: dict[str, str],
+    dpkg_status: str,
+    default_target: str,
+    rpi_issue: str,
+    *,
+    is_raspi: bool,
+) -> Optional[str]:
+    declared = os_release.get("VARIANT") or os_release.get("VARIANT_ID")
+    if declared:
+        return _normalize_os_variant(declared) or None
+
+    desktop_installed = any(
+        parse_dpkg_version(dpkg_status, package) is not None
+        for package in _DESKTOP_PACKAGES
+    )
+    from_stage = _variant_from_pigen_stage(parse_rpi_issue_stage(rpi_issue))
+    if desktop_installed:
+        return "Full" if from_stage == "Full" else "Desktop"
+    if from_stage is not None:
+        return from_stage
+
+    target = Path(default_target.strip()).name if default_target.strip() else ""
+    if target == "graphical.target":
+        return "Desktop"
+    if is_raspi:
+        return "Lite"
+    return None
+
+
+def _normalize_os_variant(raw: str) -> str:
+    stripped = raw.strip()
+    if not stripped:
+        return stripped
+    return _VARIANT_ALIASES.get(stripped.lower(), stripped)
 
 
 def find_wifi_firmware_package(dpkg_status: str) -> tuple[Optional[str], Optional[str]]:
@@ -559,9 +792,18 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
         active_controller
     )
 
+    os_pretty_name, os_variant = derive_os_identity(
+        source.os_release(),
+        dpkg_status,
+        source.systemd_default_target(),
+        source.rpi_issue(),
+    )
+
     return HardwareInfo(
         pi_model=source.pi_model(),
         kernel_release=kernel_release,
+        os_pretty_name=os_pretty_name,
+        os_variant=os_variant,
         wireless_chip=wireless_chip,
         wifi_firmware_version=firmware_version,
         wifi_firmware_package=firmware_package,
@@ -617,8 +859,27 @@ def _read_kernel_log() -> str:
 
 def _read_dpkg_status() -> str:
     """Return the contents of the dpkg status file (rootless), or ``""``."""
+    return _read_text_file("/var/lib/dpkg/status")
+
+
+def _read_text_file(path: str) -> str:
+    """Return a UTF-8 file's contents, or ``""`` when it cannot be read."""
     try:
-        return Path("/var/lib/dpkg/status").read_text(encoding="utf-8", errors="replace")
+        return Path(path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _read_systemd_default_target() -> str:
+    """Return the systemd default-target unit name, or ``""``.
+
+    Follows ``/etc/systemd/system/default.target`` (a symlink to
+    ``multi-user.target`` or ``graphical.target``). Missing or unreadable
+    yields empty so the variant stays unset rather than a guessed edition.
+    """
+    path = Path("/etc/systemd/system/default.target")
+    try:
+        return path.resolve(strict=True).name
     except OSError:
         return ""
 
@@ -691,6 +952,9 @@ def default_source() -> HardwareInfoSource:
         display_status=read_display_status,
         bluez_patch=bluez_patch_status.read_status,
         declared_wireless_chip=lambda: profile.get_board_profile().wireless_chip,
+        os_release=lambda: _read_text_file("/etc/os-release"),
+        rpi_issue=lambda: _read_text_file("/etc/rpi-issue"),
+        systemd_default_target=_read_systemd_default_target,
     )
 
 

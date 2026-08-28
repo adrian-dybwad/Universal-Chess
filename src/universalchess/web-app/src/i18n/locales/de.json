@@ -919,6 +919,7 @@
       "uptime": "Laufzeit",
       "load": "Last (1 Min.)",
       "device": "Gerät",
+      "os": "Betriebssystem",
       "kernel": "Kernel",
       "wifiBtChip": "Wi-Fi- / BT-Chip",
       "wifiFirmware": "Wi-Fi-Firmware",

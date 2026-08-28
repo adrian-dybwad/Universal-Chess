@@ -919,6 +919,7 @@
       "uptime": "Çalışma süresi",
       "load": "Yük (1 dk)",
       "device": "Cihaz",
+      "os": "İşletim sistemi",
       "kernel": "Çekirdek",
       "wifiBtChip": "Wi-Fi / BT yongası",
       "wifiFirmware": "Wi-Fi ürün yazılımı",

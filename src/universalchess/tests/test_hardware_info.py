@@ -348,6 +348,247 @@ class WirelessHealthTests(unittest.TestCase):
         self.assertEqual(health, hw.HEALTH_UNKNOWN)
 
 
+# ---------------------------------------------------------------------------
+# OS identity (distro pretty name + Lite/Desktop/Server edition)
+# ---------------------------------------------------------------------------
+
+# Raspberry Pi OS 64-bit still ships Debian's os-release (ID=debian, no VARIANT).
+# Lite vs Desktop is not in that file; pi-gen writes the image stage to
+# /etc/rpi-issue, and the desktop image installs raspberrypi-ui-mods.
+_OS_RELEASE_RPI_DEBIAN = (
+    'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\n'
+    'NAME="Debian GNU/Linux"\n'
+    'VERSION_ID="12"\n'
+    'VERSION="12 (bookworm)"\n'
+    "VERSION_CODENAME=bookworm\n"
+    "ID=debian\n"
+)
+_OS_RELEASE_RASPBIAN = (
+    'PRETTY_NAME="Raspbian GNU/Linux 12 (bookworm)"\n'
+    'NAME="Raspbian GNU/Linux"\n'
+    'VERSION="12 (bookworm)"\n'
+    "ID=raspbian\n"
+)
+_OS_RELEASE_ARMBIAN_SERVER = (
+    'PRETTY_NAME="Armbian 25.8.1 bookworm"\n'
+    'NAME="Debian GNU/Linux"\n'
+    'VERSION="12 (bookworm)"\n'
+    "ID=debian\n"
+    'VARIANT="Server"\n'
+    "VARIANT_ID=server\n"
+)
+_OS_RELEASE_ARMBIAN_DESKTOP = (
+    'PRETTY_NAME="Armbian 25.8.1 bookworm"\n'
+    'NAME="Debian GNU/Linux"\n'
+    'VERSION="12 (bookworm)"\n'
+    "ID=debian\n"
+    'VARIANT="Desktop"\n'
+    "VARIANT_ID=desktop\n"
+)
+_RPI_ISSUE_LITE = (
+    "Raspberry Pi reference 2024-11-19\n"
+    "Generated using pi-gen, https://github.com/RPi-Distro/pi-gen, "
+    "deadbeef, stage2\n"
+)
+_RPI_ISSUE_DESKTOP = (
+    "Raspberry Pi reference 2024-11-19\n"
+    "Generated using pi-gen, https://github.com/RPi-Distro/pi-gen, "
+    "deadbeef, stage4\n"
+)
+_RPI_ISSUE_FULL = (
+    "Raspberry Pi reference 2024-11-19\n"
+    "Generated using pi-gen, https://github.com/RPi-Distro/pi-gen, "
+    "deadbeef, stage5\n"
+)
+
+
+def _dpkg_stanza(package: str, installed: bool = True, version: str = "1") -> str:
+    status = "install ok installed" if installed else "deinstall ok config-files"
+    return f"Package: {package}\nStatus: {status}\nVersion: {version}\n"
+
+
+def _raspi_lite_dpkg() -> str:
+    return _dpkg_stanza("raspi-config") + "\n" + _dpkg_stanza("raspberrypi-sys-mods")
+
+
+def _raspi_desktop_dpkg() -> str:
+    return _raspi_lite_dpkg() + "\n" + _dpkg_stanza("raspberrypi-ui-mods")
+
+
+class OsReleaseParseTests(unittest.TestCase):
+    def test_reads_quoted_and_bare_keys(self):
+        # Why: os-release mixes quoted PRETTY_NAME with bare ID= lines. A parser
+        # that kept the quotes would show them on the System card.
+        parsed = hw.parse_os_release(_OS_RELEASE_RPI_DEBIAN)
+        self.assertEqual(parsed["PRETTY_NAME"], "Debian GNU/Linux 12 (bookworm)")
+        self.assertEqual(parsed["ID"], "debian")
+        self.assertEqual(parsed["VERSION"], "12 (bookworm)")
+
+    def test_skips_comments_and_blank_lines(self):
+        text = "# comment\n\nID=debian\nPRETTY_NAME='Debian GNU/Linux'\n"
+        parsed = hw.parse_os_release(text)
+        self.assertEqual(parsed["ID"], "debian")
+        self.assertEqual(parsed["PRETTY_NAME"], "Debian GNU/Linux")
+
+    def test_empty_or_garbage_is_an_empty_dict(self):
+        # No fabrication: unreadable/missing os-release must not invent keys.
+        self.assertEqual(hw.parse_os_release(""), {})
+        self.assertEqual(hw.parse_os_release("not a key value file"), {})
+
+
+class DeriveOsIdentityTests(unittest.TestCase):
+    """Lite vs Desktop is not a single file; these cases pin the priority.
+
+    Raspberry Pi OS 64-bit identifies as Debian and omits VARIANT. Armbian
+    declares VARIANT. A Debian server has neither. The card must not call a
+    generic Debian install "Lite".
+    """
+
+    def test_empty_sources_yield_nothing(self):
+        pretty, variant = hw.derive_os_identity("", "", "", "")
+        self.assertIsNone(pretty)
+        self.assertIsNone(variant)
+
+    def test_raspberry_pi_os_lite_from_pi_gen_stage2(self):
+        # Why: Lite images have no VARIANT and no raspberrypi-ui-mods. The
+        # pi-gen stage in /etc/rpi-issue is the image edition. A regression
+        # that skipped rpi-issue would show Debian with no Lite/Desktop, or
+        # worse label a Lite board Desktop from graphical.target after someone
+        # enabled a display manager.
+        pretty, variant = hw.derive_os_identity(
+            _OS_RELEASE_RPI_DEBIAN,
+            _raspi_lite_dpkg(),
+            "multi-user.target",
+            _RPI_ISSUE_LITE,
+        )
+        self.assertEqual(pretty, "Raspberry Pi OS 12 (bookworm)")
+        self.assertEqual(variant, "Lite")
+
+    def test_raspberry_pi_os_desktop_from_ui_mods(self):
+        # Why: the desktop image installs raspberrypi-ui-mods. That package is
+        # the current-state signal: a Lite board that later gained a desktop
+        # must show Desktop, not the original stage2.
+        pretty, variant = hw.derive_os_identity(
+            _OS_RELEASE_RPI_DEBIAN,
+            _raspi_desktop_dpkg(),
+            "graphical.target",
+            _RPI_ISSUE_LITE,
+        )
+        self.assertEqual(pretty, "Raspberry Pi OS 12 (bookworm)")
+        self.assertEqual(variant, "Desktop")
+
+    def test_raspberry_pi_os_full_from_pi_gen_stage5(self):
+        # Why: stage5 is the "Full" image (desktop + recommended software).
+        # ui-mods is also installed, so package presence alone would collapse
+        # Full into Desktop and hide the edition the image actually is.
+        pretty, variant = hw.derive_os_identity(
+            _OS_RELEASE_RPI_DEBIAN,
+            _raspi_desktop_dpkg(),
+            "graphical.target",
+            _RPI_ISSUE_FULL,
+        )
+        self.assertEqual(pretty, "Raspberry Pi OS 12 (bookworm)")
+        self.assertEqual(variant, "Full")
+
+    def test_raspberry_pi_os_desktop_from_pi_gen_stage4_without_ui_mods(self):
+        # A stripped desktop image still carries stage4 in rpi-issue.
+        pretty, variant = hw.derive_os_identity(
+            _OS_RELEASE_RPI_DEBIAN,
+            _raspi_lite_dpkg(),
+            "multi-user.target",
+            _RPI_ISSUE_DESKTOP,
+        )
+        self.assertEqual(variant, "Desktop")
+
+    def test_raspbian_id_rewrites_pretty_name(self):
+        pretty, variant = hw.derive_os_identity(
+            _OS_RELEASE_RASPBIAN,
+            _raspi_lite_dpkg(),
+            "multi-user.target",
+            "",
+        )
+        self.assertEqual(pretty, "Raspberry Pi OS 12 (bookworm)")
+        self.assertEqual(variant, "Lite")
+
+    def test_removed_ui_mods_does_not_count_as_desktop(self):
+        # Why: dpkg keeps a stanza after remove-without-purge. Counting it
+        # would label a Lite board Desktop after the desktop was taken off.
+        dpkg = _raspi_lite_dpkg() + "\n" + _dpkg_stanza(
+            "raspberrypi-ui-mods", installed=False
+        )
+        pretty, variant = hw.derive_os_identity(
+            _OS_RELEASE_RPI_DEBIAN, dpkg, "multi-user.target", _RPI_ISSUE_LITE
+        )
+        self.assertEqual(variant, "Lite")
+
+    def test_armbian_variant_server(self):
+        pretty, variant = hw.derive_os_identity(
+            _OS_RELEASE_ARMBIAN_SERVER, "", "multi-user.target", ""
+        )
+        self.assertEqual(pretty, "Armbian 25.8.1 bookworm")
+        self.assertEqual(variant, "Server")
+
+    def test_armbian_variant_desktop(self):
+        pretty, variant = hw.derive_os_identity(
+            _OS_RELEASE_ARMBIAN_DESKTOP, "", "graphical.target", ""
+        )
+        self.assertEqual(pretty, "Armbian 25.8.1 bookworm")
+        self.assertEqual(variant, "Desktop")
+
+    def test_armbian_variant_outranks_desktop_packages(self):
+        # Why: the distro declared Server. A dependency that pulled lightdm
+        # must not relabel the image Desktop.
+        dpkg = _dpkg_stanza("lightdm")
+        pretty, variant = hw.derive_os_identity(
+            _OS_RELEASE_ARMBIAN_SERVER, dpkg, "graphical.target", ""
+        )
+        self.assertEqual(variant, "Server")
+
+    def test_generic_debian_with_gnome_is_desktop(self):
+        os_release = (
+            'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\n'
+            'VERSION="12 (bookworm)"\n'
+            "ID=debian\n"
+        )
+        pretty, variant = hw.derive_os_identity(
+            os_release, _dpkg_stanza("gnome-session"), "graphical.target", ""
+        )
+        self.assertEqual(pretty, "Debian GNU/Linux 12 (bookworm)")
+        self.assertEqual(variant, "Desktop")
+
+    def test_generic_debian_server_is_not_called_lite(self):
+        # Why: "Lite" is a Raspberry Pi OS edition name. A headless Debian
+        # install is not Lite; inventing that word would misidentify the OS.
+        os_release = (
+            'PRETTY_NAME="Debian GNU/Linux 12 (bookworm)"\n'
+            'VERSION="12 (bookworm)"\n'
+            "ID=debian\n"
+        )
+        pretty, variant = hw.derive_os_identity(
+            os_release, "", "multi-user.target", ""
+        )
+        self.assertEqual(pretty, "Debian GNU/Linux 12 (bookworm)")
+        self.assertIsNone(variant)
+
+    def test_graphical_target_is_desktop_when_nothing_else_speaks(self):
+        os_release = 'PRETTY_NAME="Ubuntu 24.04.2 LTS"\nID=ubuntu\n'
+        pretty, variant = hw.derive_os_identity(
+            os_release, "", "graphical.target", ""
+        )
+        self.assertEqual(pretty, "Ubuntu 24.04.2 LTS")
+        self.assertEqual(variant, "Desktop")
+
+    def test_variant_id_used_when_variant_absent(self):
+        os_release = (
+            'PRETTY_NAME="Armbian 25.8.1 bookworm"\n'
+            "ID=debian\n"
+            "VARIANT_ID=minimal\n"
+        )
+        pretty, variant = hw.derive_os_identity(os_release, "", "", "")
+        self.assertEqual(pretty, "Armbian 25.8.1 bookworm")
+        self.assertEqual(variant, "Minimal")
+
+
 class CollectHardwareInfoTests(unittest.TestCase):
     """End-to-end assembly through an injected (fake) source -- no Pi needed."""
 
@@ -359,11 +600,16 @@ class CollectHardwareInfoTests(unittest.TestCase):
         bluez_patch=None,
         dpkg_status=None,
         declared_wireless_chip=None,
+        os_release="",
+        rpi_issue="",
+        systemd_default_target="",
     ):
         # bluez_patch defaults to "no marker" (unknown) so the common cases do
         # not have to specify it; the stack-specific tests pass a real marker.
         # declared_wireless_chip defaults to None -- the board profile makes no
         # claim -- so only the fallback tests opt into one.
+        # os_release / rpi_issue / systemd_default_target default empty so the
+        # wireless tests do not have to invent an OS; the OS row then stays None.
         status_text = _DPKG_STATUS if dpkg_status is None else dpkg_status
         return hw.HardwareInfoSource(
             pi_model=lambda: "Raspberry Pi Zero W Rev 1.1",
@@ -375,6 +621,9 @@ class CollectHardwareInfoTests(unittest.TestCase):
             if bluez_patch is not None
             else bluez_patch_status.unknown_status(),
             declared_wireless_chip=lambda: declared_wireless_chip,
+            os_release=lambda: os_release,
+            rpi_issue=lambda: rpi_issue,
+            systemd_default_target=lambda: systemd_default_target,
         )
 
     def test_profile_names_the_chip_when_the_kernel_log_does_not(self):
@@ -475,9 +724,30 @@ class CollectHardwareInfoTests(unittest.TestCase):
                 "display_detail": info.display_detail,
                 "display_busy_timeout": False,
                 "display_active_controller": None,
+                "os_pretty_name": None,
+                "os_variant": None,
             },
         )
         self.assertEqual(info.hotspot_health, hw.HEALTH_AFFECTED)
+
+    def test_os_identity_wired_through_assembly(self):
+        # Why: the System card reads os_pretty_name / os_variant off the same
+        # HardwareInfo contract as the chip rows. If collect_hardware_info never
+        # calls derive_os_identity, the OS row stays a dash on every board.
+        info = hw.collect_hardware_info(
+            self._source(
+                _KERNEL_618,
+                _LOG_B0,
+                os_release=_OS_RELEASE_RPI_DEBIAN,
+                rpi_issue=_RPI_ISSUE_LITE,
+                systemd_default_target="multi-user.target",
+                dpkg_status=_DPKG_STATUS + "\n" + _raspi_lite_dpkg(),
+            )
+        )
+        self.assertEqual(info.os_pretty_name, "Raspberry Pi OS 12 (bookworm)")
+        self.assertEqual(info.os_variant, "Lite")
+        self.assertEqual(info.to_dict()["os_pretty_name"], info.os_pretty_name)
+        self.assertEqual(info.to_dict()["os_variant"], "Lite")
 
     def test_rpi_fixed_bluez_on_618_assembles_ok(self):
         # End-to-end of the live false-positive: B0 + 6.18.39 + BlueZ

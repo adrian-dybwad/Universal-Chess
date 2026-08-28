@@ -5281,6 +5281,8 @@ type BluezStack = 'stock' | 'patched' | 'unknown';
 interface HardwareInfo {
   pi_model: string | null;
   kernel_release: string;
+  os_pretty_name: string | null;
+  os_variant: string | null;
   wireless_chip: string | null;
   wifi_firmware_version: string | null;
   wifi_firmware_package: string | null;
@@ -5356,6 +5358,18 @@ function orDash(value: string | null): string {
 function formatWifiFirmware(version: string | null, packageName: string | null): string {
   if (!version || !version.trim()) return EM_DASH;
   return packageName && packageName.trim() ? `${version} (${packageName})` : version;
+}
+
+// Distro pretty name plus Lite/Desktop/Server when the collector named an edition.
+// Either part may be absent (unreadable os-release, or a Debian server that is
+// not Raspberry Pi OS Lite); an empty cell is never shown.
+function formatOsEdition(pretty: string | null, variant: string | null): string {
+  const name = pretty?.trim() ?? '';
+  const edition = variant?.trim() ?? '';
+  if (name && edition) return `${name}, ${edition}`;
+  if (name) return name;
+  if (edition) return edition;
+  return EM_DASH;
 }
 
 function formatStatPercent(value: number | null): string {
@@ -5465,6 +5479,7 @@ function SystemInfoCard() {
   const hardwareRows: { id: string; label: string; value: ReactNode }[] = hardware
     ? [
         { id: 'device', label: t('settingsPage.systemInfo.device'), value: orDash(hardware.pi_model) },
+        { id: 'os', label: t('settingsPage.systemInfo.os'), value: formatOsEdition(hardware.os_pretty_name, hardware.os_variant) },
         { id: 'kernel', label: t('settingsPage.systemInfo.kernel'), value: orDash(hardware.kernel_release) },
         { id: 'wifiBtChip', label: t('settingsPage.systemInfo.wifiBtChip'), value: orDash(hardware.wireless_chip) },
         {

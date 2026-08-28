@@ -15,6 +15,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **System Information shows the OS edition**: the card listed the kernel
+  release but not whether the image was Raspberry Pi OS Lite or Desktop,
+  or Armbian Server vs Desktop, so two boards with the same kernel looked
+  identical. The collector reads `/etc/os-release` (pretty name and
+  VARIANT), `/etc/rpi-issue` (the pi-gen Lite/Desktop/Full stage),
+  installed desktop packages, and the systemd default target. Raspberry Pi
+  OS 64-bit still identifies as Debian, so that pretty name is rewritten to
+  Raspberry Pi OS with the version. A generic headless Debian is not
+  labelled Lite. The Operating system row sits with Device and Kernel
+  under Show details.
+
 - **Original Centaur tab shows the imported app's display driver**: Direct
   Mode on a V1 PCB paints nothing because that original software speaks
   UC8151D on its own GPIO/SPI map, but Settings had no view of what the

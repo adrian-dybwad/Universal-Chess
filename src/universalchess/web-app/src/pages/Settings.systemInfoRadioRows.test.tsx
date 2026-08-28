@@ -34,7 +34,7 @@ const idleEngineStatus = {
 const WIRELESS_ROW_LABELS = ['Wi-Fi / BT chip', 'Wi-Fi firmware'];
 const BLUETOOTH_ROW_LABELS = ['BlueZ', 'BlueZ stack', 'Bluetooth advertising'];
 // Rows that must never be gated: they are true of every board.
-const ALWAYS_ROW_LABELS = ['Device', 'Kernel', 'Display'];
+const ALWAYS_ROW_LABELS = ['Device', 'Operating system', 'Kernel', 'Display'];
 
 interface JsonResponseLike {
   ok: boolean;
@@ -106,6 +106,8 @@ function hardwarePayload() {
     display_resolution: '296x128',
     display_status: 'ok',
     display_detail: 'Panel initialized',
+    os_pretty_name: 'Raspberry Pi OS 12 (bookworm)',
+    os_variant: 'Lite',
   };
 }
 
@@ -270,5 +272,22 @@ describe('Wi-Fi firmware row value', () => {
     const scoped = await expandSystemInfo();
 
     expect(firmwareRowValue(scoped)).toBe('7.45');
+  });
+});
+
+describe('Operating system row value', () => {
+  /**
+   * Why: Lite vs Desktop is the edition the operator needs when comparing
+   * images, and Raspberry Pi OS 64-bit still IDs as Debian in os-release. The
+   * row must show the rewritten pretty name plus the edition. A regression
+   * that dropped os_variant would show Debian with no Lite/Desktop, and one
+   * that dropped the join would leave two unlabeled cells or a dash.
+   */
+  it('joins the pretty name and edition', async () => {
+    const scoped = await expandSystemInfo();
+    const label = scoped.getByText('Operating system');
+    expect(label.nextElementSibling?.textContent).toBe(
+      'Raspberry Pi OS 12 (bookworm), Lite',
+    );
   });
 });

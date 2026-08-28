@@ -96,6 +96,8 @@ function hardwarePayload() {
     display_resolution: '296x128',
     display_status: 'ok',
     display_detail: 'Panel initialized',
+    os_pretty_name: 'Raspberry Pi OS 12 (bookworm)',
+    os_variant: 'Lite',
   };
 }
 
@@ -164,6 +166,7 @@ describe('System Information collapse', () => {
     expect(scoped.queryByText('Hostname')).not.toBeInTheDocument();
     expect(scoped.queryByText('Storage')).not.toBeInTheDocument();
     expect(scoped.queryByText('Device')).not.toBeInTheDocument();
+    expect(scoped.queryByText('Operating system')).not.toBeInTheDocument();
 
     // The toggle offers to expand.
     expect(scoped.getByRole('button', { name: 'Show details' })).toHaveAttribute('aria-expanded', 'false');
@@ -187,6 +190,8 @@ describe('System Information collapse', () => {
     expect(scoped.getByText('Hostname')).toBeInTheDocument();
     expect(scoped.getByText('Storage')).toBeInTheDocument();
     expect(scoped.getByText('Device')).toBeInTheDocument();
+    expect(scoped.getByText('Operating system')).toBeInTheDocument();
+    expect(scoped.getByText('Raspberry Pi OS 12 (bookworm), Lite')).toBeInTheDocument();
 
     // The toggle now offers to collapse; clicking it hides the detail rows again
     // while keeping CPU/Memory.
@@ -198,5 +203,6 @@ describe('System Information collapse', () => {
     expect(scoped.getByText('Memory')).toBeInTheDocument();
     expect(scoped.queryByText('Hostname')).not.toBeInTheDocument();
     expect(scoped.queryByText('Device')).not.toBeInTheDocument();
+    expect(scoped.queryByText('Operating system')).not.toBeInTheDocument();
   });
 });

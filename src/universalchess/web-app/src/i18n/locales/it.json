@@ -926,6 +926,7 @@
       "uptime": "Tempo di attività",
       "load": "Carico (1 min)",
       "device": "Dispositivo",
+      "os": "Sistema operativo",
       "kernel": "Kernel",
       "wifiBtChip": "Chip Wi-Fi / BT",
       "wifiFirmware": "Firmware Wi-Fi",

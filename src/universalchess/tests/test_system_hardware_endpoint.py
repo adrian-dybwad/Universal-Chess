@@ -59,6 +59,8 @@ _SAMPLE_INFO = HardwareInfo(
     display_detail="Panel did not initialize: BUSY timeout after 5.0s",
     display_busy_timeout=True,
     display_active_controller=None,
+    os_pretty_name="Raspberry Pi OS 12 (bookworm)",
+    os_variant="Lite",
 )
 
 

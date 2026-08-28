@@ -919,6 +919,7 @@
       "uptime": "Actieve tijd",
       "load": "Belasting (1 min)",
       "device": "Apparaat",
+      "os": "Besturingssysteem",
       "kernel": "Kernel",
       "wifiBtChip": "Wi-Fi-/BT-chip",
       "wifiFirmware": "Wi-Fi-firmware",

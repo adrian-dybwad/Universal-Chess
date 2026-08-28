@@ -933,6 +933,7 @@
       "uptime": "Czas działania",
       "load": "Obciążenie (1 min)",
       "device": "Urządzenie",
+      "os": "System operacyjny",
       "kernel": "Jądro",
       "wifiBtChip": "Układ Wi-Fi / BT",
       "wifiFirmware": "Firmware Wi-Fi",
