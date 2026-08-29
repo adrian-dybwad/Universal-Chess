@@ -448,22 +448,29 @@ class TextWidget(Widget):
         return mask
 
     def _paint_text(self, draw: ImageDraw.Draw, fill: int) -> None:
-        """Draw the overflow-fitted text onto ``draw``."""
+        """Draw the overflow-fitted text onto ``draw``.
+
+        Every layout paints one line at a time. A single ``draw.text()`` of a
+        string that still contains ``\\n`` left-aligns later lines to the same
+        x (PIL's default ``align``), so centered splash copy with explicit
+        breaks ("Loading\\nChallenge...") sat the short line under the left
+        edge of the long one. Word-wrap already split; explicit newlines in
+        CLIP/FIT/SHRINK must use the same per-line origin.
+        """
         self._ensure_fitted()
         size, wrap, _font = self._layout
         if wrap:
-            wrapped_lines = self._wrap_text(self.text, self.width)
-            line_height = size + 2
-            max_lines = max(1, self.height // line_height)
-            for idx, line in enumerate(wrapped_lines[:max_lines]):
-                y_pos = idx * line_height
-                if y_pos + line_height > self.height:
-                    break
-                x_pos = self._get_x_position(line, draw)
-                self._draw_text(draw, x_pos, y_pos - 1, line, fill)
+            lines = self._wrap_text(self.text, self.width)
         else:
-            x_pos = self._get_x_position(self.text, draw)
-            self._draw_text(draw, x_pos, -1, self.text, fill)
+            lines = self.text.split("\n") if self.text else []
+        line_height = size + 2
+        max_lines = max(1, self.height // line_height)
+        for idx, line in enumerate(lines[:max_lines]):
+            y_pos = idx * line_height
+            if y_pos + line_height > self.height:
+                break
+            x_pos = self._get_x_position(line, draw)
+            self._draw_text(draw, x_pos, y_pos - 1, line, fill)
     
     def wrap_lines(self, text: str = None) -> list:
         """Return `text` wrapped to this widget's width using its font.

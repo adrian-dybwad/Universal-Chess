@@ -1242,6 +1242,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Centered e-paper text with a line break sat the short line off-center**:
+  ``Overflow.FIT`` keeps wrap off when each explicit line already fits, then
+  painted the whole string in one ``draw.text()``. PIL left-aligns
+  newline-separated lines to the same x, so splash copy such as
+  "Loading" / "Challenge..." (and "Waiting for" / "opponent...") put the
+  short line under the left edge of the long one. Each line is now given
+  its own origin, the same path word-wrap already used.
+
 - **Web Lichess lobby hid nothing when no accounts were saved**: Settings →
   Players still drew Rated, Ongoing Games, Challenges, and Seek New Game
   against an empty store, so the card offered play controls that cannot
