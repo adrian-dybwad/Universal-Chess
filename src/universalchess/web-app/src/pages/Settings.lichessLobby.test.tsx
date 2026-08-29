@@ -21,6 +21,9 @@ vi.mock('../components/LoginDialog', () => ({
     isOpen ? <button data-testid="login-submit" onClick={onSuccess}>login</button> : null,
 }));
 
+// Decorative preview board; not the subject, and react-chessboard is heavy.
+vi.mock('../components/ChessBoard', () => ({ ChessBoard: () => <div data-testid="board" /> }));
+
 const menuSchema: unknown = menuSchemaFixture;
 
 const settingsPayload = {
@@ -65,9 +68,24 @@ class MockEventSource {
   removeEventListener(): void {}
 }
 
-function mockLobbyFetch(options?: { accounts?: unknown; accountsStatus?: number }) {
+function mockLobbyFetch(options?: {
+  accounts?: unknown;
+  accountsStatus?: number;
+  games?: unknown[];
+}) {
   const accountsBody = options?.accounts ?? accountsPayload;
   const accountsStatus = options?.accountsStatus ?? 200;
+  const games = options?.games ?? [
+    {
+      id: 'g1',
+      opponent: 'Bob',
+      rating: 1500,
+      color: 'white',
+      fen: 'rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1',
+      lastMove: 'e2e4',
+      isMyTurn: false,
+    },
+  ];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
     const method = ((init?.method as string) ?? 'GET').toUpperCase();
     if (url === '/api/menu-schema') return jsonResponse(menuSchema);
@@ -81,9 +99,7 @@ function mockLobbyFetch(options?: { accounts?: unknown; accountsStatus?: number 
     if (url.startsWith('/api/coaches')) return jsonResponse({ coaches: [], resolved: null });
     if (url.startsWith('/api/coach/models')) return jsonResponse({ models: [] });
     if (url === '/api/lichess/ongoing') {
-      return jsonResponse({
-        games: [{ id: 'g1', opponent: 'Bob', rating: 1500, color: 'white' }],
-      });
+      return jsonResponse({ games });
     }
     if (url === '/api/lichess/challenges') {
       return jsonResponse({
@@ -215,14 +231,20 @@ describe('Settings Lichess lobby card', () => {
     });
   });
 
-  it('lists ongoing games and challenges and starts the selected join', async () => {
+  it('lists ongoing games with a position and starts Join, not the row label', async () => {
+    // Selecting the opponent used to post immediately, so the clock ran
+    // before the pieces were set. How a regression manifests: Bob (1500) W is
+    // still the join control, Join is missing, or the diagram is omitted.
     const { fetchMock } = mockLobbyFetch();
     renderPlayers();
-    expect(await screen.findByRole('button', { name: 'Bob (1500) W' })).toBeInTheDocument();
+    expect(await screen.findByText('Bob (1500) W')).toBeInTheDocument();
+    expect(screen.getByTestId('board')).toBeInTheDocument();
+    expect(screen.getByText(/Set the pieces to this position/i)).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Bob (1500) W' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'IN: Ann (1400)' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'OUT: Bo (1600)' })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Bob (1500) W' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }));
     await waitFor(() => {
       const start = fetchMock.mock.calls.find(
         (call) => call[0] === '/api/lichess/start' && (call[1] as RequestInit | undefined)?.method === 'POST',
@@ -235,18 +257,18 @@ describe('Settings Lichess lobby card', () => {
     });
   });
 
-  it('Seek New Game posts mode new to /api/lichess/start', async () => {
+  it('Seek New Game posts mode new even when unfinished games are listed', async () => {
+    // Ongoing Games is the join list. Seek New Game must not wait for those
+    // rows. How a regression manifests: the first click does not POST, or it
+    // posts mode ongoing for g1.
     const { fetchMock } = mockLobbyFetch();
     renderPlayers();
-    // The label comes from the catalog, so this also fails if the board and the
-    // web drift: the row that always posts a seek is named Seek New Game on
-    // both, distinct from the New Game that starts whatever Players describes.
-    const newGame = await screen.findByRole('button', { name: 'Seek New Game' });
-    fireEvent.click(newGame);
+    fireEvent.click(await screen.findByRole('button', { name: 'Seek New Game' }));
     await waitFor(() => {
       const start = fetchMock.mock.calls.find(
         (call) => call[0] === '/api/lichess/start' && (call[1] as RequestInit | undefined)?.method === 'POST',
       );
+      expect(start).toBeTruthy();
       expect(JSON.parse(String((start![1] as RequestInit).body))).toEqual({ mode: 'new' });
     });
   });

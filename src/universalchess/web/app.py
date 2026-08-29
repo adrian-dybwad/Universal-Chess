@@ -3101,7 +3101,8 @@ def api_lichess_ongoing():
     """List this account's unfinished Lichess games. Requires auth.
 
     Same rows as the board lobby Ongoing Games list. Response:
-    ``{"games": [{"id", "opponent", "rating", "color"}]}``. 409 when no
+    ``{"games": [{"id", "opponent", "rating", "color", "fen", "lastMove",
+    "isMyTurn"}]}``. 409 when no
     credential is configured; 502 when Lichess cannot be reached.
     """
     from universalchess.players.lichess.lobby import (

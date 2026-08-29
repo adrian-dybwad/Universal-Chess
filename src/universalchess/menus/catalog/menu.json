@@ -346,7 +346,7 @@
       "label": "Ongoing Games",
       "boardLabel": "Ongoing\nGames",
       "icon": "lichess",
-      "help": "Continue a Lichess game this account already started, on this board, the website, or another device.\n\nSelect a game to resume it here. The clock and your color come from that match.\n\nIf none are listed, this account has no unfinished games. Use Seek New Game to seek a new opponent.",
+      "help": "Continue a Lichess game this account already started, on this board, the website, or another device.\n\nSelect a game to see its position. Set the pieces to that diagram, then Join. The clock and your color come from that match.\n\nIf none are listed, this account has no unfinished games. Use Seek New Game to seek a new opponent.",
       "section": "players"
     },
     {

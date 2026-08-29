@@ -208,7 +208,7 @@
     "lichess.ongoing": {
       "label": "Laufende Partien",
       "boardLabel": "Laufende\nPartien",
-      "help": "Setzt eine Lichess-Partie fort, die dieses Konto bereits begonnen hat — auf diesem Brett, auf der Website oder auf einem anderen Gerät.\n\nEine Partie auswählen, um sie hier fortzusetzen. Uhr und eigene Farbe stammen aus dieser Begegnung.\n\nWird keine aufgeführt, hat dieses Konto keine unbeendeten Partien. Über Neue Partie suchen einen neuen Gegner suchen."
+      "help": "Setzt eine Lichess-Partie fort, die dieses Konto bereits begonnen hat — auf diesem Brett, auf der Website oder auf einem anderen Gerät.\n\nEine Partie auswählen, um die Stellung zu sehen. Die Figuren auf das Diagramm stellen, dann Beitreten. Uhr und eigene Farbe stammen aus dieser Begegnung.\n\nWird keine aufgeführt, hat dieses Konto keine unbeendeten Partien. Über Neue Partie suchen einen neuen Gegner suchen."
     },
     "lichess.challenges": {
       "label": "Herausforderungen",

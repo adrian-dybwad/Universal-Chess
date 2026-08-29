@@ -423,7 +423,10 @@
       "noToken": "Voeg onder Accounts een Lichess-login toe om partijen en uitdagingen te zien.",
       "boardOffline": "Het bord is niet actief.",
       "startFailed": "Die Lichess-partij kon niet worden gestart.",
-      "confirmAbandon": "De lopende partij afbreken en deze op het bord starten?"
+      "confirmAbandon": "De lopende partij afbreken en deze op het bord starten?",
+      "joinGame": "Meedoen",
+      "yourMove": "Jij aan zet",
+      "setupThenJoin": "Zet de stukken op deze stelling en doe dan mee."
     },
     "game": {
       "title": "Partij-instellingen",

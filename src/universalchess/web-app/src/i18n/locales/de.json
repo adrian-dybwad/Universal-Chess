@@ -423,7 +423,10 @@
       "noToken": "Fügen Sie unter Konten eine Lichess-Anmeldung hinzu, um Partien und Herausforderungen aufzulisten.",
       "boardOffline": "Das Brett läuft nicht.",
       "startFailed": "Diese Lichess-Partie konnte nicht gestartet werden.",
-      "confirmAbandon": "Die laufende Partie abbrechen und diese auf dem Brett starten?"
+      "confirmAbandon": "Die laufende Partie abbrechen und diese auf dem Brett starten?",
+      "joinGame": "Beitreten",
+      "yourMove": "Sie sind am Zug",
+      "setupThenJoin": "Stellen Sie die Figuren auf diese Stellung und treten Sie dann bei."
     },
     "game": {
       "title": "Partie-Einstellungen",

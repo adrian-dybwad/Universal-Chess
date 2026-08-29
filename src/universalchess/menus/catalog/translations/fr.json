@@ -209,7 +209,7 @@
     "lichess.ongoing": {
       "label": "Parties en cours",
       "boardLabel": "Parties\nen cours",
-      "help": "Reprendre une partie Lichess déjà commencée par ce compte, sur ce plateau, le site, ou un autre appareil.\n\nSélectionnez une partie pour la reprendre ici. L'horloge et votre couleur viennent de cette rencontre.\n\nSi aucune n'est listée, ce compte n'a pas de partie inachevée. Utilisez Chercher une partie pour trouver un adversaire."
+      "help": "Reprendre une partie Lichess déjà commencée par ce compte, sur ce plateau, le site, ou un autre appareil.\n\nSélectionnez une partie pour voir sa position. Placez les pièces selon le diagramme, puis Rejoindre. L'horloge et votre couleur viennent de cette rencontre.\n\nSi aucune n'est listée, ce compte n'a pas de partie inachevée. Utilisez Chercher une partie pour trouver un adversaire."
     },
     "lichess.challenges": {
       "label": "Défis",

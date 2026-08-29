@@ -429,7 +429,10 @@
       "noToken": "Dodaj logowanie do Lichess w sekcji Konta, aby wyświetlić partie i wyzwania.",
       "boardOffline": "Szachownica nie jest uruchomiona.",
       "startFailed": "Nie udało się rozpocząć tej partii na Lichess.",
-      "confirmAbandon": "Porzucić trwającą partię i rozpocząć tę na szachownicy?"
+      "confirmAbandon": "Porzucić trwającą partię i rozpocząć tę na szachownicy?",
+      "joinGame": "Dołącz",
+      "yourMove": "Twój ruch",
+      "setupThenJoin": "Ustaw bierki na tej pozycji, a potem dołącz."
     },
     "game": {
       "title": "Ustawienia partii",

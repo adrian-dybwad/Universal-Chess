@@ -208,7 +208,7 @@
     "lichess.ongoing": {
       "label": "Devam eden oyunlar",
       "boardLabel": "Devam eden\noyunlar",
-      "help": "Bu hesabın bu tahtada, sitede veya başka bir cihazda başlattığı bir Lichess oyununu sürdürür.\n\nBurada devam etmek için bir oyun seç. Saat ve senin rengin o karşılaşmadan gelir.\n\nHiçbiri yoksa bu hesabın bitmemiş oyunu yoktur. Rakip için Yeni oyun ara'yı kullan."
+      "help": "Bu hesabın bu tahtada, sitede veya başka bir cihazda başlattığı bir Lichess oyununu sürdürür.\n\nKonumu görmek için bir oyun seç. Taşları diyagrama göre dizin, sonra Katıl. Saat ve senin rengin o karşılaşmadan gelir.\n\nHiçbiri yoksa bu hesabın bitmemiş oyunu yoktur. Rakip için Yeni oyun ara'yı kullan."
     },
     "lichess.challenges": {
       "label": "Meydan okumalar",

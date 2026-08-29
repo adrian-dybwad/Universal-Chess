@@ -66,6 +66,8 @@
   "accounts.confirm_named": "Supprimer\n{identity} ?",
   "accounts.confirm_unnamed": "Supprimer\nle compte ?",
   "lichess.reset.prompt": "Chercher\nune partie ?",
+  "lichess.ongoing_or_seek.prompt": "Reprendre ou\nchercher ?",
+  "lichess.ongoing.join": "Rejoindre\ncette partie",
   "lichess.unfinished.aborted": "Partie\nannulée",
   "lichess.unfinished.nostart": "Jamais\ncommencée",
   "lichess.unfinished.ended": "Partie\nterminée",

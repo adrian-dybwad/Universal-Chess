@@ -426,7 +426,10 @@
       "noToken": "Ajoutez un identifiant Lichess sous Comptes pour lister les parties et les défis.",
       "boardOffline": "Le plateau n'est pas en cours d'exécution.",
       "startFailed": "Impossible de démarrer cette partie Lichess.",
-      "confirmAbandon": "Abandonner la partie en cours et commencer celle-ci sur le plateau ?"
+      "confirmAbandon": "Abandonner la partie en cours et commencer celle-ci sur le plateau ?",
+      "joinGame": "Rejoindre",
+      "yourMove": "À vous de jouer",
+      "setupThenJoin": "Placez les pièces sur cette position, puis rejoignez."
     },
     "game": {
       "title": "Paramètres de partie",

@@ -66,6 +66,8 @@
   "accounts.confirm_named": "{identity}\nverwijderen?",
   "accounts.confirm_unnamed": "Account\nverwijderen?",
   "lichess.reset.prompt": "Nieuwe partij\nzoeken?",
+  "lichess.ongoing_or_seek.prompt": "Partij hervatten\nof zoeken?",
+  "lichess.ongoing.join": "Deze partij\nspelen",
   "lichess.unfinished.aborted": "Partij\nafgebroken",
   "lichess.unfinished.nostart": "Niet\ngestart",
   "lichess.unfinished.ended": "Partij\nbeëindigd",

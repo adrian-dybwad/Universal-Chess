@@ -209,7 +209,7 @@
     "lichess.ongoing": {
       "label": "Partite in corso",
       "boardLabel": "Partite\nin corso",
-      "help": "Continua una partita Lichess che questo account ha già iniziato, su questa scacchiera, sul sito o su un altro dispositivo.\n\nScegli una partita per riprenderla qui. Orologio e tuo colore vengono da quello scontro.\n\nSe non ce n'è nessuna, questo account non ha partite incompiute. Usa Cerca nuova partita per trovare un avversario."
+      "help": "Continua una partita Lichess che questo account ha già iniziato, su questa scacchiera, sul sito o su un altro dispositivo.\n\nScegli una partita per vederne la posizione. Sistema i pezzi sul diagramma, poi Unisciti. Orologio e tuo colore vengono da quello scontro.\n\nSe non ce n'è nessuna, questo account non ha partite incompiute. Usa Cerca nuova partita per trovare un avversario."
     },
     "lichess.challenges": {
       "label": "Sfide",

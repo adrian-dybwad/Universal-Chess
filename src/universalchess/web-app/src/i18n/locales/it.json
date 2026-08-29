@@ -426,7 +426,10 @@
       "noToken": "Aggiungi un accesso Lichess in Account per elencare partite e sfide.",
       "boardOffline": "La scacchiera non è in esecuzione.",
       "startFailed": "Impossibile avviare quella partita Lichess.",
-      "confirmAbandon": "Abbandonare la partita in corso e iniziare questa sulla scacchiera?"
+      "confirmAbandon": "Abbandonare la partita in corso e iniziare questa sulla scacchiera?",
+      "joinGame": "Unisciti",
+      "yourMove": "Tocca a te",
+      "setupThenJoin": "Sistema i pezzi su questa posizione, poi unisciti."
     },
     "game": {
       "title": "Impostazioni partita",

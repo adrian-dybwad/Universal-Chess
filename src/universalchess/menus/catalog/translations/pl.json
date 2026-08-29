@@ -208,7 +208,7 @@
     "lichess.ongoing": {
       "label": "Trwające partie",
       "boardLabel": "Trwające\npartie",
-      "help": "Kontynuuj partię na Lichess, którą to konto już rozpoczęło — na tej szachownicy, na stronie albo na innym urządzeniu.\n\nWybierz partię, aby podjąć ją tutaj. Zegar i twój kolor pochodzą z tamtej partii.\n\nJeśli lista jest pusta, to konto nie ma niezakończonych partii. Użyj Szukaj nowej partii, aby znaleźć nowego przeciwnika."
+      "help": "Kontynuuj partię na Lichess, którą to konto już rozpoczęło — na tej szachownicy, na stronie albo na innym urządzeniu.\n\nWybierz partię, aby zobaczyć pozycję. Ustaw bierki według diagramu, a potem Dołącz. Zegar i twój kolor pochodzą z tamtej partii.\n\nJeśli lista jest pusta, to konto nie ma niezakończonych partii. Użyj Szukaj nowej partii, aby znaleźć nowego przeciwnika."
     },
     "lichess.challenges": {
       "label": "Wyzwania",

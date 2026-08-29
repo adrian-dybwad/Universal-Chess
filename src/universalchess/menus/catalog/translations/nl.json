@@ -208,7 +208,7 @@
     "lichess.ongoing": {
       "label": "Lopende partijen",
       "boardLabel": "Lopende\npartijen",
-      "help": "Zet een Lichess-partij voort die dit account al is begonnen, op dit bord, op de website of op een ander apparaat.\n\nKies een partij om die hier voort te zetten. De klok en je kleur komen uit die partij.\n\nStaat er niets in de lijst, dan heeft dit account geen onafgemaakte partijen. Gebruik Nieuwe partij zoeken om een nieuwe tegenstander te zoeken."
+      "help": "Zet een Lichess-partij voort die dit account al is begonnen, op dit bord, op de website of op een ander apparaat.\n\nKies een partij om de stelling te zien. Zet de stukken op het diagram en doe dan mee. De klok en je kleur komen uit die partij.\n\nStaat er niets in de lijst, dan heeft dit account geen onafgemaakte partijen. Gebruik Nieuwe partij zoeken om een nieuwe tegenstander te zoeken."
     },
     "lichess.challenges": {
       "label": "Uitdagingen",

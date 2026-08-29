@@ -423,7 +423,10 @@
       "noToken": "Oyunları ve meydan okumaları listelemek için Hesaplar altına bir Lichess girişi ekle.",
       "boardOffline": "Tahta çalışmıyor.",
       "startFailed": "O Lichess oyunu başlatılamadı.",
-      "confirmAbandon": "Devam eden oyun bırakılıp bu tahtada bu oyun başlatılsın mı?"
+      "confirmAbandon": "Devam eden oyun bırakılıp bu tahtada bu oyun başlatılsın mı?",
+      "joinGame": "Katıl",
+      "yourMove": "Sıra sizde",
+      "setupThenJoin": "Taşları bu konuma dizin, sonra katılın."
     },
     "game": {
       "title": "Oyun ayarları",

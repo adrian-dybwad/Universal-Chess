@@ -47,6 +47,9 @@ class _FakeGames:
                 "gameId": "g1",
                 "opponent": {"username": "Bob", "rating": 1500},
                 "color": "white",
+                "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+                "lastMove": "e2e4",
+                "isMyTurn": False,
             }
         ]
 
@@ -101,7 +104,15 @@ def test_ongoing_returns_summaries(client, lichess_connections):
     assert resp.status_code == 200
     assert json.loads(resp.data) == {
         "games": [
-            {"id": "g1", "opponent": "Bob", "rating": 1500, "color": "white"},
+            {
+                "id": "g1",
+                "opponent": "Bob",
+                "rating": 1500,
+                "color": "white",
+                "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
+                "lastMove": "e2e4",
+                "isMyTurn": False,
+            },
         ]
     }
 

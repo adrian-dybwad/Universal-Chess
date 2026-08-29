@@ -66,6 +66,8 @@
   "accounts.confirm_named": "Delete\n{identity}?",
   "accounts.confirm_unnamed": "Delete\naccount?",
   "lichess.reset.prompt": "Seek a\nnew game?",
+  "lichess.ongoing_or_seek.prompt": "Resume a game\nor seek new?",
+  "lichess.ongoing.join": "Join\nthis game",
   "lichess.unfinished.aborted": "Game\naborted",
   "lichess.unfinished.nostart": "Never\nstarted",
   "lichess.unfinished.ended": "Game\nended",

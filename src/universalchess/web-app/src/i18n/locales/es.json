@@ -426,7 +426,10 @@
       "noToken": "Añade un inicio de Lichess en Cuentas para listar partidas y desafíos.",
       "boardOffline": "El tablero no está en marcha.",
       "startFailed": "No se pudo empezar esa partida de Lichess.",
-      "confirmAbandon": "¿Abandonar la partida en curso y empezar esta en el tablero?"
+      "confirmAbandon": "¿Abandonar la partida en curso y empezar esta en el tablero?",
+      "joinGame": "Unirse",
+      "yourMove": "Tu turno",
+      "setupThenJoin": "Coloca las piezas en esta posición y luego únete."
     },
     "game": {
       "title": "Ajustes de partida",

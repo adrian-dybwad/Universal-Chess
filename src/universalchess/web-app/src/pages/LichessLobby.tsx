@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button, Card, CardHeader, Select } from '../components/ui';
 import { CatalogField } from '../components/CatalogField';
 import { useAuthedAction } from '../components/useAuthedAction';
+import { ChessBoard } from '../components/ChessBoard';
 import type { AccountRecord } from '../types/accounts';
 import { childrenOf, fieldById, type MenuCatalog, type MenuNode } from '../types/menuCatalog';
 import { apiFetch } from '../utils/api';
@@ -18,6 +19,9 @@ interface OngoingGame {
   opponent: string;
   rating: string | number;
   color: string;
+  fen?: string;
+  lastMove?: string;
+  isMyTurn?: boolean;
 }
 
 interface ChallengeRow {
@@ -190,6 +194,10 @@ export function LichessLobbyCard({
     [gameState, startJoin],
   );
 
+  const requestSeek = useCallback(() => {
+    requestStart({ mode: 'new' }, 'new');
+  }, [requestStart]);
+
   const selectOptions = [
     { value: '', label: t('settingsPage.players.defaultAccount') },
     ...selectableAccounts.map((a) => ({ value: a.id, label: a.label ?? a.identity })),
@@ -265,23 +273,21 @@ export function LichessLobbyCard({
               count={ongoing.length}
             >
               <ul className="lichess-lobby-list">
-                {ongoing.map((game) => {
-                  const key = `ongoing:${game.id}`;
-                  const color = game.color === 'white' ? 'W' : 'B';
-                  return (
-                    <li key={game.id}>
-                      <ConfirmableRow
-                        label={`${game.opponent} (${game.rating}) ${color}`}
-                        busy={busyKey === key}
-                        confirm={confirmKey === key}
-                        confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}
-                        onClick={() => requestStart({ mode: 'ongoing', game_id: game.id }, key)}
-                        onConfirm={() => void startJoin({ mode: 'ongoing', game_id: game.id }, key)}
-                        onCancel={() => setConfirmKey(null)}
-                      />
-                    </li>
-                  );
-                })}
+                {ongoing.map((game) => (
+                  <OngoingGameCard
+                    key={game.id}
+                    game={game}
+                    busyKey={busyKey}
+                    confirmKey={confirmKey}
+                    onJoin={() =>
+                      requestStart({ mode: 'ongoing', game_id: game.id }, `ongoing:${game.id}`)
+                    }
+                    onConfirmJoin={() =>
+                      void startJoin({ mode: 'ongoing', game_id: game.id }, `ongoing:${game.id}`)
+                    }
+                    onCancel={() => setConfirmKey(null)}
+                  />
+                ))}
               </ul>
             </LobbyListState>
           </LobbySection>
@@ -341,7 +347,7 @@ export function LichessLobbyCard({
               confirm={confirmKey === 'new'}
               confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}
               primary
-              onClick={() => requestStart({ mode: 'new' }, 'new')}
+              onClick={requestSeek}
               onConfirm={() => void startJoin({ mode: 'new' }, 'new')}
               onCancel={() => setConfirmKey(null)}
             />
@@ -349,6 +355,64 @@ export function LichessLobbyCard({
         </>
       )}
     </Card>
+  );
+}
+
+function lastMoveSquares(
+  lastMove: string | undefined,
+): { from: string; to: string } | null {
+  if (!lastMove || lastMove.length < 4) return null;
+  return { from: lastMove.slice(0, 2), to: lastMove.slice(2, 4) };
+}
+
+function OngoingGameCard({
+  game,
+  busyKey,
+  confirmKey,
+  onJoin,
+  onConfirmJoin,
+  onCancel,
+}: {
+  game: OngoingGame;
+  busyKey: string | null;
+  confirmKey: string | null;
+  onJoin: () => void;
+  onConfirmJoin: () => void;
+  onCancel: () => void;
+}) {
+  const { t } = useTranslation();
+  const key = `ongoing:${game.id}`;
+  const color = game.color === 'white' ? 'W' : 'B';
+  const lastMove = useMemo(() => lastMoveSquares(game.lastMove), [game.lastMove]);
+  return (
+    <li className="lichess-lobby-game">
+      {game.fen ? (
+        <div className="lichess-lobby-board" aria-hidden="true">
+          <ChessBoard
+            fen={game.fen}
+            maxBoardWidth={200}
+            boardOrientation={game.color === 'black' ? 'black' : 'white'}
+            showLastMove={lastMove}
+          />
+        </div>
+      ) : null}
+      <p className="lichess-lobby-game-meta">
+        {game.opponent} ({game.rating}) {color}
+      </p>
+      <p className="lichess-lobby-help">{t('settingsPage.lichessLobby.setupThenJoin')}</p>
+      {game.isMyTurn ? (
+        <p className="lichess-lobby-your-move">{t('settingsPage.lichessLobby.yourMove')}</p>
+      ) : null}
+      <ConfirmableRow
+        label={t('settingsPage.lichessLobby.joinGame')}
+        busy={busyKey === key}
+        confirm={confirmKey === key}
+        confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}
+        onClick={onJoin}
+        onConfirm={onConfirmJoin}
+        onCancel={onCancel}
+      />
+    </li>
   );
 }
 

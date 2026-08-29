@@ -66,6 +66,8 @@
   "accounts.confirm_named": "¿Eliminar\n{identity}?",
   "accounts.confirm_unnamed": "¿Eliminar\nla cuenta?",
   "lichess.reset.prompt": "¿Buscar\npartida?",
+  "lichess.ongoing_or_seek.prompt": "¿Reanudar o\nbuscar?",
+  "lichess.ongoing.join": "Unirse a\nesta partida",
   "lichess.unfinished.aborted": "Partida\nabortada",
   "lichess.unfinished.nostart": "Nadie\nempezó",
   "lichess.unfinished.ended": "Partida\nterminada",

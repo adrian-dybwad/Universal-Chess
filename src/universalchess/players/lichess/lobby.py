@@ -548,7 +548,9 @@ def lichess_connection_from_settings(settings, log):
 def ongoing_game_summaries(raw_games) -> list:
     """Normalize ``GET /api/account/playing`` rows for board and web lobbies.
 
-    Each item is ``id``, ``opponent``, ``rating``, ``color`` (``white``/``black``).
+    Each item is ``id``, ``opponent``, ``rating``, ``color`` (``white``/``black``),
+    ``fen``, ``lastMove``, and ``isMyTurn``. ``fen`` is the position to set up
+    before Join; a missing FEN is an empty string so the row is still joinable.
     Rows without a game id are dropped so a truncated payload cannot be joined.
     """
     from .player import ongoing_game_id
@@ -560,12 +562,20 @@ def ongoing_game_summaries(raw_games) -> list:
             continue
         opponent = game.get("opponent") or {}
         rating = opponent.get("rating")
+        last_move = game.get("lastMove") or game.get("last_move") or ""
+        if "isMyTurn" in game:
+            is_my_turn = bool(game.get("isMyTurn"))
+        else:
+            is_my_turn = bool(game.get("is_my_turn"))
         rows.append(
             {
                 "id": game_id,
                 "opponent": opponent.get("username") or "Unknown",
                 "rating": "" if rating is None else rating,
                 "color": "white" if game.get("color") == "white" else "black",
+                "fen": str(game.get("fen") or ""),
+                "lastMove": str(last_move),
+                "isMyTurn": is_my_turn,
             }
         )
     return rows
@@ -604,6 +614,173 @@ def _challenge_summary(challenge: dict, direction: str) -> Optional[dict]:
         "name": person.get("name") or person.get("username") or "Unknown",
         "rating": "" if rating is None else rating,
     }
+
+
+def _ongoing_row_label(row: dict) -> str:
+    """Opponent, rating, and color for one nowPlaying row."""
+    color = (
+        t("chess.color.white_initial")
+        if row.get("color") == "white"
+        else t("chess.color.black_initial")
+    )
+    return f"{row['opponent']}\n({row['rating']}) {color}"
+
+
+def _try_ongoing_summaries(client, log) -> list:
+    """nowPlaying rows, or empty when the client cannot list them.
+
+    A missing ``games.get_ongoing`` (tests that stub a bare client) must not
+    block a seek: there is nothing to resume.
+    """
+    try:
+        raw = client.games.get_ongoing(count=10)
+    except Exception as e:
+        if log is not None:
+            log.warning(f"[Lichess] Could not list ongoing games: {e}")
+        return []
+    return ongoing_game_summaries(raw)
+
+
+def _ongoing_board_preview(row: dict):
+    """128x128 1-bit diagram of ``row['fen']``, or ``(None, None)``.
+
+    A throwaway ``ChessGameState`` is used so the live game's FEN is not
+    rewritten while the lobby is on screen.
+    """
+    fen = str((row or {}).get("fen") or "").strip()
+    placement = fen.split()[0] if fen else ""
+    if not placement:
+        return None, None
+    if len(fen.split()) < 4:
+        fen = f"{placement} w - - 0 1"
+    try:
+        from PIL import Image
+
+        from universalchess.epaper.chess_board import ChessBoardWidget
+        from universalchess.state.chess_game import ChessGameState
+
+        state = ChessGameState()
+        state.set_position(fen)
+        flip = (row.get("color") or "white") == "black"
+        widget = ChessBoardWidget(0, 0, lambda *_a, **_k: None, state, flip)
+        try:
+            image = Image.new("1", (128, 128), 1)
+            widget.render(image)
+            mask = Image.new("1", (128, 128), 1)
+            return image, mask
+        finally:
+            widget.cleanup()
+    except Exception:
+        return None, None
+
+
+def ongoing_position_confirm_entries(row: dict, board_image=None, board_mask=None):
+    """Diagram (non-selectable) then Join, so the pieces can be set up first."""
+    return [
+        IconMenuEntry(
+            key="position",
+            label=_ongoing_row_label(row),
+            icon_name="lichess",
+            selectable=False,
+            height_ratio=3.0,
+            layout="vertical",
+            icon_size=128 if board_image is not None else None,
+            icon_image=board_image,
+            icon_mask=board_mask,
+            font_size=12,
+        ),
+        IconMenuEntry(
+            key="Join",
+            label=t("lichess.ongoing.join"),
+            icon_name="play",
+        ),
+    ]
+
+
+def confirm_ongoing_game(menu_manager, row: dict) -> bool:
+    """Show the position and return True only if Join is chosen."""
+    board_image, board_mask = _ongoing_board_preview(row)
+    entries = ongoing_position_confirm_entries(
+        row, board_image=board_image, board_mask=board_mask
+    )
+    result = menu_manager.show_menu(entries, initial_index=1)
+    key = result.key if hasattr(result, "key") else result
+    return key == "Join"
+
+
+def ongoing_or_seek_menu_entries(summaries) -> list:
+    """Prompt, nowPlaying rows, then Seek New Game."""
+    entries = [
+        IconMenuEntry(
+            key="prompt",
+            label=t("lichess.ongoing_or_seek.prompt"),
+            icon_name="lichess",
+            selectable=False,
+            font_size=12,
+        )
+    ]
+    for row in summaries:
+        entries.append(
+            IconMenuEntry(
+                key=row["id"],
+                label=_ongoing_row_label(row),
+                icon_name="lichess",
+                font_size=12,
+            )
+        )
+    entries.append(
+        IconMenuEntry(
+            key="Seek",
+            label=_row("lichess.new_game", "boardLabel"),
+            icon_name="play",
+        )
+    )
+    return entries
+
+
+def choose_ongoing_or_seek(menu_manager, summaries) -> str:
+    """``seek``, ``cancel``, or a nowPlaying game id after the position confirm.
+
+    PLAY uses this picker. Empty ``summaries`` seeks without a menu: there
+    is nothing to resume. BACK on the picker or on the diagram is ``cancel``.
+    Choosing a game still requires Join on the diagram so the pieces can be
+    set up first.
+    """
+    if not summaries:
+        return "seek"
+    while True:
+        result = menu_manager.show_menu(
+            ongoing_or_seek_menu_entries(summaries), initial_index=1
+        )
+        key = result.key if hasattr(result, "key") else result
+        if getattr(result, "is_break", False) or key in ("BACK", "SHUTDOWN"):
+            return "cancel"
+        if key == "Seek":
+            return "seek"
+        row = next((item for item in summaries if item["id"] == key), None)
+        if row is None:
+            return "cancel"
+        if confirm_ongoing_game(menu_manager, row):
+            return row["id"]
+
+
+def _start_seek_or_resume(connection, menu_manager, start_game, log) -> bool:
+    """PLAY in the lobby: join a chosen nowPlaying game, or seek.
+
+    Ongoing Games and Seek New Game are explicit. PLAY is the mixed
+    choice, so unfinished games are offered (with the position) first.
+    """
+    from .player import LichessPlayerConfig as LichessConfig, LichessGameMode
+
+    summaries = _try_ongoing_summaries(connection.client, log)
+    choice = choose_ongoing_or_seek(menu_manager, summaries)
+    if choice == "cancel":
+        return False
+    if choice == "seek":
+        return bool(start_game(LichessConfig(mode=LichessGameMode.NEW)))
+    return bool(
+        start_game(LichessConfig(mode=LichessGameMode.ONGOING, game_id=choice))
+    )
 
 
 def lichess_join_from_web_params(params: dict) -> Optional[dict]:
@@ -663,30 +840,28 @@ def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
         if not summaries:
             return None
 
-        entries = []
-        for row in summaries:
-            color = (
-                t("chess.color.white_initial")
-                if row["color"] == "white"
-                else t("chess.color.black_initial")
+        entries = [
+            IconMenuEntry(
+                key=row["id"],
+                label=_ongoing_row_label(row),
+                icon_name="lichess",
+                enabled=True,
+                font_size=12,
             )
-            label = f"{row['opponent']}\n({row['rating']}) {color}"
-            entries.append(
-                IconMenuEntry(
-                    key=row["id"],
-                    label=label,
-                    icon_name="lichess",
-                    enabled=True,
-                    font_size=12,
-                )
-            )
+            for row in summaries
+        ]
 
-        result = menu_manager.show_menu(entries)
+        while True:
+            result = menu_manager.show_menu(entries)
 
-        if result.is_break or result.key == "BACK":
-            return None
+            if result.is_break or result.key == "BACK":
+                return None
 
-        return result.key
+            row = next((item for item in summaries if item["id"] == result.key), None)
+            if row is None:
+                return None
+            if confirm_ongoing_game(menu_manager, row):
+                return row["id"]
 
     except AttributeError as e:
         log.error(f"[Lichess] berserk API method not found: {e}")
@@ -930,8 +1105,7 @@ def handle_lichess_menu(
                 set_rated_fn(not _rated())
             return None
         if result.key == "NewGame":
-            config = LichessConfig(mode=LichessGameMode.NEW)
-            if start_game(config):
+            if start_game(LichessConfig(mode=LichessGameMode.NEW)):
                 return result
             return None
         if result.key == "Ongoing":
@@ -969,6 +1143,13 @@ def handle_lichess_menu(
             lambda: build_lichess_menu_entries(username, _rated()),
             handle_selection,
         )
+        if is_play_start(result):
+            # PLAY is the mixed start: unfinished games first (with the
+            # position), or a new seek. A failed start still returns the
+            # break, because PLAY is also how the user leaves. This must run
+            # before the connection is closed: the picker lists nowPlaying.
+            if _start_seek_or_resume(connection, menu_manager, start_game, log):
+                return "START_GAME"
     finally:
         # Leaving the menu ends the only thing this connection existed for. What
         # follows -- including a game start -- never asks it anything: the player
@@ -976,13 +1157,6 @@ def handle_lichess_menu(
         connection.close()
 
     if is_play_start(result):
-        # PLAY pressed in the lobby is the lobby's own start, so it seeks like
-        # Seek New Game rather than unwinding to a game built from the Players
-        # slots -- which, with no Lichess slot set, was a local engine game
-        # started from inside the Lichess menu. A start that fails still returns
-        # the break, because PLAY is also how the user leaves.
-        if start_game(LichessConfig(mode=LichessGameMode.NEW)):
-            return "START_GAME"
         return result
     if is_break_result(result):
         return result

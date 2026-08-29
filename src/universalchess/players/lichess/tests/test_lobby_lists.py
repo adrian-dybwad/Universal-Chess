@@ -18,17 +18,23 @@ from universalchess.players.lichess.player import LichessGameMode
 
 
 def test_ongoing_game_summaries_use_game_id_and_drop_empty():
-    """Each row is id/opponent/rating/color; a row without a game id is dropped.
+    """Each row is id/opponent/rating/color/fen; a row without a game id is dropped.
 
-    Why: the web list posts that id as game_id. How a regression manifests: a
-    blank id is listed, or gameId is ignored in favour of a missing field.
+    Why: the web list posts that id as game_id, and the lobby paints ``fen``
+    so the pieces can be set up before Join. How a regression manifests: a
+    blank id is listed, gameId is ignored, or fen/lastMove are omitted so the
+    list cannot show the position.
     """
+    after_e4 = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1"
     rows = ongoing_game_summaries(
         [
             {
                 "gameId": "g1",
                 "opponent": {"username": "Bob", "rating": 1500},
                 "color": "white",
+                "fen": after_e4,
+                "lastMove": "e2e4",
+                "isMyTurn": False,
             },
             {"opponent": {"username": "NoId"}},
             {
@@ -39,8 +45,24 @@ def test_ongoing_game_summaries_use_game_id_and_drop_empty():
         ]
     )
     assert rows == [
-        {"id": "g1", "opponent": "Bob", "rating": 1500, "color": "white"},
-        {"id": "g2", "opponent": "Cara", "rating": "", "color": "black"},
+        {
+            "id": "g1",
+            "opponent": "Bob",
+            "rating": 1500,
+            "color": "white",
+            "fen": after_e4,
+            "lastMove": "e2e4",
+            "isMyTurn": False,
+        },
+        {
+            "id": "g2",
+            "opponent": "Cara",
+            "rating": "",
+            "color": "black",
+            "fen": "",
+            "lastMove": "",
+            "isMyTurn": False,
+        },
     ]
 
 

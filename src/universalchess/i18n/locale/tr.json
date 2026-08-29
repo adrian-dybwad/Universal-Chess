@@ -66,6 +66,8 @@
   "accounts.confirm_named": "{identity}\nsilinsin mi?",
   "accounts.confirm_unnamed": "Hesap\nsilinsin mi?",
   "lichess.reset.prompt": "Yeni oyun\naransın mı?",
+  "lichess.ongoing_or_seek.prompt": "Oyunu sürdür\nveya ara?",
+  "lichess.ongoing.join": "Bu oyuna\nkatıl",
   "lichess.unfinished.aborted": "Oyun\niptal",
   "lichess.unfinished.nostart": "Hiç\nbaşlamadı",
   "lichess.unfinished.ended": "Oyun\nbitti",

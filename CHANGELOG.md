@@ -15,6 +15,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Lichess ongoing games show the position before Join**: Selecting a
+  nowPlaying row started the stream immediately, so catch-up asked for a
+  physical setup after the remote clock was already running. Ongoing Games
+  now shows the diagram first; Join starts the game. The web lobby card
+  shows a board preview and Join on each row. Seek New Game still seeks
+  immediately. PLAY in the lobby is the mixed start: unfinished games (with
+  the same diagram) or a new seek.
+
 - **System Information shows the OS edition**: the card listed the kernel
   release but not whether the image was Raspberry Pi OS Lite or Desktop,
   or Armbian Server vs Desktop, so two boards with the same kernel looked
@@ -1712,6 +1720,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   often keeps sending keep-alives, and the player only looked up the game once
   seek() returned. The Board API event stream now attaches on ``gameStart``,
   and ongoing games are polled in parallel with the seek.
+
+- **A NEW Lichess seek attached leftover correspondence**: Opening the Board
+  API event stream dumps ``gameStart`` for every game the account is already
+  playing, and the match poller attached the first ``nowPlaying`` row. A
+  5+0 seek on dgt-32 therefore started correspondence ``arD6VE0v`` (six plies,
+  already on the account) before the seek POST had even returned. Ids that were
+  already nowPlaying when the seek started are ignored; only a newly
+  matched game is attached. Joining a chosen ongoing game still uses that
+  id.
 
 - **Lichess takeback left the board on the undone position**: Accepting
   a takeback updated Lichess, but the stream only treated a new ``moves``

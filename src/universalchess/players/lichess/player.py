@@ -220,6 +220,11 @@ class LichessPlayer(Player):
         # (an outgoing challenge waiting to be accepted). Empty lets a seek take
         # or a resume attach whatever game the account is playing.
         self._expected_game_id: str = ''
+        # Games the account was already playing when a NEW seek started. Opening
+        # the event stream emits gameStart for those (correspondence, a phone
+        # game); the poller would attach the first of them too. Neither is the
+        # seek that was just posted.
+        self._preexisting_game_ids: set = set()
         self._player_is_white: Optional[bool] = None  # Is the LOCAL human white?
         self._current_turn_is_white: bool = True
         
@@ -902,6 +907,7 @@ class LichessPlayer(Player):
             return False
         log.info(f"[LichessPlayer] Seeking: {self._lichess_config.time_minutes}+{self._lichess_config.increment_seconds}")
         self._report_status("Finding opponent...")
+        self._record_preexisting_games()
         self._listen_for_match()
         self._seek_thread = threading.Thread(
             target=self._seek_game_thread,
@@ -918,15 +924,44 @@ class LichessPlayer(Player):
         self._listen_for_match()
         return True
 
+
+    def _record_preexisting_games(self) -> None:
+        """Snapshot nowPlaying ids so a NEW seek does not attach them.
+
+        The Board API event stream emits gameStart for games the account is
+        already playing as soon as it opens. The match poller would attach the
+        first of those as if the seek had been taken. Observed on dgt-32:
+        seeking 5+0 pulled correspondence ``arD6VE0v`` (six plies, Aug 18)
+        onto the board before the seek POST had even returned.
+        """
+        self._preexisting_game_ids = set()
+        if not self._client:
+            return
+        try:
+            ongoing = self._client.games.get_ongoing(30)
+        except Exception as e:
+            log.warning(f"[LichessPlayer] Could not snapshot ongoing games: {e}")
+            return
+        ids = {ongoing_game_id(game) for game in (ongoing or [])}
+        self._preexisting_game_ids = {game_id for game_id in ids if game_id}
+        if self._preexisting_game_ids:
+            log.info(
+                f"[LichessPlayer] Ignoring {len(self._preexisting_game_ids)} "
+                "pre-existing game(s) while seeking"
+            )
+
     def _begin_game(self, game_id: str) -> bool:
         """Attach ``game_id`` and start the game stream at most once.
 
         While waiting for one chosen challenge, any other game the account is
         already playing (correspondence, a game running on the phone) is not
         the game the Human picked, so it is left alone rather than pulled onto
-        the board.
+        the board. A NEW seek uses the same rule for ids that were already
+        nowPlaying when the seek started (see ``_record_preexisting_games``).
         """
         if not game_id:
+            return False
+        if game_id in self._preexisting_game_ids:
             return False
         if self._expected_game_id and game_id != self._expected_game_id:
             return False

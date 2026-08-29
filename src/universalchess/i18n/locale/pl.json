@@ -66,6 +66,8 @@
   "accounts.confirm_named": "Usunąć\n{identity}?",
   "accounts.confirm_unnamed": "Usunąć\nkonto?",
   "lichess.reset.prompt": "Szukać nowej\npartii?",
+  "lichess.ongoing_or_seek.prompt": "Wznowić partię\nczy szukać?",
+  "lichess.ongoing.join": "Dołącz do\ntej partii",
   "lichess.unfinished.aborted": "Partia\nprzerwana",
   "lichess.unfinished.nostart": "Nie\nrozpoczęta",
   "lichess.unfinished.ended": "Partia\nzakończona",

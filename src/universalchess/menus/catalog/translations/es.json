@@ -209,7 +209,7 @@
     "lichess.ongoing": {
       "label": "Partidas en curso",
       "boardLabel": "Partidas\nen curso",
-      "help": "Continúa una partida de Lichess que esta cuenta ya empezó, en este tablero, en la web o en otro dispositivo.\n\nSelecciona una partida para reanudarla aquí. El reloj y tu color salen de ese encuentro.\n\nSi no hay ninguna, esta cuenta no tiene partidas sin terminar. Usa Buscar partida nueva para buscar un rival."
+      "help": "Continúa una partida de Lichess que esta cuenta ya empezó, en este tablero, en la web o en otro dispositivo.\n\nSelecciona una partida para ver su posición. Coloca las piezas según el diagrama y luego Unirse. El reloj y tu color salen de ese encuentro.\n\nSi no hay ninguna, esta cuenta no tiene partidas sin terminar. Usa Buscar partida nueva para buscar un rival."
     },
     "lichess.challenges": {
       "label": "Desafíos",

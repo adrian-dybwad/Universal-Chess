@@ -66,6 +66,8 @@
   "accounts.confirm_named": "Удалить\n{identity}?",
   "accounts.confirm_unnamed": "Удалить\nаккаунт?",
   "lichess.reset.prompt": "Искать новую\nпартию?",
+  "lichess.ongoing_or_seek.prompt": "Продолжить\nили искать?",
+  "lichess.ongoing.join": "Присоединиться",
   "lichess.unfinished.aborted": "Партия\nпрервана",
   "lichess.unfinished.nostart": "Не\nначата",
   "lichess.unfinished.ended": "Партия\nокончена",

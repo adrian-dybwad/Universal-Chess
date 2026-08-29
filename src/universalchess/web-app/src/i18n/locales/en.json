@@ -423,7 +423,10 @@
       "noToken": "Add a Lichess login under Accounts to list games and challenges.",
       "boardOffline": "The board is not running.",
       "startFailed": "Could not start that Lichess game.",
-      "confirmAbandon": "Abandon the game in progress and start this one on the board?"
+      "confirmAbandon": "Abandon the game in progress and start this one on the board?",
+      "joinGame": "Join",
+      "yourMove": "Your move",
+      "setupThenJoin": "Set the pieces to this position, then join."
     },
     "game": {
       "title": "Game Settings",
