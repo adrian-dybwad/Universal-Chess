@@ -20,6 +20,7 @@ import chess
 from universalchess.board import board, centaur
 from universalchess.board.logging import log
 from universalchess.i18n import t
+from universalchess.state.players import format_player_label
 from ..base import Player, PlayerConfig, PlayerState, PlayerType
 
 
@@ -73,6 +74,54 @@ def ongoing_game_id(game: dict) -> str:
     if not game:
         return ""
     return str(game.get("gameId") or game.get("game_id") or game.get("id") or "")
+
+
+def lichess_player_display_name(info: dict) -> str:
+    """Visible name from a Board API player object (gameFull or nowPlaying).
+
+    gameFull uses ``name`` (and ``id``); nowPlaying uses ``username``; an AI
+    opponent may have only ``aiLevel``. ``name`` defaulting to Unknown made
+    colour matching fail, so every unmatched game was treated as Black.
+    """
+    if not info:
+        return ""
+    for key in ("name", "username", "id"):
+        value = info.get(key)
+        if value:
+            return str(value)
+    level = info.get("aiLevel", info.get("ai_level", info.get("ai")))
+    if level is not None and str(level) != "":
+        return f"AI {level}"
+    return ""
+
+
+def _lichess_player_ids(info: dict) -> set:
+    """Casefolded ids that can identify one side on gameFull."""
+    ids = set()
+    if not info:
+        return ids
+    for key in ("id", "name", "username"):
+        value = info.get(key)
+        if value:
+            ids.add(str(value).casefold())
+    return ids
+
+
+def lichess_player_label(name: str, rating) -> str:
+    """Clock / LiveBoard label: ``alice(1500)``, or name alone when unrated."""
+    return format_player_label(name, rating)
+
+
+def lichess_side_is_white(color) -> bool:
+    """True when a nowPlaying / gameFull colour value means White.
+
+    berserk may yield an enum (``.value``) or mixed case. Comparing to the
+    string ``white`` labelled every other encoding as Black.
+    """
+    if color is None:
+        return False
+    text = getattr(color, "value", color)
+    return str(text).strip().lower() == "white"
 
 
 def server_move_list_delta(previous: str, current: str):
@@ -943,7 +992,6 @@ class LichessPlayer(Player):
         self._listen_for_match()
         return True
 
-
     def _record_preexisting_games(self) -> None:
         """Snapshot nowPlaying ids so a NEW seek does not attach them.
 
@@ -1361,19 +1409,24 @@ class LichessPlayer(Player):
     
     def _extract_player_info(self, state: dict):
         """Extract player information from game state."""
-        white_info = state.get('white', {})
-        black_info = state.get('black', {})
-        
-        self._white_player = str(white_info.get('name', 'Unknown'))
-        self._white_rating = str(white_info.get('rating', ''))
-        self._black_player = str(black_info.get('name', 'Unknown'))
-        self._black_rating = str(black_info.get('rating', ''))
-        
-        if self._white_player == self._username:
+        white_info = state.get('white', {}) or {}
+        black_info = state.get('black', {}) or {}
+
+        self._white_player = lichess_player_display_name(white_info)
+        self._white_rating = "" if white_info.get("rating") is None else str(
+            white_info.get("rating")
+        )
+        self._black_player = lichess_player_display_name(black_info)
+        self._black_rating = "" if black_info.get("rating") is None else str(
+            black_info.get("rating")
+        )
+
+        local_ids = {self._username.casefold()} if self._username else set()
+        if local_ids & _lichess_player_ids(white_info):
             self._player_is_white = True
             # This player represents the remote opponent (Black)
             self._color = chess.BLACK
-        else:
+        elif local_ids & _lichess_player_ids(black_info):
             self._player_is_white = False
             # This player represents the remote opponent (White)
             self._color = chess.WHITE

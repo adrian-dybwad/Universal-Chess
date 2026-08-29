@@ -42,6 +42,11 @@ def test_ongoing_game_summaries_use_game_id_and_drop_empty():
                 "opponent": {"username": "Cara"},
                 "color": "black",
             },
+            {
+                "gameId": "g3",
+                "opponent": {"name": "Dana"},
+                "color": "White",
+            },
         ]
     )
     assert rows == [
@@ -59,6 +64,15 @@ def test_ongoing_game_summaries_use_game_id_and_drop_empty():
             "opponent": "Cara",
             "rating": "",
             "color": "black",
+            "fen": "",
+            "lastMove": "",
+            "isMyTurn": False,
+        },
+        {
+            "id": "g3",
+            "opponent": "Dana",
+            "rating": "",
+            "color": "white",
             "fen": "",
             "lastMove": "",
             "isMyTurn": False,

@@ -58,6 +58,9 @@ def test_set_player_manager_binds_remote_clock_and_game_info():
     game_manager.set_game_info.assert_called_once_with(
         "", "", "", "alice(1500)", "bob(1400)"
     )
+    game_manager.set_game_info.reset_mock()
+    remote._game_info_callback("alice", "", "bob", "")
+    game_manager.set_game_info.assert_called_once_with("", "", "", "alice", "bob")
 
     spec = TimeControl.fischer_minutes(5, 3)
     remote._time_control_callback(spec)

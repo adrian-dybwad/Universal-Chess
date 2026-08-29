@@ -14,6 +14,19 @@ from typing import Optional, Callable, List
 log = logging.getLogger(__name__)
 
 
+def format_player_label(name: str, rating) -> str:
+    """Clock / LiveBoard label: ``alice(1500)``, or name alone when unrated.
+
+    Empty parentheses after an unrated or AI name hid the username and
+    looked like a missing rating.
+    """
+    text = (name or "").strip()
+    rating_text = "" if rating is None else str(rating).strip()
+    if text and rating_text:
+        return f"{text}({rating_text})"
+    return text
+
+
 class PlayersState:
     """Observable players state.
     

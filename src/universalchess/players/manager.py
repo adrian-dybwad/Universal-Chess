@@ -381,13 +381,18 @@ class PlayerManager:
         A Lichess stream may report the local account is Black after the players
         were built from settings. :meth:`set_player` stops the outgoing player,
         which would kill the live seek/stream. This only retargets the two
-        existing instances and updates PlayersState.
+        existing instances. Names on PlayersState are left alone: for a Lichess
+        game they already hold the gameFull usernames, and ``player.name`` on the
+        remote slot is the local account, which would reverse the labels.
         """
         self._white_player = white_player
         self._black_player = black_player
         white_player.color = chess.WHITE
         black_player.color = chess.BLACK
-        self._update_players_state()
+        players_state = get_players_state()
+        white_hand_brain = getattr(self._white_player._config, 'hand_brain', False)
+        black_hand_brain = getattr(self._black_player._config, 'hand_brain', False)
+        players_state.set_hand_brain(white_hand_brain, black_hand_brain)
         log.info(
             f"[PlayerManager] Reassigned slots: White={white_player.name}, "
             f"Black={black_player.name}"

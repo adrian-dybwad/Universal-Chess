@@ -553,7 +553,11 @@ def ongoing_game_summaries(raw_games) -> list:
     before Join; a missing FEN is an empty string so the row is still joinable.
     Rows without a game id are dropped so a truncated payload cannot be joined.
     """
-    from .player import ongoing_game_id
+    from .player import (
+        lichess_player_display_name,
+        lichess_side_is_white,
+        ongoing_game_id,
+    )
 
     rows = []
     for game in raw_games or []:
@@ -570,9 +574,9 @@ def ongoing_game_summaries(raw_games) -> list:
         rows.append(
             {
                 "id": game_id,
-                "opponent": opponent.get("username") or "Unknown",
+                "opponent": lichess_player_display_name(opponent) or "Unknown",
                 "rating": "" if rating is None else rating,
-                "color": "white" if game.get("color") == "white" else "black",
+                "color": "white" if lichess_side_is_white(game.get("color")) else "black",
                 "fen": str(game.get("fen") or ""),
                 "lastMove": str(last_move),
                 "isMyTurn": is_my_turn,
@@ -608,10 +612,12 @@ def _challenge_summary(challenge: dict, direction: str) -> Optional[dict]:
         challenge.get("challenger") if direction == "in" else challenge.get("destUser")
     ) or {}
     rating = person.get("rating")
+    from .player import lichess_player_display_name
+
     return {
         "id": str(challenge_id),
         "direction": direction,
-        "name": person.get("name") or person.get("username") or "Unknown",
+        "name": lichess_player_display_name(person) or "Unknown",
         "rating": "" if rating is None else rating,
     }
 

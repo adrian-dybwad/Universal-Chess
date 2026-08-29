@@ -1261,6 +1261,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   explicit Abort action still end the game. Timed games still abort or
   resign on leave.
 
+- **Lichess player labels were reversed or missing**: gameFull usernames
+  were applied to the clock and LiveBoard, then slot remap overwrote them
+  with Human vs the local Lichess account, so the opponent sat on the
+  wrong side and the local username appeared as the opponent. Names were
+  also dropped when the payload used ``username`` or ``id`` instead of
+  ``name``, or an AI had only ``aiLevel``. Labels now keep the Lichess
+  white/black names (rating omitted when there is none), match colour
+  case-insensitively, and the ongoing-game list reads opponent name and
+  colour the same way.
+
 - **Centered e-paper text with a line break sat the short line off-center**:
   ``Overflow.FIT`` keeps wrap off when each explicit line already fits, then
   painted the whole string in one ``draw.text()``. PIL left-aligns

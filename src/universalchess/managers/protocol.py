@@ -30,6 +30,7 @@ log.debug(f"[protocol import] game: {(_t.time() - _s)*1000:.0f}ms"); _s = _t.tim
 # Import Player and Assistant managers
 from universalchess.players import PlayerManager
 from universalchess.managers.assistant import AssistantManager
+from universalchess.state.players import format_player_label
 log.debug(f"[protocol import] players/assistant managers: {(_t.time() - _s)*1000:.0f}ms"); _s = _t.time()
 
 import chess
@@ -230,8 +231,8 @@ class ProtocolManager:
             black_rating: Black player's rating.
         """
         if self.game_manager:
-            white_str = f"{white_player}({white_rating})"
-            black_str = f"{black_player}({black_rating})"
+            white_str = format_player_label(white_player, white_rating)
+            black_str = format_player_label(black_player, black_rating)
             self.game_manager.set_game_info("", "", "", white_str, black_str)
     
     # =========================================================================
