@@ -316,7 +316,34 @@ def test_back_after_connect_shows_abort_menu():
         return_to_menu=lambda _reason: None,
         show_back_menu=lambda **kwargs: menus.append(kwargs),
     )
-    assert menus == [{"is_two_player": False, "allow_abort": True}]
+    assert menus == [
+        {"is_two_player": False, "allow_abort": True, "allow_leave": False}
+    ]
+
+
+def test_back_after_connect_on_correspondence_offers_leave():
+    """BACK on a correspondence game must offer Leave, not Abort.
+
+    Why: Abort is the first BACK option after connect. Choosing it (or
+    leave_remote_game falling through to resign) ended untimed games on
+    Lichess. Correspondence must disconnect so it can be resumed later.
+
+    How the regression manifests: allow_abort is True, or allow_leave is
+    False, so Abort is the leave action.
+    """
+    remote = LichessPlayer()
+    remote._speed = "correspondence"
+    session = LichessPlaySession.from_players(HumanPlayer(), remote)
+    session.game_connected = True
+    menus = []
+    session.on_back(
+        stop_players=lambda: None,
+        return_to_menu=lambda _reason: None,
+        show_back_menu=lambda **kwargs: menus.append(kwargs),
+    )
+    assert menus == [
+        {"is_two_player": False, "allow_abort": False, "allow_leave": True}
+    ]
 
 
 def test_dismiss_started_splash_shows_game_widgets_once():

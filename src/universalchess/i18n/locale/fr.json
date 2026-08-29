@@ -189,6 +189,7 @@
   "game.resign_color": "Les {color}\nabandonnent ?",
   "game.draw": "Nulle",
   "game.abort": "Annuler la partie",
+  "game.leave": "Quitter",
   "common.no": "Non",
   "common.set": "Défini",
   "common.not_set": "Non défini",

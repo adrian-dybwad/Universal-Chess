@@ -1250,6 +1250,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Leaving a correspondence game aborted or resigned it on Lichess**:
+  BACK after connect offered Abort first, and starting a new seek or a
+  board-reset called ``leave_remote_game``, which always aborted, then
+  resigned if abort was no longer legal. On dgt-32 that ended
+  correspondence ``LP30ZRnl`` (resign), ``17jya0qi`` (abort), and
+  ``arD6VE0v`` (abort then resign). Correspondence is untimed; leaving now
+  disconnects only, so the game stays on Lichess and can be resumed from
+  Ongoing Games. BACK offers Leave instead of Abort. Resign and the
+  explicit Abort action still end the game. Timed games still abort or
+  resign on leave.
+
 - **Centered e-paper text with a line break sat the short line off-center**:
   ``Overflow.FIT`` keeps wrap off when each explicit line already fits, then
   painted the whole string in one ``draw.text()``. PIL left-aligns

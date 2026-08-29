@@ -181,3 +181,51 @@ def test_player_configures_time_control_from_game_full_before_ready():
 
     assert specs == [TimeControl.fischer_minutes(3, 2)]
     assert clocks == [(180, 180)]
+    assert player.is_correspondence is False
+
+
+def test_game_full_correspondence_is_leaveable():
+    """gameFull with speed correspondence must mark the game as untimed leave.
+
+    Why: leave_remote_game used to abort then resign every attached id. The
+    Board API names correspondence on gameFull; without that flag a later
+    BACK or new seek still ended the game on Lichess.
+
+    How the regression manifests: is_correspondence stays False after gameFull.
+    """
+    player = LichessPlayer()
+    player._on_game_connected = lambda: None
+    player._game_info_callback = lambda *a: None
+    player._username = "adriandyb"
+
+    player._process_game_state(
+        {
+            "type": "gameFull",
+            "speed": "correspondence",
+            "daysPerTurn": 3,
+            "white": {"name": "adriandyb", "rating": 1500},
+            "black": {"name": "adriantest", "rating": 1500},
+            "state": {
+                "type": "gameState",
+                "moves": "e2e4",
+                "wtime": LICHESS_UNLIMITED_MILLIS,
+                "btime": LICHESS_UNLIMITED_MILLIS,
+                "winc": 0,
+                "binc": 0,
+                "status": "started",
+            },
+        }
+    )
+
+    assert player.is_correspondence is True
+
+
+def test_days_per_turn_without_speed_is_correspondence():
+    """daysPerTurn names correspondence when the speed field is omitted.
+
+    How the regression manifests: is_correspondence stays False, so leave
+    abort/resigns a days-per-move game.
+    """
+    player = LichessPlayer()
+    player._record_game_speed({"daysPerTurn": 2})
+    assert player.is_correspondence is True

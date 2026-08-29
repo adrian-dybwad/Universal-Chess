@@ -189,6 +189,7 @@
   "game.resign_color": "{color}\nopgeven?",
   "game.draw": "Remise",
   "game.abort": "Afbreken",
+  "game.leave": "Verlaten",
   "common.no": "Nee",
   "common.set": "Ingesteld",
   "common.not_set": "Niet ingesteld",

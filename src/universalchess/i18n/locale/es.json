@@ -189,6 +189,7 @@
   "game.resign_color": "¿Abandonan\nlas {color}?",
   "game.draw": "Tablas",
   "game.abort": "Anular",
+  "game.leave": "Salir",
   "common.no": "No",
   "common.set": "Definido",
   "common.not_set": "Sin definir",

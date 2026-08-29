@@ -225,6 +225,9 @@ class LichessPlayer(Player):
         # game); the poller would attach the first of them too. Neither is the
         # seek that was just posted.
         self._preexisting_game_ids: set = set()
+        # Board API ``speed`` from gameFull / gameStart / nowPlaying. Used to
+        # leave correspondence without abort or resign.
+        self._speed: Optional[str] = None
         self._player_is_white: Optional[bool] = None  # Is the LOCAL human white?
         self._current_turn_is_white: bool = True
         
@@ -708,9 +711,9 @@ class LichessPlayer(Player):
     def on_new_game(self) -> None:
         """Board reset: leave the remote game so a rebuild can seek a new one.
 
-        Abort if still allowed (early in the game); otherwise resign. ``stop()``
-        only ends the stream, which would leave the opponent waiting in the
-        abandoned Lichess game.
+        Timed games abort if still allowed, otherwise resign. Correspondence
+        disconnects only. ``stop()`` only ends the stream, which would leave a
+        clock opponent waiting in the abandoned Lichess game.
         """
         log.info("[LichessPlayer] New game notification - leaving remote game")
         self._pending_move = None
@@ -718,8 +721,19 @@ class LichessPlayer(Player):
         self.leave_remote_game()
 
     def leave_remote_game(self) -> None:
-        """Abort the Lichess game, or resign when abort is no longer legal."""
+        """Detach from the Lichess game.
+
+        Timed games abort, or resign when abort is no longer legal.
+        Correspondence is untimed; abort or resign would end a game the
+        Human expects to resume from Ongoing Games.
+        """
         if not self._game_id or not self._client:
+            return
+        if self.is_correspondence:
+            log.info(
+                f"[LichessPlayer] Leaving correspondence game {self._game_id} "
+                "without abort or resign"
+            )
             return
         try:
             self._client.board.abort_game(self._game_id)
@@ -732,6 +746,11 @@ class LichessPlayer(Player):
             log.info("[LichessPlayer] Resigned remote game")
         except Exception as e:
             log.warning(f"[LichessPlayer] Could not leave remote game: {e}")
+
+    @property
+    def is_correspondence(self) -> bool:
+        """True after the Board API named this game correspondence."""
+        return self._speed == "correspondence"
     
     def on_resign(self, color: chess.Color) -> None:
         """Resign the current game."""
@@ -985,6 +1004,7 @@ class LichessPlayer(Player):
         for game in ongoing or []:
             game_id = ongoing_game_id(game)
             if game_id and self._begin_game(game_id):
+                self._record_game_speed(game)
                 return True
         return False
 
@@ -1028,7 +1048,8 @@ class LichessPlayer(Player):
         etype = event.get("type")
         if etype == "gameStart":
             game = event.get("game") or {}
-            self._begin_game(ongoing_game_id(game) or str(game.get("id") or ""))
+            if self._begin_game(ongoing_game_id(game) or str(game.get("id") or "")):
+                self._record_game_speed(game)
             return
         if etype != "challenge" or self._lichess_config.mode != LichessGameMode.NEW:
             return
@@ -1234,6 +1255,7 @@ class LichessPlayer(Player):
         
         # Extract player info from initial state
         if 'white' in state and 'black' in state:
+            self._record_game_speed(state)
             self._apply_lichess_time_control(state)
             self._extract_player_info(state)
         
@@ -1379,6 +1401,18 @@ class LichessPlayer(Player):
 
         self._set_state(PlayerState.READY)
     
+    def _record_game_speed(self, event: dict) -> None:
+        """Remember Board API ``speed`` so leave can skip abort on correspondence.
+
+        ``gameFull``, ``gameStart.game``, and nowPlaying all carry ``speed``.
+        ``daysPerTurn`` is correspondence even when speed is omitted.
+        """
+        speed = event.get("speed")
+        if isinstance(speed, str) and speed:
+            self._speed = speed
+        elif event.get("daysPerTurn") is not None:
+            self._speed = "correspondence"
+
     def _apply_lichess_time_control(self, event: dict) -> None:
         """Install the Lichess Fischer (or untimed) control from ``gameFull``."""
         from .clock import time_control_from_lichess_event

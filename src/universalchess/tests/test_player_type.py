@@ -146,3 +146,24 @@ def test_player_manager_abort_and_leave_reach_only_remote_slot():
     manager.leave_remote_games()
     remote._client.board.abort_game.assert_called_once_with("game-1")
     remote._client.board.resign_game.assert_called_once_with("game-1")
+
+
+def test_player_manager_leave_does_not_end_correspondence():
+    """Manager leave must not abort or resign a correspondence game.
+
+    Why: web abort_game, a new seek, and setup_position all call
+    leave_remote_games. Those ended correspondence on Lichess when the
+    Human only meant to leave the board.
+
+    How the regression manifests: abort_game or resign_game is called.
+    """
+    from unittest.mock import MagicMock
+
+    remote = LichessPlayer()
+    remote._game_id = "arD6VE0v"
+    remote._client = MagicMock()
+    remote._speed = "correspondence"
+    manager = PlayerManager(HumanPlayer(), remote)
+    manager.leave_remote_games()
+    remote._client.board.abort_game.assert_not_called()
+    remote._client.board.resign_game.assert_not_called()

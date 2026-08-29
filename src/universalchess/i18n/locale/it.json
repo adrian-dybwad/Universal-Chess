@@ -189,6 +189,7 @@
   "game.resign_color": "Si ritirano\ni {color}?",
   "game.draw": "Patta",
   "game.abort": "Annulla",
+  "game.leave": "Esci",
   "common.no": "No",
   "common.set": "Impostato",
   "common.not_set": "Non impostato",

@@ -2058,7 +2058,7 @@ def _start_game_mode(
 
     # Back menu result handler
     def _on_back_menu_result(result: str):
-        """Handle result from back menu (resign/draw/cancel/exit).
+        """Handle result from back menu (resign/draw/leave/cancel/exit).
         
         In 2-player mode, result can be 'resign_white' or 'resign_black' to
         indicate which side is resigning.
@@ -2083,6 +2083,8 @@ def _start_game_mode(
             _resign(chess.BLACK)
         elif result == "draw":
             game_manager.handle_draw()
+        elif result == "leave":
+            _return_to_menu("Lichess leave")
         elif result == "abort":
             if player_manager:
                 player_manager.abort_remote_games()
@@ -2826,8 +2828,9 @@ def _abort_current_game() -> None:
     a position or aborting). Marks the live game abandoned via the existing
     abandonment path so the history reflects the abort, then leaves teardown to
     the caller (``_start_from_position`` / ``_return_to_menu`` clean up managers).
-    A Lichess game is left on the server (abort, or resign if abort is no
-    longer allowed) so the opponent is not stranded. No-op when no resumable
+    A timed Lichess game is left on the server (abort, or resign if abort is
+    no longer allowed) so the opponent is not stranded. Correspondence is
+    disconnected only, so it can be resumed later. No-op when no resumable
     game is in progress.
     """
     if _game.protocol is None:

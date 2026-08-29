@@ -172,7 +172,7 @@ class LichessPlaySession:
         return_to_menu: Callable[[str], None],
         show_back_menu: Callable,
     ) -> None:
-        """BACK during seek cancels; BACK after accept opens abort/resign."""
+        """BACK during seek cancels; BACK after accept opens abort/leave/resign."""
         if not self.game_connected:
             log.info("[Lichess] Seek cancelled")
             from .lobby import show_lichess_cancelling_splash
@@ -181,7 +181,12 @@ class LichessPlaySession:
             stop_players()
             return_to_menu("Lichess cancel")
             return
-        show_back_menu(is_two_player=False, allow_abort=True)
+        correspondence = self._remote.is_correspondence
+        show_back_menu(
+            is_two_player=False,
+            allow_abort=not correspondence,
+            allow_leave=correspondence,
+        )
 
     def _on_connected(self) -> None:
         if self.game_connected:

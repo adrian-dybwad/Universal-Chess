@@ -189,6 +189,7 @@
   "game.resign_color": "{color}\naufgeben?",
   "game.draw": "Remis",
   "game.abort": "Annullieren",
+  "game.leave": "Verlassen",
   "common.no": "Nein",
   "common.set": "Gesetzt",
   "common.not_set": "Nicht gesetzt",

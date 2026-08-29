@@ -281,7 +281,11 @@ class PlayerManager:
         self._black_player.abort_remote_game()
 
     def leave_remote_games(self) -> None:
-        """Leave any attached remote game so the opponent is not stranded."""
+        """Detach any attached remote game.
+
+        Timed games abort or resign so the opponent is not stranded.
+        Correspondence disconnects without ending the server game.
+        """
         self._white_player.leave_remote_game()
         self._black_player.leave_remote_game()
     

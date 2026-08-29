@@ -232,12 +232,23 @@ class Player(ABC):
         """
 
     def leave_remote_game(self) -> None:
-        """End an attached remote game so the opponent is not stranded.
+        """Detach from an attached remote game.
 
-        No-op on local players. Abort if still allowed; otherwise resign.
-        Distinct from :meth:`abort_remote_game`, which does not fall back to
-        resign, and from :meth:`on_new_game`, which also resets local state.
+        No-op on local players. Timed games abort if still allowed, otherwise
+        resign, so the opponent is not left on a clock. Correspondence is
+        untimed: disconnect only, so the Human can resume later. Distinct from
+        :meth:`abort_remote_game`, which always abort, and from
+        :meth:`on_new_game`, which also resets local state.
         """
+
+    @property
+    def is_correspondence(self) -> bool:
+        """True when this remote game is untimed correspondence.
+
+        Leave and a new seek must not abort or resign those. Local players
+        are False.
+        """
+        return False
 
     def bind_board_cues(
         self,

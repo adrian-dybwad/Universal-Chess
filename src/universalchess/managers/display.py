@@ -1489,7 +1489,7 @@ class DisplayManager:
         self._draw_offer_resolver = resolver
     
     def show_back_menu(self, on_result: callable, is_two_player: bool = False,
-                       allow_abort: bool = False):
+                       allow_abort: bool = False, allow_leave: bool = False):
         """Show the back button menu (resign/draw/cancel).
         
         Non-blocking - calls on_result when user makes a selection.
@@ -1497,9 +1497,11 @@ class DisplayManager:
         Args:
             on_result: Callback function(result: str) with result:
                       'resign', 'resign_white', 'resign_black', 'draw', 'cancel',
-                      'exit', or 'abort' when allow_abort is True
+                      'exit', 'abort' when allow_abort is True, or 'leave' when
+                      allow_leave is True
             is_two_player: If True, show separate resign options for white and black
-            allow_abort: If True, add Abort (Lichess, while abort is still legal)
+            allow_abort: If True, add Abort (timed Lichess, while abort is legal)
+            allow_leave: If True, add Leave (correspondence: disconnect, do not end)
         """
 
         
@@ -1526,6 +1528,8 @@ class DisplayManager:
                 _IconMenuEntry(key="draw", label=t("game.draw"), icon_name="draw"),
                 _IconMenuEntry(key="cancel", label=t("common.cancel"), icon_name="cancel"),
             ]
+            if allow_leave:
+                entries.insert(0, _IconMenuEntry(key="leave", label=t("game.leave"), icon_name="exit"))
             if allow_abort:
                 entries.insert(0, _IconMenuEntry(key="abort", label=t("game.abort"), icon_name="cancel"))
         

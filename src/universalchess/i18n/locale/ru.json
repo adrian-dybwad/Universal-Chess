@@ -189,6 +189,7 @@
   "game.resign_color": "Сдаться?\n({color})",
   "game.draw": "Ничья",
   "game.abort": "Прервать",
+  "game.leave": "Выйти",
   "common.no": "Нет",
   "common.set": "Задано",
   "common.not_set": "Не задано",

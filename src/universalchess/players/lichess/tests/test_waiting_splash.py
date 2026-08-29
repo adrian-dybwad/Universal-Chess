@@ -281,6 +281,66 @@ def test_on_new_game_resigns_when_abort_is_not_allowed():
     player._client.board.resign_game.assert_called_once_with("game-1")
 
 
+def test_leave_does_not_end_a_correspondence_game():
+    """Leaving a correspondence game must not abort or resign on Lichess.
+
+    Why: BACK, a new seek, and board-reset all call leave_remote_game. On
+    dgt-32 that ended correspondence LP30ZRnl (resign), 17jya0qi (abort),
+    and arD6VE0v (abort then resign). Correspondence is untimed; the Human
+    comes back later via Ongoing Games.
+
+    How the regression manifests: abort_game or resign_game is called.
+    """
+    player = LichessPlayer()
+    player._game_id = "arD6VE0v"
+    player._client = MagicMock()
+    player._speed = "correspondence"
+
+    player.leave_remote_game()
+
+    player._client.board.abort_game.assert_not_called()
+    player._client.board.resign_game.assert_not_called()
+
+
+def test_on_new_game_does_not_end_a_correspondence_game():
+    """A board-reset must detach correspondence, not abort or resign it.
+
+    Why: on_new_game goes through leave_remote_game. Timed games still end on
+    Lichess so the opponent is not left on a clock; correspondence must stay.
+
+    How the regression manifests: abort_game or resign_game is called.
+    """
+    player = LichessPlayer()
+    player._game_id = "arD6VE0v"
+    player._client = MagicMock()
+    player._speed = "correspondence"
+
+    player.on_new_game()
+
+    player._client.board.abort_game.assert_not_called()
+    player._client.board.resign_game.assert_not_called()
+
+
+def test_abort_menu_still_aborts_a_correspondence_game():
+    """The explicit Abort action must still abort, even on correspondence.
+
+    Why: Leave disconnects so the game can be resumed. Abort is the choice
+    that ends it on Lichess. Gating abort_remote_game on speed would make
+    that menu action a no-op.
+
+    How the regression manifests: abort_game is not called.
+    """
+    player = LichessPlayer()
+    player._game_id = "arD6VE0v"
+    player._client = MagicMock()
+    player._speed = "correspondence"
+
+    player.abort_remote_game()
+
+    player._client.board.abort_game.assert_called_once_with("arD6VE0v")
+    player._client.board.resign_game.assert_not_called()
+
+
 def test_start_lichess_game_service_is_removed():
     """Lobby New Game must not import a second game launcher.
 

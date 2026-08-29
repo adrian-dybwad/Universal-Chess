@@ -189,6 +189,7 @@
   "game.resign_color": "Poddać partię?\n({color})",
   "game.draw": "Remis",
   "game.abort": "Przerwij",
+  "game.leave": "Wyjdź",
   "common.no": "Nie",
   "common.set": "Ustawiono",
   "common.not_set": "Nie ustawiono",

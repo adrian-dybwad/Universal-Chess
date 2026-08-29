@@ -189,6 +189,7 @@
   "game.resign_color": "Resign\n{color}?",
   "game.draw": "Draw",
   "game.abort": "Abort",
+  "game.leave": "Leave",
   "common.no": "No",
   "common.set": "Set",
   "common.not_set": "Not set",
