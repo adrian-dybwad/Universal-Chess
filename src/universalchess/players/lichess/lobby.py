@@ -8,7 +8,7 @@ from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.i18n import t
 from universalchess.managers.menu import is_break_result, is_play_start
 
-from .match import has_lichess_slot, lichess_account_id
+from .match import epaper_is_flipped, has_lichess_slot, lichess_account_id
 
 _MISSING_SCOPE = re.compile(r"Missing scope:\s*([a-z0-9:_-]+)", re.IGNORECASE)
 
@@ -789,11 +789,14 @@ def _try_ongoing_summaries(client, log) -> list:
     return ongoing_game_summaries(raw)
 
 
-def _ongoing_board_preview(row: dict):
+def _ongoing_board_preview(row: dict, player1_color: str = "white"):
     """128x128 1-bit diagram of ``row['fen']``, or ``(None, None)``.
 
     A throwaway ``ChessGameState`` is used so the live game's FEN is not
-    rewritten while the lobby is on screen.
+    rewritten while the lobby is on screen. The diagram is drawn from the
+    e-paper end named by Player 1 Color, not the colour this account plays
+    in the game: that is who sits where, and flipping from the game colour
+    inverted a board already set up as Black.
     """
     fen = str((row or {}).get("fen") or "").strip()
     placement = fen.split()[0] if fen else ""
@@ -809,7 +812,7 @@ def _ongoing_board_preview(row: dict):
 
         state = ChessGameState()
         state.set_position(fen)
-        flip = (row.get("color") or "white") == "black"
+        flip = epaper_is_flipped(player1_color)
         widget = ChessBoardWidget(0, 0, lambda *_a, **_k: None, state, flip)
         try:
             image = Image.new("1", (128, 128), 1)
@@ -845,9 +848,9 @@ def ongoing_position_confirm_entries(row: dict, board_image=None, board_mask=Non
     ]
 
 
-def confirm_ongoing_game(menu_manager, row: dict) -> bool:
+def confirm_ongoing_game(menu_manager, row: dict, player1_color: str = "white") -> bool:
     """Show the position and return True only if Join is chosen."""
-    board_image, board_mask = _ongoing_board_preview(row)
+    board_image, board_mask = _ongoing_board_preview(row, player1_color)
     entries = ongoing_position_confirm_entries(
         row, board_image=board_image, board_mask=board_mask
     )
@@ -886,7 +889,7 @@ def ongoing_or_seek_menu_entries(summaries) -> list:
     return entries
 
 
-def choose_ongoing_or_seek(menu_manager, summaries) -> str:
+def choose_ongoing_or_seek(menu_manager, summaries, player1_color: str = "white") -> str:
     """``seek``, ``cancel``, or a nowPlaying game id after the position confirm.
 
     PLAY uses this picker. Empty ``summaries`` seeks without a menu: there
@@ -908,11 +911,13 @@ def choose_ongoing_or_seek(menu_manager, summaries) -> str:
         row = next((item for item in summaries if item["id"] == key), None)
         if row is None:
             return "cancel"
-        if confirm_ongoing_game(menu_manager, row):
+        if confirm_ongoing_game(menu_manager, row, player1_color):
             return row["id"]
 
 
-def _start_seek_or_resume(connection, menu_manager, start_game, log) -> bool:
+def _start_seek_or_resume(
+    connection, menu_manager, start_game, log, player1_color: str = "white"
+) -> bool:
     """PLAY in the lobby: join a chosen nowPlaying game, or seek.
 
     Ongoing Games and Seek New Game are explicit. PLAY is the mixed
@@ -921,7 +926,7 @@ def _start_seek_or_resume(connection, menu_manager, start_game, log) -> bool:
     from .player import LichessPlayerConfig as LichessConfig, LichessGameMode
 
     summaries = _try_ongoing_summaries(connection.client, log)
-    choice = choose_ongoing_or_seek(menu_manager, summaries)
+    choice = choose_ongoing_or_seek(menu_manager, summaries, player1_color)
     if choice == "cancel":
         return False
     if choice == "seek":
@@ -967,7 +972,9 @@ def lichess_join_from_web_params(params: dict) -> Optional[dict]:
     }
 
 
-def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
+def show_lichess_ongoing_games(
+    client, menu_manager, log, player1_color: str = "white"
+) -> Optional[str]:
     """Show list of ongoing Lichess games and return selected game ID.
 
     An empty list returns None without a splash: the caller already showed
@@ -1008,7 +1015,7 @@ def show_lichess_ongoing_games(client, menu_manager, log) -> Optional[str]:
             row = next((item for item in summaries if item["id"] == result.key), None)
             if row is None:
                 return None
-            if confirm_ongoing_game(menu_manager, row):
+            if confirm_ongoing_game(menu_manager, row, player1_color):
                 return row["id"]
 
     except AttributeError as e:
@@ -1133,6 +1140,7 @@ def handle_lichess_menu(
     set_clock_fn: Optional[Callable] = None,
     color_fn: Optional[Callable] = None,
     set_color_fn: Optional[Callable] = None,
+    player1_color_fn: Optional[Callable] = None,
 ):
     """Handle Lichess Settings: Account, Ongoing, Challenges, New Game.
 
@@ -1157,6 +1165,8 @@ def handle_lichess_menu(
         set_clock_fn: ``(str) -> None``, persists a Clock pick.
         color_fn: ``() -> str``, the stored lobby color key. Read on every redraw.
         set_color_fn: ``(str) -> None``, persists a Color pick.
+        player1_color_fn: ``() -> str``, Players → Player 1 Color. The ongoing
+            diagram is drawn from that end of the board.
 
     Returns:
         ``"START_GAME"`` if a Lichess game was requested (join stashed; Settings
@@ -1165,6 +1175,11 @@ def handle_lichess_menu(
     """
     from .player import LichessPlayerConfig as LichessConfig, LichessGameMode
     from universalchess.managers.menu import MenuSelection
+
+    def _player1_color() -> str:
+        if player1_color_fn is None:
+            return "white"
+        return str(player1_color_fn() or "white")
 
     connection, username, error = get_lichess_connection_fn()
     if connection is None:
@@ -1304,7 +1319,9 @@ def handle_lichess_menu(
                 _row("lichess.ongoing", "label"),
                 _row("lichess.ongoing", "help"),
             )
-            game_id = show_lichess_ongoing_games(connection.client, menu_manager, log)
+            game_id = show_lichess_ongoing_games(
+                connection.client, menu_manager, log, player1_color=_player1_color()
+            )
             if game_id:
                 config = LichessConfig(mode=LichessGameMode.ONGOING, game_id=game_id)
                 if start_game(config):
@@ -1340,7 +1357,9 @@ def handle_lichess_menu(
             # position), or a new seek. A failed start still returns the
             # break, because PLAY is also how the user leaves. This must run
             # before the connection is closed: the picker lists nowPlaying.
-            if _start_seek_or_resume(connection, menu_manager, start_game, log):
+            if _start_seek_or_resume(
+                connection, menu_manager, start_game, log, player1_color=_player1_color()
+            ):
                 return "START_GAME"
     finally:
         # Leaving the menu ends the only thing this connection existed for. What

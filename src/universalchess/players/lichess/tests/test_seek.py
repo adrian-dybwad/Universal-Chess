@@ -35,6 +35,8 @@ from universalchess.players.lichess.match import (
     lichess_cancelling_message,
     lichess_started_message,
     lichess_waiting_message,
+    player1_is_white,
+    epaper_is_flipped,
 )
 
 
@@ -148,6 +150,31 @@ def test_empty_lichess_color_defaults_to_random():
     )
     seek = lichess_seek_from_settings(settings, rating_range=rng)
     assert seek.color == "random"
+
+
+@pytest.mark.parametrize(
+    "color,expect_white,expect_flip",
+    [
+        ("white", True, False),
+        ("black", False, True),
+        ("", True, False),
+        ("BLACK", False, True),
+    ],
+)
+def test_player1_color_is_physical_setup_and_epaper_rotation(
+    color, expect_white, expect_flip
+):
+    """Players → Player 1 Color names which side is set up at the e-paper.
+
+    Why: Lichess forced White onto player 1 and rotated the panel only when
+    the assigned colour disagreed, so a board set up as Black still treated
+    the near edge as White and left the display facing the other end.
+
+    How a regression manifests: player1_is_white is True for black, or
+    epaper_is_flipped follows the Lichess-assigned colour instead of this one.
+    """
+    assert player1_is_white(color) is expect_white
+    assert epaper_is_flipped(color) is expect_flip
 
 
 def test_a_lobby_seek_posts_the_lobby_color_when_no_slot_is_lichess():

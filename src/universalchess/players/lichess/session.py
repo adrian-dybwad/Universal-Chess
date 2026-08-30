@@ -106,9 +106,10 @@ class LichessPlaySession:
     ) -> None:
         """Wire stream callbacks onto the remote player.
 
-        ``player1_color`` is the side the Players color control names, which is
-        the side the human took when setting the pieces up. It decides whether
-        the assigned color turns the display around (:func:`epaper_is_flipped`).
+        ``player1_color`` is the side the Players color control names: which
+        colour is set up at the e-paper end, and whether the display turns
+        around (:func:`epaper_is_flipped`). Lichess assigning a colour remaps
+        who plays which pieces; it does not restack them or turn the panel.
         ``on_unfinished_game`` is called with the termination when the remote
         game ends (abort, resign, mate, timeout, draw), so the main loop can
         offer Lobby / Seek with that reason in the header (BACK refuses).
@@ -192,13 +193,10 @@ class LichessPlaySession:
         if self.game_connected:
             return
         self.game_connected = True
-        # Physical White is always player 1, Black player 2. The stream only
-        # decides which of those slots the Human occupies. Flip is display-only
+        # Player 1 Color is the physical setup at the e-paper end. The stream
+        # remaps which of those slots the Human occupies. Flip is display-only
         # so the pieces do not have to be rotated: the chess diagram is remapped
-        # and the whole panel turns 180 (menus included) when the seated player
-        # is at the far end. It follows the disagreement between the color that
-        # was chosen and the one the match assigned, not the assigned color on
-        # its own.
+        # and the whole panel turns 180 (menus included) when that end is Black.
         human_is_white = (
             True if self._remote.player_is_white is None else self._remote.player_is_white
         )
@@ -221,9 +219,7 @@ class LichessPlaySession:
         if self._menu_manager is not None:
             self._menu_manager.cancel_selection("BACK")
         if self._game_display is not None:
-            self._game_display.set_flip_board(
-                epaper_is_flipped(self._player1_color, human_is_white)
-            )
+            self._game_display.set_flip_board(epaper_is_flipped(self._player1_color))
         if self._show_started_splash is not None:
             self._show_started_splash(self._panel, human_is_white)
         timer = threading.Timer(self._splash_seconds, self.dismiss_started_splash)

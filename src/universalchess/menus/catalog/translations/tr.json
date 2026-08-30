@@ -659,7 +659,7 @@
     "field.player.color": {
       "label": "Renk",
       "boardLabel": "Renk\n{value}",
-      "help": "Bu oyuncunun oynadığı renk"
+      "help": "Bu tarafta kurulan renk"
     },
     "field.player.type": {
       "label": "Oyuncu türü",
@@ -760,7 +760,7 @@
     "field.lichess.color": {
       "label": "Renk",
       "boardLabel": "Renk",
-        "help": "Bu tahtanın yayınladığı her aramada bu hesabın oynadığı renk, lobiden ve hiç oyuncu Lichess olarak ayarlı değilken bile.\n\nBeyaz, Siyah veya Rastgele. Maç başlayınca insan o tarafa oturur. Oyuncular rengi yerel oyunlar içindir ve gönderilmez."
+        "help": "Bu tahtanın yayınladığı her aramada bu hesabın oynadığı renk, lobiden ve hiç oyuncu Lichess olarak ayarlı değilken bile.\n\nBeyaz, Siyah veya Rastgele. Yalnızca Lichess'e gönderilir. E-kâğıt ucunda hangi rengin kurulduğu ve ekranın dönüp dönmediği Oyuncular → 1. oyuncu rengi."
     },
     "field.lichess.api_token": {
       "label": "API token",

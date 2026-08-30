@@ -2,8 +2,9 @@
 
 Seek parameters are derived from Players settings and the lobby's Rated,
 Clock, and Color so PLAY, lobby New Game, and a board-reset to the start
-position cannot drift. The Game clock and Players colour control are for
-local games and are not posted. The bound
+position cannot drift. The Game clock is for local games and is not posted.
+Player 1 Color is the physical setup at the e-paper end (and whether the
+panel is rotated); it is not the seek colour. The bound
 credential's host (``org:alice`` / ``dev:bob``) selects the API server;
 lichess.dev is never chosen by a game-level toggle.
 """
@@ -324,9 +325,9 @@ def _lobby_seek_color(game) -> str:
     """Map the lobby Color setting to the Board API ``color`` field.
 
     The seeking account is the human after remap, so White on the row posts
-    white. The Players colour control is for local games and is not consulted.
-    Empty (a config that predates the setting) is random. Unknown keys fall
-    through to random rather than posting a value Lichess will reject.
+    white. Player 1 Color is the physical setup at the e-paper end and is not
+    posted. Empty (a config that predates the setting) is random. Unknown keys
+    fall through to random rather than posting a value Lichess will reject.
     """
     key = str(getattr(game, "lichess_color", "") or "").strip().lower()
     if key in LICHESS_COLORS:
@@ -334,21 +335,26 @@ def _lobby_seek_color(game) -> str:
     return DEFAULT_LICHESS_COLOR
 
 
-def epaper_is_flipped(player1_color: str, human_is_white: bool) -> bool:
+def player1_is_white(player1_color: str) -> bool:
+    """Whether player 1's physical side of the board is White.
+
+    The Players color control names which colour is set up at the e-paper
+    end. Local and Lichess games both honour it: a Lichess pairing used to
+    force White here and only rotate the panel later, which left the pieces
+    on the wrong side of the board.
+    """
+    return (player1_color or "white").strip().lower() != "black"
+
+
+def epaper_is_flipped(player1_color: str) -> bool:
     """Whether the e-paper draws the board from Black's side.
 
-    The pieces are set up and the player has taken a side before Lichess names
-    a color, and the side taken is the one the Players color control describes
-    (player 1's). A match that hands the human the *other* color puts the pieces
-    they are playing at the far edge of the board, so the display turns around
-    with them rather than the pieces being re-set. Being handed the color that
-    was chosen -- Black included -- leaves the display as it was.
-
-    Only Lichess can produce that disagreement: a local game's human plays the
-    color the control names, so nothing there ever flips.
+    Player 1 Color is which colour sits at the e-paper end. Black there turns
+    the panel around so the seated player can read it. Lichess assigning a
+    colour remaps who plays which pieces; it does not restack them or turn
+    the display.
     """
-    player1_is_white = (player1_color or "white").strip().lower() != "black"
-    return player1_is_white != human_is_white
+    return not player1_is_white(player1_color)
 
 
 def board_seek_form(seek: LichessSeek) -> dict:

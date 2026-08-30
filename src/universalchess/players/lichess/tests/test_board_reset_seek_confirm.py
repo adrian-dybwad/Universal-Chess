@@ -68,7 +68,7 @@ def test_reset_prompt_lists_lobby_then_seek_and_highlights_lobby():
     entries = manager.shown[0]
     assert [e.key for e in entries] == ["prompt", "Lobby", "Seek"]
     assert [e.label.replace("\n", " ") for e in entries[1:]] == [
-        "Lichess Lobby",
+        "Lichess",
         "Seek New Game",
     ]
     assert entries[0].selectable is False

@@ -659,7 +659,7 @@
     "field.player.color": {
       "label": "Kolor",
       "boardLabel": "Kolor\n{value}",
-      "help": "Którym kolorem gra ten gracz"
+      "help": "Który kolor stoi po tej stronie szachownicy"
     },
     "field.player.type": {
       "label": "Typ gracza",
@@ -760,7 +760,7 @@
     "field.lichess.color": {
       "label": "Kolor",
       "boardLabel": "Kolor",
-        "help": "Kolor, którym to konto gra w każdym ogłoszeniu wystawionym przez tę szachownicę, także z lobby, gdy żaden gracz nie jest ustawiony na Lichess.\n\nBiałe, Czarne albo Losowy. Po starcie człowiek siada po tej stronie. Kolor w Graczach jest do gier lokalnych i nie jest wysyłany."
+        "help": "Kolor, którym to konto gra w każdym ogłoszeniu wystawionym przez tę szachownicę, także z lobby, gdy żaden gracz nie jest ustawiony na Lichess.\n\nBiałe, Czarne albo Losowy. Wysyłany tylko do Lichess. Który kolor stoi od strony e-papieru i czy wyświetlacz jest obrócony, to Gracze → Kolor gracza 1."
     },
     "field.lichess.api_token": {
       "label": "Token API",

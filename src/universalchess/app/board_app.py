@@ -1808,6 +1808,8 @@ def _start_game_mode(
         LichessSeekError,
         lichess_seek_from_settings,
         START_PLAYING_SPLASH_SECONDS,
+        epaper_is_flipped,
+        player1_is_white,
     )
     from universalchess.players.lichess.lobby import (
         active_lichess_account,
@@ -1891,13 +1893,10 @@ def _start_game_mode(
     # already satisfied here.
     _pending.layout_rebuild.clear()
 
-    # Player 1 is at the bottom of the board (White's physical side).
-    # Lichess names the account's color after the pieces are already set, so a
-    # Lichess pairing never swaps those sides from the Players color control.
-    # A color other than the one that control names rotates the e-paper instead
-    # of the pieces: White stays player 1, Black player 2.
-    lichess_pairing = p1.type == "lichess" or p2.type == "lichess"
-    player1_is_white = True if lichess_pairing else (p1.color == "white")
+    # Player 1 Color is which colour is set up at the e-paper end. Local and
+    # Lichess games both honour it: a Lichess pairing used to force White here
+    # so the pieces and the panel disagreed with a board set up as Black.
+    player1_holds_white = player1_is_white(p1.color)
 
     # Create White and Black players. Ponder is a game setting rather than a slot
     # setting, and the Lichess seek/join belong to this start, so all three are
@@ -1914,7 +1913,7 @@ def _start_game_mode(
             lichess_join=join,
         )
 
-    if player1_is_white:
+    if player1_holds_white:
         white_player = create_player(p1, chess.WHITE)
         black_player = create_player(p2, chess.BLACK)
     else:
@@ -2006,7 +2005,7 @@ def _start_game_mode(
         )
 
     _game.display = DisplayManager(
-        flip_board=False,
+        flip_board=epaper_is_flipped(p1.color) if lichess_session is not None else False,
         show_analysis=game.show_analysis,
         analysis_engine_path=analysis_engine_path,
         on_exit=lambda: _return_to_menu("Menu exit"),
@@ -5651,6 +5650,7 @@ def _handle_lichess_menu():
         set_clock_fn=lambda clock: _save_game_setting("lichess_clock", clock),
         color_fn=lambda: str(_get_settings().game.lichess_color or ""),
         set_color_fn=lambda color: _save_game_setting("lichess_color", color),
+        player1_color_fn=lambda: str(_get_settings().player1.color or "white"),
     )
 
 

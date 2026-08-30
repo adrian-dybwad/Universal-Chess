@@ -659,7 +659,7 @@
     "field.player.color": {
       "label": "Farbe",
       "boardLabel": "Farbe\n{value}",
-      "help": "Welche Farbe dieser Spieler führt"
+      "help": "Welche Farbe auf dieser Brettseite aufgestellt ist"
     },
     "field.player.type": {
       "label": "Spielertyp",
@@ -760,7 +760,7 @@
     "field.lichess.color": {
       "label": "Farbe",
       "boardLabel": "Farbe",
-        "help": "Farbe, die dieses Konto in jeder Partiesuche spielt, die dieses Brett veröffentlicht, auch für eine aus der Lobby ohne einen auf Lichess gesetzten Spieler.\n\nWeiß, Schwarz oder Zufall. Nach dem Start sitzt der Mensch auf dieser Seite. Die Spieler-Farbe gilt für lokale Partien und wird nicht gesendet."
+        "help": "Farbe, die dieses Konto in jeder Partiesuche spielt, die dieses Brett veröffentlicht, auch für eine aus der Lobby ohne einen auf Lichess gesetzten Spieler.\n\nWeiß, Schwarz oder Zufall. Nur an Lichess gesendet. Welche Farbe am E-Paper-Ende steht und ob die Anzeige gedreht wird, ist Spieler → Farbe von Spieler 1."
     },
     "field.lichess.api_token": {
       "label": "API-Token",

@@ -49,7 +49,8 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   way to choose a side. The lobby now has a Color row under Clock.
   White posts white (the seeking account is the human after remap).
   PLAY, lobby Seek New Game, and the web card all read
-  `game.lichess_color`. The Players colour control stays for local games.
+  `game.lichess_color`. Player 1 Color is which colour sits at the e-paper
+  end and is not posted.
 
 - **Lichess ongoing games show the position before Join**: Selecting a
   nowPlaying row started the stream immediately, so catch-up asked for a
@@ -1299,6 +1300,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   was also a stray way to power the board off.
 
 ### Fixed
+
+- **Lichess uses Player 1 Color for physical setup and e-paper rotation**:
+  A Lichess pairing forced White onto player 1 and rotated the panel only
+  when the assigned colour disagreed with the Players control, so a board
+  set up as Black still treated the near edge as White. Player 1 Color now
+  names which colour sits at the e-paper end for Lichess as well as local
+  games, and that is what turns the display. Lobby Color is still the side
+  posted in a seek. Ongoing-game diagrams follow the same orientation.
 
 - **Default Lichess play named lichess.org when the only saved token was on lichess.dev**:
   Empty lobby account (Default) was parsed as host org, so the wait splash

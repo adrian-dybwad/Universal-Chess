@@ -659,7 +659,7 @@
     "field.player.color": {
       "label": "Kleur",
       "boardLabel": "Kleur\n{value}",
-      "help": "Welke kleur deze speler heeft"
+      "help": "Welke kleur aan deze kant van het bord staat"
     },
     "field.player.type": {
       "label": "Spelertype",
@@ -760,7 +760,7 @@
     "field.lichess.color": {
       "label": "Kleur",
       "boardLabel": "Kleur",
-        "help": "Kleur die dit account speelt in elke zoekopdracht die dit bord plaatst, ook voor een uit de lobby zonder speler op Lichess.\n\nWit, Zwart of Willekeurig. Na de start zit de mens aan die kant. De kleur bij Spelers is voor lokale partijen en wordt niet meegestuurd."
+        "help": "Kleur die dit account speelt in elke zoekopdracht die dit bord plaatst, ook voor een uit de lobby zonder speler op Lichess.\n\nWit, Zwart of Willekeurig. Alleen naar Lichess gestuurd. Welke kleur aan de e-paper-kant staat, en of het scherm draait, is Spelers → Kleur van speler 1."
     },
     "field.lichess.api_token": {
       "label": "API-token",

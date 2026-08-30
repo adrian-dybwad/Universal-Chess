@@ -261,8 +261,8 @@ interface FormSettings {
     // Board API clock for every seek this board posts (Rapid/Classical/none).
     // Independent of the Game clock, which still offers Blitz.
     lichess_clock: string;
-    // Color the seeking account plays (white/black/random). Independent of the
-    // Players colour control, which still swaps sides for engine games.
+    // Color the seeking account plays (white/black/random). Independent of
+    // Players → Player 1 Color, which is the physical setup at the e-paper end.
     lichess_color: string;
     // Show the YOUR QUEEN warning when the side to move's own queen is attacked.
     // On by default; the CHECK warning has no equivalent flag because it cannot be

@@ -33,8 +33,9 @@ def build_player(
     Args:
         slot: The slot's settings: type, name, engine, strength, mode, think time.
         color: ``chess.WHITE`` or ``chess.BLACK``. Which slot gets which is the
-            caller's decision, because a Lichess pairing names the account's colour
-            after the pieces are already set.
+            caller's decision, from Player 1 Color for both local and Lichess
+            games. Lichess then remaps who occupies those colours after the
+            stream names the account's side.
         ponder: Whether an engine may think on the opponent's clock. A game setting
             rather than a slot setting, so it is passed in.
         lichess_seek: The seek to post for a ``lichess`` slot.

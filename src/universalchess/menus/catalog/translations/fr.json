@@ -645,7 +645,7 @@
     "field.player.color": {
       "label": "Couleur",
       "boardLabel": "Couleur\n{value}",
-      "help": "La couleur que contrôle ce joueur"
+      "help": "La couleur installée de ce côté du plateau"
     },
     "field.player.type": {
       "label": "Type de joueur",
@@ -746,7 +746,7 @@
     "field.lichess.color": {
       "label": "Couleur",
       "boardLabel": "Couleur",
-        "help": "Couleur que ce compte joue dans toutes les recherches publiées par ce plateau, y compris celles du lobby sans aucun joueur réglé sur Lichess.\n\nBlancs, Noirs ou Aléatoire. Une fois la partie commencée, l'humain occupe ce camp. La couleur des Joueurs est pour les parties locales et n'est pas envoyée."
+        "help": "Couleur que ce compte joue dans toutes les recherches publiées par ce plateau, y compris celles du lobby sans aucun joueur réglé sur Lichess.\n\nBlancs, Noirs ou Aléatoire. Envoyée à Lichess seulement. La couleur installée du côté de l'écran, et si l'affichage est tourné, est Joueurs → Couleur du joueur 1."
     },
     "field.lichess.api_token": {
       "label": "Jeton d'API",

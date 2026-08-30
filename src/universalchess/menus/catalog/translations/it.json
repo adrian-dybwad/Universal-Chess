@@ -660,7 +660,7 @@
     "field.player.color": {
       "label": "Colore",
       "boardLabel": "Colore\n{value}",
-      "help": "Quale colore conduce questo giocatore"
+      "help": "Il colore sistemato da questo lato della scacchiera"
     },
     "field.player.type": {
       "label": "Tipo di giocatore",
@@ -761,7 +761,7 @@
     "field.lichess.color": {
       "label": "Colore",
       "boardLabel": "Colore",
-        "help": "Colore che questo account gioca in ogni ricerca che questa scacchiera pubblica, anche una dalla lobby senza nessun giocatore impostato su Lichess.\n\nBianchi, Neri o Casuale. All'inizio della partita l'umano siede da quel lato. Il colore di Giocatori è per le partite locali e non viene inviato."
+        "help": "Colore che questo account gioca in ogni ricerca che questa scacchiera pubblica, anche una dalla lobby senza nessun giocatore impostato su Lichess.\n\nBianchi, Neri o Casuale. Inviato solo a Lichess. Il colore sistemato dal lato dell'e-paper, e se lo schermo ruota, è Giocatori → Colore del giocatore 1."
     },
     "field.lichess.api_token": {
       "label": "Token API",

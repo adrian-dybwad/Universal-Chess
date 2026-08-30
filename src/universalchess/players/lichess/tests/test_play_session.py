@@ -81,14 +81,14 @@ def test_awaiting_opponent_only_for_a_challenge_the_board_sent():
 
 
 def test_connect_remaps_slots_when_account_sits_black(monkeypatch):
-    """After the stream names Black, Human is player 2 and the e-paper flips.
+    """After the stream names Black, Human is player 2.
 
-    Why: pieces stay on their physical sides (White player 1, Black player 2).
-    Players are built before Lichess assigns color; Human often starts in the
-    White slot. The display rotates so Black is at the near edge.
+    Why: pieces stay on their physical sides; the stream only remaps who
+    plays them. Player 1 Color (default White) is the e-paper end, so the
+    panel does not rotate just because the account was handed Black.
 
     Failure: reassign_slots is not called with (remote, human), or the board
-    is not flipped.
+    is flipped from the assigned colour alone.
     """
     monkeypatch.setattr(
         "universalchess.players.lichess.session.threading.Timer",
@@ -118,7 +118,7 @@ def test_connect_remaps_slots_when_account_sits_black(monkeypatch):
     assert manager.black_player is human
     assert remote.color is chess.WHITE
     assert human.color is chess.BLACK
-    display.set_flip_board.assert_called_once_with(True)
+    display.set_flip_board.assert_called_once_with(False)
     assert shown == [False]
     assert session.game_connected is True
 
@@ -160,10 +160,12 @@ def test_connect_moves_human_to_white_when_started_as_black(monkeypatch):
     """Human built as player 2 must become player 1 if the account sits White.
 
     Why: Lichess in slot 1 / Human in slot 2 starts Human as Black. A random
-    seek can still assign White. White is always player 1; without remap the
-    Human would stay Black on the clock while playing White.
+    seek can still assign White. Without remap the Human would stay Black on
+    the clock while playing White. Player 1 Color (default White) keeps the
+    panel unrotated.
 
-    Failure: white_player stays the remote, or the board is flipped.
+    How a regression manifests: white_player stays the remote, or the board
+    is flipped from the assigned colour.
     """
     monkeypatch.setattr(
         "universalchess.players.lichess.session.threading.Timer",
@@ -199,26 +201,24 @@ def test_connect_moves_human_to_white_when_started_as_black(monkeypatch):
     "player1_color,human_is_white,expect_flip",
     [
         ("white", True, False),
-        ("white", False, True),
-        ("black", False, False),
+        ("white", False, False),
+        ("black", False, True),
         ("black", True, True),
     ],
 )
-def test_the_epaper_turns_around_when_lichess_hands_the_other_color(
+def test_the_epaper_follows_player1_color_not_the_assigned_side(
     monkeypatch, player1_color, human_is_white, expect_flip
 ):
-    """Flip is the disagreement between the chosen color and the assigned one.
+    """Flip is Player 1 Color: Black at the e-paper end turns the panel.
 
-    The pieces are set up and the player has sat down before Lichess names a
-    color, and the side they took is the one the Players color control
-    describes. Being handed the other color puts their pieces at the far edge,
-    so the display turns around with them -- and being handed the color they
-    chose leaves it alone, even when that color is Black.
+    The pieces are set up from the Players color control before Lichess names
+    a colour. Being handed White or Black remaps who plays which pieces; it
+    does not restack them or turn the display.
 
-    How a regression manifests: flip is read from the assigned color alone
-    ("Black always flips"), so a player who set up as Black and was assigned
-    Black reads a display facing their opponent, while the same player assigned
-    White reads one facing away from the pieces they are playing.
+    How a regression manifests: flip is read from the assigned colour
+    ("Black always flips") or from disagreement with the assigned colour, so
+    a board set up as Black stays unrotated when assigned Black, and a board
+    set up as White rotates when assigned Black.
     """
     monkeypatch.setattr(
         "universalchess.players.lichess.session.threading.Timer",
