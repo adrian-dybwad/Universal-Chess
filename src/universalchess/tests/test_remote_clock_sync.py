@@ -144,3 +144,96 @@ def test_deferred_widget_paint_keeps_lichess_remaining():
     assert service.get_times() == (1785, 1800)
     service.stop()
     reset_chess_clock()
+
+
+def test_a_local_ply_notifies_clock_observers_so_the_running_side_switches():
+    """Turn switches must notify clock observers even without a local increment.
+
+    Why this exists
+    ---------------
+    Whose clock counts is derived from the game turn, not stored on the clock.
+    Local games credit increment after a ply, which mutates remaining and fires
+    clock observers. Lichess remaining already includes increment, so that credit
+    is skipped: without an observer firing on the turn switch itself, the web
+    keeps interpolating the previous side and the highlight stays on the mover.
+
+    How the regression manifests: after e2e4, White's remaining keeps falling.
+    """
+    from universalchess.state.chess_game import get_chess_game
+
+    reset_chess_game()
+    state = reset_chess_clock()
+    seen = []
+    state.on_state_change(lambda: seen.append(state.active_color))
+
+    get_chess_game().push_uci("e2e4")
+
+    assert state.active_color == "black"
+    assert seen[-1] == "black"
+
+
+def test_lichess_remaining_after_our_ply_ticks_the_opponent(game_manager):
+    """Applying Lichess remaining after a local ply must not keep counting us.
+
+    Why this exists
+    ---------------
+    Lichess ``set_clock`` writes remaining and starts the countdown; it does
+    not set whose clock runs. After our ply the board turn is the opponent, so
+    ticks must fall on them even though local increment was not credited.
+
+    How the regression manifests: ``tick()`` decrements White after e2e4.
+    """
+    game_manager._clock_service.configure(TimeControl.fischer_minutes(10, 0))
+    game_manager.set_clock(600, 600)
+    game_manager._game_state.push_uci("e2e4")
+    game_manager.set_clock(590, 600)
+
+    clock = game_manager._clock_service._state
+    assert clock.active_color == "black"
+    clock.tick()
+    assert clock.white_time == 590
+    assert clock.black_time == 599
+
+
+def test_lichess_remaining_packet_ticks_us_while_opponent_ply_is_pending(game_manager):
+    """A gameState that names the opponent's ply must start our clock immediately.
+
+    Why: Lichess remaining is that instant and Lichess has already started our
+    clock. The logical board still has their turn until we transcribe, so
+    ticking from board turn charged them for the time we took to move pieces.
+    How the regression manifests: after set_clock(..., ticking_color='white')
+    with Black still to move on the board, tick() decrements Black.
+    """
+    game_manager._clock_service.configure(TimeControl.fischer_minutes(10, 0))
+    game_manager.set_clock(600, 600)
+    game_manager._game_state.push_uci("e2e4")
+    assert game_manager._game_state.turn_name == "black"
+
+    game_manager.set_clock(590, 595, ticking_color="white")
+
+    clock = game_manager._clock_service._state
+    assert clock.active_color == "white"
+    clock.tick()
+    assert clock.white_time == 589
+    assert clock.black_time == 595
+
+
+def test_lichess_echo_remaining_ticks_the_opponent_when_board_turn_already_matches(
+    game_manager,
+):
+    """Echo of our ply: remaining snaps, ticking side is already the board turn.
+
+    How the regression manifests: ticking_color='black' after e2e4 still
+    forces White, so our remaining falls while we wait for them.
+    """
+    game_manager._clock_service.configure(TimeControl.fischer_minutes(10, 0))
+    game_manager.set_clock(600, 600)
+    game_manager._game_state.push_uci("e2e4")
+    game_manager.set_clock(590, 600, ticking_color="black")
+
+    clock = game_manager._clock_service._state
+    assert clock.active_color == "black"
+    clock.tick()
+    assert clock.white_time == 590
+    assert clock.black_time == 599
+

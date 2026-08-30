@@ -104,6 +104,32 @@ def test_opening_snapshot_then_one_opponent_ply_is_still_pending():
     assert player._pending_move == chess.Move.from_uci("e2e4")
 
 
+def test_game_full_with_empty_moves_then_our_ply_is_echo_not_catch_up():
+    """gameFull with no moves must count as the opening snapshot.
+
+    Why this exists
+    ---------------
+    ``_process_game_state`` skipped ``_sync_server_moves`` when the move
+    list was unchanged, so an empty gameFull never set ``_move_snapshot_seen``.
+    The echo of our first ply was then treated as a first snapshot and caught
+    up. Catch-up of a ply already on the board fails, but remaining is still
+    applied against whatever turn the local board has; if that catch-up path
+    also re-prompts the side to move, our clock keeps running.
+
+    How the regression manifests: catch-up is ``[["e2e4"]]`` for our own
+    first move instead of an ignored echo.
+    """
+    player, pending, caught = _player()
+    player._player_is_white = True
+
+    player._process_game_state({"state": {"moves": "", "wtime": 600000, "btime": 600000}})
+    player._process_game_state({"moves": "e2e4", "wtime": 590000, "btime": 600000})
+
+    assert caught == []
+    assert pending == []
+    assert player._last_processed_moves == "e2e4"
+
+
 def test_catch_up_does_not_need_local_colour():
     """The first snapshot can arrive before names/colour are parsed.
 

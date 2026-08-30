@@ -56,6 +56,16 @@ def remaining_from_lichess_state(state: dict) -> Optional[Tuple[int, int]]:
     return (white or 0, black or 0)
 
 
+def ticking_color_from_lichess_moves(moves: str) -> str:
+    """Side whose clock Lichess is running after this move list.
+
+    An empty list is White's clock at game start. Each ply flips the side.
+    Remaining ``wtime``/``btime`` on the same ``gameState`` are for this side.
+    """
+    ply_count = len(moves.split()) if moves and moves.strip() else 0
+    return "black" if ply_count % 2 == 1 else "white"
+
+
 def time_control_from_lichess_event(event: dict) -> Optional[TimeControl]:
     """Fischer (or untimed) control from a ``gameFull`` payload.
 

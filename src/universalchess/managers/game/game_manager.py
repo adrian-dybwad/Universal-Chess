@@ -1679,20 +1679,26 @@ class GameManager:
             if new_white != current_white or new_black != current_black:
                 players_state.set_player_names(new_white, new_black)
     
-    def set_clock(self, white_seconds: int, black_seconds: int):
+    def set_clock(self, white_seconds: int, black_seconds: int, ticking_color: Optional[str] = None):
         """Set remaining times from a remote clock and start ticking.
 
         Lichess ``wtime``/``btime`` are remaining at that instant, and White's
         clock is already running on the server at game start. Applying the
         snapshot without starting left the e-paper frozen while the browser
-        counted down.
+        counted down. ``ticking_color`` is the side Lichess started with those
+        times (from the packet's move list). The board turn may still be the
+        previous ply until that move is transcribed.
 
         Args:
             white_seconds: White player's remaining time in seconds
             black_seconds: Black player's remaining time in seconds
+            ticking_color: 'white' or 'black' when the packet names the side
+                that is counting; omitted leaves turn-derived ticking.
         """
         try:
             self._clock_service.set_times(white_seconds, black_seconds)
+            if ticking_color is not None:
+                self._clock_service.apply_remote_ticking(ticking_color)
             if self._clock_service.timed_mode and not self._game_state.is_game_over:
                 self._clock_service.start()
                 if self.on_clock_started is not None:

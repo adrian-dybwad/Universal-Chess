@@ -86,11 +86,31 @@ class ChessClockState:
     
     def set_game_state(self, game_state) -> None:
         """Set the game state reference for active player lookup.
-        
+
+        Subscribes to position changes when the game object supports it so a
+        turn switch notifies clock observers even when remaining is not
+        mutated (Lichess remaining already includes increment, so the local
+        increment credit that would have fired observers is skipped).
+        Stands-in used by tests expose only ``turn_name`` / ``move_stack``.
+
         Args:
-            game_state: ChessGameState instance
+            game_state: ChessGameState instance, or a test stand-in.
         """
+        if self._game_state is not None and hasattr(self._game_state, "remove_observer"):
+            self._game_state.remove_observer(self._on_game_position_change)
         self._game_state = game_state
+        if game_state is not None and hasattr(game_state, "on_position_change"):
+            game_state.on_position_change(self._on_game_position_change)
+
+    def _on_game_position_change(self) -> None:
+        """Turn switches when the position does; observers must see the new side.
+
+        ``active_color`` is derived from the game turn, not stored here. Without
+        this, a ply that does not credit increment never mutates clock state, so
+        the web keeps interpolating the previous side.
+        """
+        self.clear_forced_active_color_if_reached()
+        self._notify_state_change()
     
     # -------------------------------------------------------------------------
     # Properties (read-only access to state)
@@ -447,6 +467,8 @@ def reset_chess_clock() -> ChessClockState:
         The new ChessClockState instance.
     """
     global _instance
+    if _instance is not None:
+        _instance.set_game_state(None)
     _instance = ChessClockState()
     # Wire up game state reference for active player lookup
     from universalchess.state.chess_game import get_chess_game

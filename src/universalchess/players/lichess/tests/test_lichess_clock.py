@@ -20,6 +20,7 @@ from universalchess.players.lichess.clock import (
     LICHESS_UNLIMITED_MILLIS,
     lichess_millis_to_seconds,
     remaining_from_lichess_state,
+    ticking_color_from_lichess_moves,
     time_control_from_lichess_event,
 )
 from universalchess.players.lichess.player import LichessPlayer
@@ -75,6 +76,20 @@ def test_real_time_remaining_pair_from_ints_and_timedeltas():
     ) == (179, 180)
 
 
+def test_ticking_color_follows_the_move_list_in_the_packet():
+    """After N plies Lichess is counting the side that is to move.
+
+    Why: remaining and whose clock runs arrive on the same gameState. The
+    board turn still belongs to the opponent until the ply is transcribed, so
+    the packet's move list is the authority for which side ticks.
+    How the regression manifests: after e2e4 e7e5 the helper still says
+    black, so White's remaining is frozen while Black is charged for our think.
+    """
+    assert ticking_color_from_lichess_moves("") == "white"
+    assert ticking_color_from_lichess_moves("e2e4") == "black"
+    assert ticking_color_from_lichess_moves("e2e4 e7e5") == "white"
+
+
 def test_game_full_clock_object_is_the_fischer_control():
     """gameFull.clock is the Lichess pair, not the Game menu.
 
@@ -119,7 +134,7 @@ def test_player_skips_unlimited_remaining_callback():
     """
     player = LichessPlayer()
     clocks = []
-    player.set_clock_callback(lambda w, b: clocks.append((w, b)))
+    player.set_clock_callback(lambda w, b, ticking=None: clocks.append((w, b)))
 
     player._process_time_update(
         {"wtime": LICHESS_UNLIMITED_MILLIS, "btime": LICHESS_UNLIMITED_MILLIS}
@@ -136,13 +151,36 @@ def test_player_applies_timedelta_remaining_to_the_clock_callback():
     """
     player = LichessPlayer()
     clocks = []
-    player.set_clock_callback(lambda w, b: clocks.append((w, b)))
+    player.set_clock_callback(lambda w, b, ticking=None: clocks.append((w, b)))
 
     player._process_time_update(
         {"wtime": timedelta(seconds=120), "btime": timedelta(seconds=90)}
     )
 
     assert clocks == [(120, 90)]
+
+
+def test_player_clock_callback_includes_ticking_side_from_the_same_packet():
+    """gameState remaining must name whose clock Lichess started with those times.
+
+    Why: the ply is still pending on the physical board, so board turn is the
+    opponent. Remaining without the ticking side charges them for our think.
+    How the regression manifests: the callback is only (w, b), or ticking is
+    black after e2e4 e7e5.
+    """
+    player = LichessPlayer()
+    clocks = []
+    player.set_clock_callback(lambda w, b, ticking=None: clocks.append((w, b, ticking)))
+
+    player._process_time_update(
+        {
+            "moves": "e2e4 e7e5",
+            "wtime": timedelta(seconds=590),
+            "btime": timedelta(seconds=600),
+        }
+    )
+
+    assert clocks == [(590, 600, "white")]
 
 
 def test_player_configures_time_control_from_game_full_before_ready():
@@ -155,7 +193,7 @@ def test_player_configures_time_control_from_game_full_before_ready():
     specs = []
     clocks = []
     player._time_control_callback = lambda spec: specs.append(spec)
-    player.set_clock_callback(lambda w, b: clocks.append((w, b)))
+    player.set_clock_callback(lambda w, b, ticking=None: clocks.append((w, b)))
     player._on_game_connected = lambda: None
     player._game_info_callback = lambda *a: None
     player._username = "adriandyb"

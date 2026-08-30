@@ -205,15 +205,23 @@ class ProtocolManager:
     # Remote session (clock and names from an attached online game)
     # =========================================================================
     
-    def _on_remote_clock_update(self, white_time: int, black_time: int):
+    def _on_remote_clock_update(
+        self, white_time: int, black_time: int, ticking_color: Optional[str] = None
+    ):
         """Handle clock update from a remote player.
 
         Args:
             white_time: White's remaining time in seconds.
             black_time: Black's remaining time in seconds.
+            ticking_color: Side Lichess started with those remaining times.
         """
         if self.game_manager:
-            self.game_manager.set_clock(white_time, black_time)
+            if ticking_color is None:
+                self.game_manager.set_clock(white_time, black_time)
+            else:
+                self.game_manager.set_clock(
+                    white_time, black_time, ticking_color=ticking_color
+                )
 
     def _on_remote_time_control(self, time_control) -> None:
         """Install the remote game's time control, replacing the Game menu spec."""

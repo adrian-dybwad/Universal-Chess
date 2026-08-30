@@ -42,7 +42,8 @@ def test_set_player_manager_binds_remote_clock_and_game_info():
     """Clock and names from a remote player must reach GameManager.
 
     Failure: bind_remote_session is skipped, so set_clock / set_game_info
-    are never called when the stream updates.
+    are never called when the stream updates. A three-arg remaining packet
+    that omits ticking_color leaves the opponent charged until transcription.
     """
     from universalchess.state.time_control import TimeControl
 
@@ -53,6 +54,12 @@ def test_set_player_manager_binds_remote_clock_and_game_info():
 
     remote._clock_callback(120, 90)
     game_manager.set_clock.assert_called_once_with(120, 90)
+
+    game_manager.set_clock.reset_mock()
+    remote._clock_callback(100, 80, "black")
+    game_manager.set_clock.assert_called_once_with(
+        100, 80, ticking_color="black"
+    )
 
     remote._game_info_callback("alice", "1500", "bob", "1400")
     game_manager.set_game_info.assert_called_once_with(

@@ -1309,6 +1309,25 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   explicit Abort action still end the game. Timed games still abort or
   resign on leave.
 
+- **Lichess clock kept counting the mover after their ply**: Whose
+  clock runs is derived from the board turn. Local games credit increment
+  after a move, which notifies clock observers so the web and highlight
+  switch. Lichess remaining already includes increment, so that credit
+  is skipped and the previous side kept being interpolated until the next
+  tick or remaining snapshot. Clock observers now fire on the turn
+  switch itself. An empty gameFull is recorded as the opening snapshot
+  so the echo of our first ply is not caught up, and ``configure()``
+  drops a leftover engine-move hand-off so a prior engine game cannot
+  keep charging the human after they move.
+
+- **Lichess remaining charged the opponent until their ply was transcribed**:
+  ``wtime``/``btime`` were applied while the clock still followed the board
+  turn. The opponent's ply is pending on the physical board, so that
+  turn is still theirs, and they were charged for transcription (network
+  delay is already in the snapshot). Remaining and whose clock Lichess
+  started now come from the same packet: remaining snaps, and the move
+  list names the side that ticks immediately.
+
 - **Lichess player labels were reversed or missing**: gameFull usernames
   were applied to the clock and LiveBoard, then slot remap overwrote them
   with Human vs the local Lichess account, so the opponent sat on the

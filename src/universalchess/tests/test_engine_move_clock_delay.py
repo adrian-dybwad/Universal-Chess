@@ -144,6 +144,26 @@ def test_reset_clears_forced_active_color():
     assert state.active_color == "black"
 
 
+def test_configure_clears_forced_active_color(clock_service):
+    """configure() must drop a leftover engine-move hand-off override.
+
+    Why: Lichess starts skip ``reset_clock`` so the Game-menu spec does not
+    replace server remaining. An override left from a previous engine game
+    would keep counting the human after their own ply (board turn is the
+    opponent, forced color is still the human).
+
+    How the regression manifests: after e2e4, ``active_color`` stays white.
+    """
+    service, state, game = clock_service
+    game.turn_name = "black"
+    state.begin_forced_active_color("white", delay_seconds=0)
+    assert state.active_color == "white"
+
+    service.configure(TimeControl.fischer_minutes(10, 0))
+
+    assert state.active_color == "black"
+
+
 def test_forced_and_board_turn_agree_after_transcription():
     """Once the board turn reaches the forced color the override is redundant.
 

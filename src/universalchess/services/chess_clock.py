@@ -146,7 +146,6 @@ class ChessClockService:
     
     def __init__(self):
         """Initialize the clock service."""
-        self._state = get_clock_state()
         self._lock = threading.RLock()
         
         # Initial times (for reset)
@@ -183,6 +182,17 @@ class ChessClockService:
     # -------------------------------------------------------------------------
     # Properties (delegate to state for reads)
     # -------------------------------------------------------------------------
+
+    @property
+    def _state(self):
+        """The current clock-state singleton.
+
+        Read live rather than cached at construction: tests replace the
+        singleton with ``reset_chess_clock()``, and a leftover service would
+        otherwise keep counting against a state whose game pointer is gone
+        (``active_color`` then defaults to White after every ply).
+        """
+        return get_clock_state()
     
     @property
     def white_time(self) -> int:
@@ -265,6 +275,10 @@ class ChessClockService:
             self._state.set_times(white_seconds, black_seconds)
             # Note: active_color comes from ChessGameState, not set here
             self._state.set_paused(False)
+            # A leftover engine-move hand-off would keep counting the human after
+            # their own ply. Lichess starts skip reset_clock so that override
+            # would otherwise survive into the remote game.
+            self._state.clear_forced_active_color()
 
         log.info(f"[ChessClockService] Configured: {time_control.describe()}")
 
@@ -380,6 +394,30 @@ class ChessClockService:
         # override is active.
         self._state.clear_forced_active_color_if_reached()
     
+    def apply_remote_ticking(self, ticking_color: str) -> None:
+        """Count ``ticking_color`` from a Lichess remaining snapshot.
+
+        Lichess remaining is that instant and already names whose clock is
+        running. The physical board may still be on the previous turn (the
+        ply is pending transcription). Force that side immediately, with no
+        engine grace delay. When the board turn already matches, drop any
+        leftover override so the natural turn ticks.
+        """
+        if ticking_color not in ("white", "black"):
+            return
+        if not self.timed_mode:
+            return
+        with self._lock:
+            natural = (
+                self._state._game_state.turn_name
+                if self._state._game_state is not None
+                else None
+            )
+            if natural == ticking_color:
+                self._state.clear_forced_active_color()
+            else:
+                self._state.begin_forced_active_color(ticking_color, delay_seconds=0)
+
     def set_times(self, white_seconds: int, black_seconds: int) -> None:
         """Set the remaining time for both players.
         

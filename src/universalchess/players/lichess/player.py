@@ -316,7 +316,7 @@ class LichessPlayer(Player):
         
         # Callbacks for game events
         self._on_game_connected: Optional[Callable] = None
-        self._clock_callback: Optional[Callable[[int, int], None]] = None
+        self._clock_callback: Optional[Callable[..., None]] = None
         self._game_info_callback: Optional[Callable[[str, str, str, str], None]] = None
         self._game_over_callback: Optional[Callable[[str, str, Optional[str]], None]] = None
         self._takeback_offer_callback: Optional[Callable[[Callable, Callable], None]] = None
@@ -372,8 +372,8 @@ class LichessPlayer(Player):
         """Set callback for when game is connected and ready."""
         self._on_game_connected = callback
     
-    def set_clock_callback(self, callback: Callable[[int, int], None]) -> None:
-        """Set callback for clock updates (white_time, black_time in seconds)."""
+    def set_clock_callback(self, callback: Callable[..., None]) -> None:
+        """Set callback for remaining (and optional ticking side) in seconds."""
         self._clock_callback = callback
     
     def set_game_info_callback(self, callback: Callable[[str, str, str, str], None]) -> None:
@@ -383,7 +383,7 @@ class LichessPlayer(Player):
     def bind_remote_session(
         self,
         *,
-        clock_callback: Optional[Callable[[int, int], None]] = None,
+        clock_callback: Optional[Callable[..., None]] = None,
         game_info_callback: Optional[Callable[[str, str, str, str], None]] = None,
         time_control_callback=None,
     ) -> None:
@@ -1359,11 +1359,16 @@ class LichessPlayer(Player):
                 self._handle_draw_state(state)
         
         moves = str(moves) if moves else ''
-        
-        if moves != self._remote_moves:
+
+        # An empty gameFull has the same move list as the initial '' so a
+        # change-only guard never marked the opening snapshot seen. The echo of
+        # our first ply was then treated as a first snapshot and caught up.
+        if moves != self._remote_moves or not self._move_snapshot_seen:
             self._sync_server_moves(moves)
 
-        # Remaining after catch-up so the side to move is the one that ticks.
+        # Remaining and ticking side from this packet, after catch-up so a
+        # pushed ply's board turn already matches. Pending opponent plies still
+        # have the previous board turn; ticking_color is the move list.
         self._process_time_update(inner_state)
         
         status, winner = lichess_event_status_and_winner(state)
@@ -1508,16 +1513,25 @@ class LichessPlayer(Player):
         self._time_control_callback(spec)
 
     def _process_time_update(self, state: dict):
-        """Apply Lichess remaining times (milliseconds or timedelta)."""
+        """Apply Lichess remaining times (milliseconds or timedelta).
+
+        Remaining and whose clock is running come from the same packet: the
+        move list names the side Lichess started, even while that ply is
+        still pending on the physical board.
+        """
         try:
-            from .clock import remaining_from_lichess_state
+            from .clock import remaining_from_lichess_state, ticking_color_from_lichess_moves
 
             remaining = remaining_from_lichess_state(state)
             if remaining is None:
                 return
             self._white_time, self._black_time = remaining
             if self._clock_callback:
-                self._clock_callback(self._white_time, self._black_time)
+                ticking = ticking_color_from_lichess_moves(str(state.get("moves") or ""))
+                try:
+                    self._clock_callback(self._white_time, self._black_time, ticking)
+                except TypeError:
+                    self._clock_callback(self._white_time, self._black_time)
         except Exception as e:
             log.warning(f"[LichessPlayer] Error processing time: {e}")
     
