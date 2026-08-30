@@ -257,6 +257,7 @@
   "accounts.default_account": "Standardkonto",
   "accounts.unknown_host": "Unbekannter Lichess-Server: {host}",
   "accounts.token_required": "API-Token wird benötigt",
+  "accounts.host_required": "Lichess-Server wird benötigt",
   "accounts.cannot_verify_type": "Dieser Kontotyp kann nicht geprüft werden",
   "accounts.could_not_verify": "Konto konnte nicht geprüft werden",
   "accounts.identifier_required": "Kontokennung wird benötigt",

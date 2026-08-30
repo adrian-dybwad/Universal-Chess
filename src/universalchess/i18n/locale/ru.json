@@ -257,6 +257,7 @@
   "accounts.default_account": "Аккаунт по умолчанию",
   "accounts.unknown_host": "Неизвестный хост Lichess {host}",
   "accounts.token_required": "Нужен токен API",
+  "accounts.host_required": "Нужен сервер Lichess",
   "accounts.cannot_verify_type": "Нельзя проверить этот тип аккаунта",
   "accounts.could_not_verify": "Не удалось проверить аккаунт",
   "accounts.identifier_required": "Нужен ID аккаунта",

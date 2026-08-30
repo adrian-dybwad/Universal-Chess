@@ -23,7 +23,6 @@ from universalchess.services.account_store import (
 )
 from .hosts import (
     ACCOUNT_TYPE_LICHESS,
-    DEFAULT_HOST_ID,
     HOST_BY_ID,
     HOST_DEV,
     HOST_ORG,
@@ -123,9 +122,9 @@ def default_lichess_credential(*, config=None) -> Optional[Account]:
 def get_lichess_credential(account_id: str, *, config=None) -> Optional[Account]:
     """Find a credential by player-slot id.
 
-    Accepts canonical ``org:alice`` and legacy username-only ``alice`` (org).
-    A ``dev:bob`` binding never returns an org Bob section: tokens are host-
-    specific.
+    Accepts canonical ``org:alice`` and an unprefixed ``alice`` that uniquely
+    matches one stored username. A ``dev:bob`` binding never returns an org
+    Bob section: tokens are host-specific.
     """
     raw = (account_id or "").strip()
     if not raw:
@@ -134,13 +133,23 @@ def get_lichess_credential(account_id: str, *, config=None) -> Optional[Account]
     if found is not None:
         return found
     host_id, username = parse_credential_id(raw)
-    canonical = credential_id(host_id, username)
-    if canonical != raw:
-        found = get_account(ACCOUNT_TYPE_LICHESS, canonical, config=config)
-        if found is not None:
-            return found
-    if host_id == DEFAULT_HOST_ID and username and username != canonical:
-        return get_account(ACCOUNT_TYPE_LICHESS, username, config=config)
+    if host_id:
+        canonical = credential_id(host_id, username)
+        if canonical != raw:
+            found = get_account(ACCOUNT_TYPE_LICHESS, canonical, config=config)
+            if found is not None:
+                return found
+        if host_id == HOST_ORG and username:
+            # Unmigrated ``account:lichess:<user>`` sections were the org product.
+            return get_account(ACCOUNT_TYPE_LICHESS, username, config=config)
+        return None
+    matches = [
+        account
+        for account in list_lichess_credentials(config=config)
+        if username_of(account).casefold() == username
+    ]
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 
@@ -152,12 +161,14 @@ def add_lichess_credential(
 ) -> AddAccountResult:
     """Validate, resolve against the chosen host, and persist a Lichess credential.
 
-    ``fields`` must include ``api_token`` and may include ``host`` (default org)
-    and ``range``. The resolver authenticates on that host and returns the
+    ``fields`` must include ``api_token`` and ``host``, and may include
+    ``range``. The resolver authenticates on that host and returns the
     username. Duplicate is ``host`` + username, so the same person may exist
     on org and .dev.
     """
-    host_id = (fields.get("host") or DEFAULT_HOST_ID).strip().lower()
+    host_id = (fields.get("host") or "").strip().lower()
+    if not host_id:
+        return AddAccountResult(None, "missing_field", t("accounts.host_required"))
     if host_id not in HOST_BY_ID:
         return AddAccountResult(None, "unknown_host", t("accounts.unknown_host", host=host_id))
     token = (fields.get("api_token") or "").strip()
@@ -251,6 +262,10 @@ def migrate_lichess_layout() -> None:
         if type_id != ACCOUNT_TYPE_LICHESS:
             continue
         host_id, username = parse_credential_id(account_id)
+        if not host_id:
+            # Unprefixed ``account:lichess:<user>`` was the org product.
+            host_id = HOST_ORG
+            username = username or account_id
         canonical = credential_id(host_id, username)
         values = dict(config.items(section))
         if account_id == canonical:
@@ -279,7 +294,7 @@ def migrate_lichess_layout() -> None:
         if not account:
             continue
         host_id, username = parse_credential_id(account)
-        if account.lower() == username:
+        if not host_id or account.lower() == username:
             host_id = default_host
         new_id = credential_id(host_id, username)
         if new_id != account:

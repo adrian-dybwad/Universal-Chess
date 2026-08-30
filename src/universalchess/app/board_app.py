@@ -5737,7 +5737,7 @@ def _handle_accounts_menu():
 
     account_store.ensure_lichess_migrated(
         resolver=lambda fields: resolve_lichess_identity(
-            fields.get("api_token", ""), log, host_id=fields.get("host") or "org"
+            fields.get("api_token", ""), log, host_id=fields.get("host") or ""
         )
     )
 

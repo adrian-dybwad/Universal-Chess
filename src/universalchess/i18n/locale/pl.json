@@ -257,6 +257,7 @@
   "accounts.default_account": "Konto domyślne",
   "accounts.unknown_host": "Nieznany host Lichess {host}",
   "accounts.token_required": "Token API jest wymagany",
+  "accounts.host_required": "Serwer Lichess jest wymagany",
   "accounts.cannot_verify_type": "Nie można zweryfikować tego typu konta",
   "accounts.could_not_verify": "Nie można zweryfikować konta",
   "accounts.identifier_required": "Identyfikator konta jest wymagany",

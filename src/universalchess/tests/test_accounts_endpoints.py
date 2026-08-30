@@ -107,7 +107,7 @@ def test_add_account_persists_and_list_redacts_token(client, config_files, resol
     """
     cfg, _ = config_files
     resolve_ok("MagnusC")
-    resp = _post_account(client, "lichess", {"api_token": "lip_secret", "range": "1000-1600"})
+    resp = _post_account(client, "lichess", {"api_token": "lip_secret", "range": "1000-1600", "host": "org"})
     assert resp.status_code == 201, resp.data
     # Token is persisted server-side.
     assert _read_section(cfg, "account:lichess:org:magnusc")["api_token"] == "lip_secret"
@@ -134,8 +134,8 @@ def test_add_duplicate_account_returns_409(client, config_files, resolve_ok):
     regression shows as a 2xx or a second stored account.
     """
     resolve_ok("MagnusC")
-    assert _post_account(client, "lichess", {"api_token": "lip_a"}).status_code == 201
-    dup = _post_account(client, "lichess", {"api_token": "lip_b"})
+    assert _post_account(client, "lichess", {"api_token": "lip_a", "host": "org"}).status_code == 201
+    dup = _post_account(client, "lichess", {"api_token": "lip_b", "host": "org"})
     assert dup.status_code == 409
     assert json.loads(dup.data)["error"] == "duplicate"
     assert len(json.loads(client.get("/api/accounts").data)["accounts"]) == 1
@@ -165,7 +165,7 @@ def test_add_account_auth_failure_returns_400(client, config_files, monkeypatch)
         "_account_resolver",
         lambda type_id: (lambda fields: ResolvedIdentity(error="auth_failed", message="bad token")),
     )
-    resp = _post_account(client, "lichess", {"api_token": "lip_bad"})
+    resp = _post_account(client, "lichess", {"api_token": "lip_bad", "host": "org"})
     assert resp.status_code == 400
     assert json.loads(resp.data)["error"] == "auth_failed"
     assert json.loads(client.get("/api/accounts").data)["accounts"] == []
@@ -223,7 +223,7 @@ def test_delete_account_removes_then_404(client, config_files, resolve_ok):
     call.
     """
     resolve_ok("MagnusC")
-    _post_account(client, "lichess", {"api_token": "lip_a"})
+    _post_account(client, "lichess", {"api_token": "lip_a", "host": "org"})
     ok = client.post("/api/accounts/lichess/org:magnusc/delete")
     assert ok.status_code == 200
     assert json.loads(client.get("/api/accounts").data)["accounts"] == []
@@ -238,7 +238,7 @@ def test_delete_account_accepts_percent_encoded_colon(client, config_files, reso
     section still exists.
     """
     resolve_ok("MagnusC")
-    _post_account(client, "lichess", {"api_token": "lip_a"})
+    _post_account(client, "lichess", {"api_token": "lip_a", "host": "org"})
     ok = client.post("/api/accounts/lichess/org%3Amagnusc/delete")
     assert ok.status_code == 200, ok.data
     assert json.loads(client.get("/api/accounts").data)["accounts"] == []
@@ -265,7 +265,7 @@ def test_get_all_settings_redacts_account_token(client, config_files, resolve_ok
     A regression shows the cleartext token in the settings payload.
     """
     resolve_ok("MagnusC")
-    _post_account(client, "lichess", {"api_token": "lip_secret", "range": "1000-1600"})
+    _post_account(client, "lichess", {"api_token": "lip_secret", "range": "1000-1600", "host": "org"})
     settings = json.loads(client.get("/api/settings").data)
     section = settings["account:lichess:org:magnusc"]
     assert section["api_token"] == ""

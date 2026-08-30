@@ -259,7 +259,6 @@ class LichessPlaySession:
         """Put 'Waiting for game' back after show_menu cleared the panel."""
         if self.game_connected or self._panel is None:
             return
-        from .hosts import DEFAULT_HOST_ID
         from .lobby import show_lichess_waiting_splash
         from .match import LichessSeek
 
@@ -273,7 +272,7 @@ class LichessPlaySession:
                 cfg.rating_range or getattr(self._remote, "_account_range", "") or ""
             ),
             account_id=str(cfg.account_id or ""),
-            host_id=getattr(self._remote, "_host_id", None) or DEFAULT_HOST_ID,
+            host_id=getattr(self._remote, "_host_id", "") or "",
         )
         show_lichess_waiting_splash(
             self._panel,

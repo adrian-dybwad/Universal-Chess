@@ -118,6 +118,23 @@ def test_waiting_message_omits_empty_rating_range():
     assert "-" not in message.split("lichess.org:alice")[-1]
 
 
+def test_waiting_message_default_names_the_credentials_host_not_org():
+    """Default (empty account id) must not print lichess.org.
+
+    Why: parse_credential_id("") used to be org, so the wait splash named
+    lichess.org while the only saved token was on lichess.dev.
+
+    How the regression manifests: the copy contains lichess.org, or omits
+    lichess.dev, when seek.host_id is dev and account_id is empty.
+    """
+    message = lichess_waiting_message(
+        LichessGameMode.NEW,
+        seek=_seek(account_id="", host_id="dev"),
+    )
+    assert "lichess.dev" in message
+    assert "lichess.org" not in message
+
+
 def test_waiting_message_join_does_not_show_dummy_clock():
     """Ongoing/challenge join uses a dummy 10+5 locally; the splash must not.
 

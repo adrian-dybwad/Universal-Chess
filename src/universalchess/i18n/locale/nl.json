@@ -257,6 +257,7 @@
   "accounts.default_account": "Standaardaccount",
   "accounts.unknown_host": "Onbekende Lichess-host {host}",
   "accounts.token_required": "API-token is vereist",
+  "accounts.host_required": "Lichess-server is vereist",
   "accounts.cannot_verify_type": "Kan dit accounttype niet verifiëren",
   "accounts.could_not_verify": "Kon account niet verifiëren",
   "accounts.identifier_required": "Account-ID is vereist",

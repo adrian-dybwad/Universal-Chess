@@ -2931,7 +2931,7 @@ def _account_resolver(type_id):
         return lambda fields: resolve_lichess_identity(
             fields.get("api_token", ""),
             log=None,
-            host_id=fields.get("host") or "org",
+            host_id=fields.get("host") or "",
         )
     return None
 

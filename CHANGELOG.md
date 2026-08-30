@@ -1250,6 +1250,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Default Lichess play named lichess.org when the only saved token was on lichess.dev**:
+  Empty lobby account (Default) was parsed as host org, so the wait splash
+  and the seek object said lichess.org even though the stored credential
+  carried ``host=dev``. Host now comes from that credential. Adding a token
+  without a host is rejected instead of assuming org.
+
 - **Leaving a correspondence game aborted or resigned it on Lichess**:
   BACK after connect offered Abort first, and starting a new seek or a
   board-reset called ``leave_remote_game``, which always aborted, then

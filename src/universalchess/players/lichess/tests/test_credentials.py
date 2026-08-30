@@ -61,7 +61,7 @@ def test_add_lichess_credential_keys_by_host_and_user(config_files):
     and org/dev collide.
     """
     result = add_lichess_credential(
-        {"api_token": "lip_org", "range": "800-1200"},
+        {"api_token": "lip_org", "host": HOST_ORG, "range": "800-1200"},
         resolver=_resolver("Alice"),
     )
     assert result.error is None
@@ -228,4 +228,21 @@ def test_unknown_host_is_rejected(config_files):
         resolver=_resolver("Alice"),
     )
     assert result.error == "unknown_host"
+    assert list_lichess_credentials() == []
+
+
+def test_add_without_host_is_rejected(config_files):
+    """Add must not assume lichess.org when host is omitted.
+
+    Why: host is stored with the credential and chosen in the Server picker.
+    Filling org sent a .dev token (or labelled Default as org) when the
+    caller did not name a server.
+
+    How the regression manifests: a section is written as org:alice.
+    """
+    result = add_lichess_credential(
+        {"api_token": "lip"},
+        resolver=_resolver("Alice"),
+    )
+    assert result.error == "missing_field"
     assert list_lichess_credentials() == []

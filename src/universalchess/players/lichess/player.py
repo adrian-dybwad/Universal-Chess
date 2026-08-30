@@ -262,6 +262,7 @@ class LichessPlayer(Player):
         # Rating range resolved from the bound account (used for matchmaking when
         # the config does not override it).
         self._account_range: str = ''
+        self._host_id: str = ''
         
         # Game state
         self._game_id: Optional[str] = None
@@ -476,8 +477,8 @@ class LichessPlayer(Player):
             default_lichess_credential,
             get_lichess_credential,
             host_id_of,
+            legacy_lichess_host_id,
         )
-        from .hosts import DEFAULT_HOST_ID
 
         if self._lichess_config.account_id:
             account = get_lichess_credential(self._lichess_config.account_id)
@@ -486,14 +487,14 @@ class LichessPlayer(Player):
                     f"[LichessPlayer] Bound account '{self._lichess_config.account_id}' "
                     "not found"
                 )
-                self._host_id = DEFAULT_HOST_ID
+                self._host_id = ""
                 return "", ""
         else:
             account = default_lichess_credential()
         if account is not None:
             self._host_id = host_id_of(account)
             return account.get("api_token", ""), account.get("range", "")
-        self._host_id = DEFAULT_HOST_ID
+        self._host_id = legacy_lichess_host_id()
         return centaur.get_lichess_api(), ""
 
     def start(self) -> bool:
@@ -526,7 +527,7 @@ class LichessPlayer(Player):
             # the None it just wrote and fail the start as an API error rather
             # than the cancel it is.
             connection = create_lichess_connection(
-                self._token, host_id=getattr(self, "_host_id", "org")
+                self._token, host_id=self._host_id
             )
             self._connection = connection
             self._client = connection.client

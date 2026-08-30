@@ -49,17 +49,23 @@ def _lichess_permission_panel_message(error_msg: str, fallback: str) -> Optional
     return None
 
 
-def get_lichess_connection(token, log, host_id: str = "org"):
+def get_lichess_connection(token, log, host_id: str):
     """Authenticate a stored token for a lobby view, with error classification.
 
     Returns ``(connection, username, error)``. The connection owns an HTTP
     session and its pooled socket, so the caller closes it when the view it
     feeds is done. A failure closes it here and returns None in its place, so no
-    caller has to unwind a connection it was never given.
+    caller has to unwind a connection it was never given. ``host_id`` is the
+    credential's stored host; it is not assumed to be org.
     """
+    from .hosts import HOST_BY_ID
+
     if not token or token == "tokenhere":  # noqa: S105 # nosec B105 - placeholder sentinel, not a secret
         log.warning("[Lichess] No valid API token configured")
         return None, None, "no_token"
+    if host_id not in HOST_BY_ID:
+        log.warning("[Lichess] No Lichess host on the stored credential")
+        return None, None, "unknown_host"
     connection = None
     try:
         from .match import create_lichess_connection
@@ -80,21 +86,28 @@ def get_lichess_connection(token, log, host_id: str = "org"):
     return None, None, error
 
 
-def resolve_lichess_identity(token, log=None, host_id: str = "org"):
+def resolve_lichess_identity(token, log=None, host_id: str = ""):
     """Authenticate an explicit Lichess token and return its account identity.
 
     Unlike :func:`get_lichess_connection`, which uses a stored token, this
     verifies a token supplied for a *new* credential (before it is saved) so
-    the plugin can key it as ``org:alice``. ``host_id`` selects which Lichess
-    server to ask. Returns a :class:`account_store.ResolvedIdentity`.
+    the plugin can key it as ``org:alice``. ``host_id`` is the server the
+    caller chose; it is not assumed to be org. Returns a
+    :class:`account_store.ResolvedIdentity`.
 
     The connection is closed on every path: this asks one question and keeps
     nothing, so holding its socket open past the answer serves no one.
     """
     from universalchess.services.account_store import ResolvedIdentity
+    from .hosts import HOST_BY_ID
 
     if not token or token == "tokenhere":  # noqa: S105 # nosec B105 - placeholder sentinel, not a secret
         return ResolvedIdentity(error="no_token", message=t("lichess.identity.no_token"))
+    if host_id not in HOST_BY_ID:
+        return ResolvedIdentity(
+            error="unknown_host",
+            message=t("accounts.unknown_host", host=host_id or ""),
+        )
     connection = None
     try:
         from .match import create_lichess_connection
@@ -541,7 +554,7 @@ def lichess_connection_from_settings(settings, log):
 
     player = LichessPlayer(LichessPlayerConfig(account_id=lichess_account_id(settings)))
     token, _range = player._resolve_account()
-    host_id = getattr(player, "_host_id", "org")
+    host_id = getattr(player, "_host_id", "")
     return get_lichess_connection(token, log, host_id=host_id)
 
 

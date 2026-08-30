@@ -4,17 +4,17 @@ Why these tests exist
 ---------------------
 A Lichess player chooses a credential listed as server:user. Org and .dev (and
 any later host) are rows on the plugin's host list, not a shared account type
-and not a game-level toggle. These tests pin that id shape and that an unknown
-host cannot be invented from a boolean.
+and not a game-level toggle. The host lives on the credential (and in a
+canonical ``org:alice`` id). An empty or unprefixed id does not mean org.
 
 How a regression manifests
 --------------------------
-``org:alice`` and ``dev:alice`` collapse to the same id; a bare ``alice`` is
-not treated as org; or lichess.dev is no longer in the host list.
+``org:alice`` and ``dev:alice`` collapse to the same id; an empty or bare id is
+parsed as org; or lichess.dev is no longer in the host list.
 """
 
+from universalchess.players.lichess import hosts as lichess_hosts
 from universalchess.players.lichess.hosts import (
-    DEFAULT_HOST_ID,
     HOST_DEV,
     HOST_ORG,
     LICHESS_HOSTS,
@@ -48,25 +48,41 @@ def test_credential_id_is_host_and_normalized_user():
     assert credential_id(HOST_ORG, "Alice") != credential_id(HOST_DEV, "Alice")
 
 
-def test_parse_credential_id_canonical_and_legacy_bare_username():
-    """Canonical ids split on the host prefix; a bare username is org.
+def test_there_is_no_default_host_id():
+    """The plugin must not name a fallback host.
 
-    Why: existing player.account=alice bindings must keep meaning org. Failure:
-    alice is parsed as an unknown host or as dev.
+    Why: Default (empty account id) used DEFAULT_HOST_ID=org, so a board whose
+    only token was lichess.dev still labelled and configured seeks as
+    lichess.org. Host is stored on the credential.
+
+    How the regression manifests: hosts.DEFAULT_HOST_ID exists.
+    """
+    assert not hasattr(lichess_hosts, "DEFAULT_HOST_ID")
+
+
+def test_parse_credential_id_canonical_and_unprefixed():
+    """Canonical ids split on the host prefix; an unprefixed id has no host.
+
+    Why: host is stored on the credential. Parsing ``alice`` or ``""`` as org
+    made Default and leftover bindings indicate lichess.org when the only
+    saved token was lichess.dev.
+
+    How the regression manifests: empty or bare ids return host org.
     """
     assert parse_credential_id("org:alice") == (HOST_ORG, "alice")
     assert parse_credential_id("dev:Bob") == (HOST_DEV, "bob")
-    assert parse_credential_id("alice") == (DEFAULT_HOST_ID, "alice")
-    assert parse_credential_id("") == (DEFAULT_HOST_ID, "")
+    assert parse_credential_id("alice") == ("", "alice")
+    assert parse_credential_id("") == ("", "")
 
 
-def test_parse_unknown_prefix_is_username_on_org():
+def test_parse_unknown_prefix_is_not_a_host():
     """A prefix that is not a shipped host is not treated as a host id.
 
     Why: inventing hosts from the id string would send tokens to a URL the
-    plugin does not implement. Failure: 'foo:alice' selects host foo.
+    plugin does not implement. Failure: 'foo:alice' selects host foo, or
+    is rewritten as org.
     """
-    assert parse_credential_id("foo:alice") == (DEFAULT_HOST_ID, "foo:alice")
+    assert parse_credential_id("foo:alice") == ("", "foo:alice")
 
 
 def test_get_host_rejects_unknown_id():

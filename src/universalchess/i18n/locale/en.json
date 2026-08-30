@@ -257,6 +257,7 @@
   "accounts.default_account": "Default account",
   "accounts.unknown_host": "Unknown Lichess host {host}",
   "accounts.token_required": "API Token is required",
+  "accounts.host_required": "Lichess server is required",
   "accounts.cannot_verify_type": "Cannot verify this account type",
   "accounts.could_not_verify": "Could not verify account",
   "accounts.identifier_required": "Account identifier is required",

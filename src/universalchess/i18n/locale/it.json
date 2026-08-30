@@ -257,6 +257,7 @@
   "accounts.default_account": "Account predefinito",
   "accounts.unknown_host": "Host Lichess sconosciuto {host}",
   "accounts.token_required": "Il token API è obbligatorio",
+  "accounts.host_required": "Il server Lichess è obbligatorio",
   "accounts.cannot_verify_type": "Impossibile verificare questo tipo di account",
   "accounts.could_not_verify": "Impossibile verificare l'account",
   "accounts.identifier_required": "Identificatore account obbligatorio",

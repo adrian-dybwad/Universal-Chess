@@ -257,6 +257,7 @@
   "accounts.default_account": "Compte par défaut",
   "accounts.unknown_host": "Serveur Lichess inconnu : {host}",
   "accounts.token_required": "Le jeton d'API est requis",
+  "accounts.host_required": "Le serveur Lichess est requis",
   "accounts.cannot_verify_type": "Ce type de compte ne peut pas être vérifié",
   "accounts.could_not_verify": "Impossible de vérifier le compte",
   "accounts.identifier_required": "L'identifiant du compte est requis",

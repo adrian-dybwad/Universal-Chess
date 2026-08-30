@@ -257,6 +257,7 @@
   "accounts.default_account": "Varsayılan hesap",
   "accounts.unknown_host": "Bilinmeyen Lichess sunucusu {host}",
   "accounts.token_required": "API token gerekli",
+  "accounts.host_required": "Lichess sunucusu gerekli",
   "accounts.cannot_verify_type": "Bu hesap türü doğrulanamaz",
   "accounts.could_not_verify": "Hesap doğrulanamadı",
   "accounts.identifier_required": "Hesap kimliği gerekli",

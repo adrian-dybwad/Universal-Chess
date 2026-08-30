@@ -66,7 +66,7 @@ def test_resolves_username_for_valid_token(fake_berserk):
     This is the success path the Add Account flow relies on to key the account.
     A regression manifests as a missing identity or a spurious error code.
     """
-    result = resolve_lichess_identity("lip_valid")
+    result = resolve_lichess_identity("lip_valid", host_id="org")
     assert result.error is None
     assert result.identity == "MagnusC"
 
@@ -81,6 +81,19 @@ def test_placeholder_and_empty_token_return_no_token(fake_berserk):
     assert resolve_lichess_identity("tokenhere").error == "no_token"
 
 
+def test_resolve_does_not_assume_org_when_host_is_omitted(fake_berserk):
+    """A token without a host must not authenticate against lichess.org.
+
+    Why: host is stored with the credential. Defaulting the resolver to org
+    sent a .dev token to the wrong server.
+
+    How the regression manifests: a session is opened, or error is None.
+    """
+    result = resolve_lichess_identity("lip_valid", host_id="")
+    assert result.error == "unknown_host"
+    assert fake_berserk["sessions"] == []
+
+
 def test_empty_username_is_auth_failed(fake_berserk):
     """A response with no username must be classified as auth_failed.
 
@@ -88,7 +101,7 @@ def test_empty_username_is_auth_failed(fake_berserk):
     the flow must reject it rather than store a blank identity.
     """
     fake_berserk["username"] = ""
-    result = resolve_lichess_identity("lip_valid")
+    result = resolve_lichess_identity("lip_valid", host_id="org")
     assert result.error == "auth_failed"
     assert result.identity == ""
 
@@ -109,7 +122,7 @@ def test_identity_resolution_closes_its_http_session(fake_berserk, raises, expec
     """
     fake_berserk["raises"] = raises
 
-    result = resolve_lichess_identity("lip_valid")
+    result = resolve_lichess_identity("lip_valid", host_id="org")
 
     assert result.error == expected_error
     assert [session.closed for session in fake_berserk["sessions"]] == [True]
@@ -126,7 +139,9 @@ def test_a_failed_lobby_sign_in_closes_the_session_it_opened(fake_berserk):
     """
     fake_berserk["raises"] = RuntimeError("boom")
 
-    connection, username, error = get_lichess_connection("lip_valid", MagicMock())
+    connection, username, error = get_lichess_connection(
+        "lip_valid", MagicMock(), host_id="org"
+    )
 
     assert (connection, username, error) == (None, None, "network")
     assert [session.closed for session in fake_berserk["sessions"]] == [True]
@@ -139,7 +154,9 @@ def test_a_successful_lobby_sign_in_hands_over_an_open_connection(fake_berserk):
     query through this client after it is returned. A regression manifests as a
     closed session, and on the board as lobby lists that cannot load.
     """
-    connection, username, error = get_lichess_connection("lip_valid", MagicMock())
+    connection, username, error = get_lichess_connection(
+        "lip_valid", MagicMock(), host_id="org"
+    )
 
     assert (username, error) == ("MagnusC", None)
     assert connection is not None
@@ -157,5 +174,5 @@ def test_network_exception_is_auth_failed(fake_berserk):
     or a wrong code.
     """
     fake_berserk["raises"] = RuntimeError("boom")
-    result = resolve_lichess_identity("lip_valid")
+    result = resolve_lichess_identity("lip_valid", host_id="org")
     assert result.error == "auth_failed"

@@ -78,7 +78,7 @@ def test_seek_blitz_5_3_takes_the_game_clock():
     settings, rng = _settings(
         _player(type="human", color="white"),
         _player(type="lichess"),
-        _game(time_control_preset="blitz_5_3", lichess_account="alice"),
+        _game(time_control_preset="blitz_5_3", lichess_account="org:alice"),
         rating_range="1000-1600",
     )
     seek = lichess_seek_from_settings(settings, rating_range=rng)
@@ -87,7 +87,7 @@ def test_seek_blitz_5_3_takes_the_game_clock():
     assert seek.color == "black"
     assert seek.rated is False
     assert seek.rating_range == "1000-1600"
-    assert seek.account_id == "alice"
+    assert seek.account_id == "org:alice"
     assert seek.account_type == ACCOUNT_TYPE_LICHESS
     assert seek.host_id == "org"
     assert seek.use_dev is False
@@ -183,10 +183,10 @@ def test_seek_clock_when_lichess_is_player_one():
     settings, rng = _settings(
         _player(type="lichess", color="white"),
         _player(type="human"),
-        _game(time_control_preset="rapid_10_5", lichess_account="bob"),
+        _game(time_control_preset="rapid_10_5", lichess_account="org:bob"),
     )
     seek = lichess_seek_from_settings(settings, rating_range=rng)
-    assert seek.account_id == "bob"
+    assert seek.account_id == "org:bob"
     assert seek.time_minutes == 10
     assert seek.increment_seconds == 5
     assert seek.color == "white"
@@ -330,7 +330,42 @@ def test_an_unset_lobby_account_seeks_with_the_default_credential():
     seek = lichess_seek_from_settings(settings, rating_range=rng)
 
     assert seek.account_id == ""
-    assert seek.host_id == "org"
+    assert seek.host_id == ""
+
+
+def test_default_uses_the_only_saved_credentials_host(tmp_path, monkeypatch):
+    """Default (empty lobby account) must use the stored credential's host.
+
+    Why: empty account id was parsed as org, so a board whose only token was
+    lichess.dev still built a seek for lichess.org and the wait splash named
+    that server.
+
+    How the regression manifests: host_id is org, or empty, while the only
+    stored credential is dev:bob.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.players.lichess.accounts import add_lichess_credential
+    from universalchess.services.account_store import ResolvedIdentity
+
+    cfg = tmp_path / "centaur.ini"
+    defcfg = tmp_path / "defaults.ini"
+    defcfg.write_text("")
+    monkeypatch.setattr(Settings, "configfile", str(cfg))
+    monkeypatch.setattr(Settings, "defconfigfile", str(defcfg))
+    add_lichess_credential(
+        {"api_token": "lip_dev", "host": "dev"},
+        resolver=lambda fields: ResolvedIdentity(identity="Bob"),
+    )
+
+    settings, rng = _settings(
+        _player(type="human", color="white"),
+        _player(type="lichess"),
+        _game(lichess_account=""),
+    )
+    seek = lichess_seek_from_settings(settings, rating_range=rng)
+    assert seek.account_id == ""
+    assert seek.host_id == "dev"
+    assert seek.use_dev is True
 
 
 @pytest.mark.parametrize(

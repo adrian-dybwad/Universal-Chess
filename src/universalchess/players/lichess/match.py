@@ -13,7 +13,7 @@ from universalchess.i18n import t
 from universalchess.state.time_control import DelayMode, build_time_control
 from .hosts import (
     ACCOUNT_TYPE_LICHESS,
-    DEFAULT_HOST_ID,
+    HOST_BY_ID,
     HOST_DEV,
     get_host,
     parse_credential_id,
@@ -51,7 +51,7 @@ class LichessSeek:
     rated: bool
     rating_range: str
     account_id: str
-    host_id: str = DEFAULT_HOST_ID
+    host_id: str = ""
 
     @property
     def account_type(self) -> str:
@@ -163,15 +163,15 @@ def lichess_challenge_terms_label(offer: LichessChallengeOffer) -> str:
     return f"{line1}\n{line2}"
 
 
-def lichess_base_url(host_id: str = DEFAULT_HOST_ID) -> str:
+def lichess_base_url(host_id: str) -> str:
     """berserk ``base_url`` for a Lichess host id (``org`` / ``dev``)."""
     return get_host(host_id).base_url
 
 
-def create_lichess_connection(token: str, host_id: str = DEFAULT_HOST_ID):
+def create_lichess_connection(token: str, host_id: str):
     """berserk client for the credential's host, paired with its session.
 
-    ``base_url`` is required: the library defaults to lichess.org, which would
+    ``host_id`` is required: the library defaults to lichess.org, which would
     send a lichess.dev token (or an org token in reverse) to the wrong server.
 
     The session can abort its own streams, and is returned alongside the client
@@ -228,9 +228,9 @@ def lichess_waiting_message(mode, seek=None, *, awaiting_opponent: bool = False)
     host_id, username = parse_credential_id(seek.account_id)
     if not username:
         host_id = seek.host_id
-    if username:
+    if username and host_id in HOST_BY_ID:
         lines.append(credential_label(host_id, username))
-    else:
+    elif host_id in HOST_BY_ID:
         lines.append(get_host(host_id).label)
     if include_clock and seek.rating_range:
         lines.append(seek.rating_range)
@@ -394,7 +394,16 @@ def lichess_seek_from_settings(
         minutes, increment = 10, 5
     color = seek_color_from_settings(settings.player1, settings.player2)
     account_id = lichess_account_id(settings)
-    host_id, _username = parse_credential_id(account_id)
+    from .accounts import default_lichess_credential, get_lichess_credential, host_id_of
+
+    if account_id:
+        account = get_lichess_credential(account_id)
+    else:
+        account = default_lichess_credential()
+    if account is not None:
+        host_id = host_id_of(account)
+    else:
+        host_id, _username = parse_credential_id(account_id)
     return LichessSeek(
         time_minutes=minutes,
         increment_seconds=increment,

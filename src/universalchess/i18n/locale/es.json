@@ -257,6 +257,7 @@
   "accounts.default_account": "Cuenta predeterminada",
   "accounts.unknown_host": "Servidor de Lichess desconocido: {host}",
   "accounts.token_required": "Hace falta el token de API",
+  "accounts.host_required": "Hace falta el servidor de Lichess",
   "accounts.cannot_verify_type": "No se puede verificar este tipo de cuenta",
   "accounts.could_not_verify": "No se pudo verificar la cuenta",
   "accounts.identifier_required": "Hace falta el identificador de la cuenta",
