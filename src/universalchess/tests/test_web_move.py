@@ -193,6 +193,43 @@ def test_on_pending_move_waits_when_web_mode_disarmed(gm, monkeypatch):
     assert executed == []
 
 
+def test_on_pending_move_enters_correction_when_physical_board_mismatches(gm, monkeypatch):
+    """A Lichess/engine ply must not overwrite an already-wrong physical board.
+
+    Why: from-to LEDs replaced correction guidance, the user transcribed the
+    indicated ply, and correction then compared to the pre-move position so
+    it asked them to undo that ply instead of the piece that was out of place.
+    How a regression manifests: led.from_to is called (the pending indication)
+    and correction_mode stays inactive.
+    """
+    empty = bytearray(64)
+    monkeypatch.setattr(
+        "universalchess.managers.game.game_manager.board.getChessState",
+        lambda: empty,
+    )
+    from_to_calls = []
+    gm.set_led_callbacks(
+        LedCallbacks(
+            from_to=lambda *a, **k: from_to_calls.append((a, k)),
+            array=lambda *a, **k: None,
+            single=lambda *a, **k: None,
+            off=lambda *a, **k: None,
+            from_to_hint=lambda *a, **k: None,
+            array_hint=lambda *a, **k: None,
+            array_fast=lambda *a, **k: None,
+            from_to_fast=lambda *a, **k: None,
+            single_fast=lambda *a, **k: None,
+        )
+    )
+    gm._web_move_mode = False
+
+    gm._on_pending_move(chess.Move.from_uci("e7e5"))
+
+    assert gm.correction_mode.is_active is True
+    assert from_to_calls == []
+    assert gm.move_state.is_forced_move is True
+
+
 def test_post_move_validation_skipped_while_web_mode_armed(gm, monkeypatch):
     """Physical-board validation must be skipped for web moves, run otherwise.
 

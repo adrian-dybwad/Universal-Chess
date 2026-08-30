@@ -1331,12 +1331,14 @@ class GameManager:
     
     def _on_pending_move(self, move: chess.Move) -> None:
         """Handle pending move from engine/Lichess player.
-        
+
         Called when a non-human player has computed/received a move
         that needs to be executed on the physical board.
-        Sets up the forced move state and lights up the from/to squares as a guide.
+        Sets up the forced move state and lights up the from/to squares as a
+        guide, unless the physical board already mismatches -- then correction
+        stays up and from-to is restored when it exits.
         Also broadcasts the pending move to the web interface.
-        
+
         Args:
             move: The pending move to display.
         """
@@ -1362,7 +1364,33 @@ class GameManager:
         set_pending_move(move.uci())
         # Trigger a position update to send the pending move to clients
         self._game_state.notify_position_change()
-        
+
+        # A piece already out of place must stay in correction. Lighting from-to
+        # here overwrites that guidance, the user transcribes this ply, and
+        # correction then compares to the pre-move board so it asks them to
+        # undo the correctly moved piece. Unreadable occupancy (no controller
+        # in tests, a failed poll) must not swallow the pending indication.
+        try:
+            physical = board.getChessState()
+        except AttributeError:
+            # Tests (and a board with no controller) have no bus; occupancy is
+            # unreadable, so the pending from-to indication must still paint.
+            physical = None
+        expected = self._chess_board_to_state(self.chess_board)
+        if (
+            physical is not None
+            and expected is not None
+            and not ChessGameState.states_match(physical, expected)
+        ):
+            log.warning(
+                "[GameManager._on_pending_move] Physical board does not match; "
+                "holding pending LEDs until the position is corrected"
+            )
+            if not self.correction_mode.is_active:
+                self._enter_correction_mode()
+            self._provide_correction_guidance(physical, expected)
+            return
+
         try:
             log.debug(f"[GameManager._on_pending_move] Calling ledFromTo({move.from_square}, {move.to_square})")
             self.led.from_to(move.from_square, move.to_square, repeat=0)

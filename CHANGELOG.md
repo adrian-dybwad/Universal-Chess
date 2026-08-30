@@ -1328,6 +1328,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   started now come from the same packet: remaining snaps, and the move
   list names the side that ticks immediately.
 
+- **An opponent piece moved out of place during a Lichess wait did not
+  enter correction**: That colour is to move, so lifting their piece
+  looks like a legal start, and occupancy that matched a legal layout
+  (a pawn nudged e7-e5) was accepted as a local ply. When the server
+  later sent a move, from-to LEDs replaced any remaining mismatch; playing
+  that ply left correction comparing to the pre-move board, which asked
+  to put the correctly moved piece back and never pointed at the piece
+  that was actually out of place. Waiting for engine or Lichess now
+  enters correction on a mismatched PLACE, a pending ply holds its LEDs
+  until the board matches, and transcribing the indicated ply while
+  another piece is still wrong applies that ply so remaining guidance
+  follows the new position.
+
 - **Lichess player labels were reversed or missing**: gameFull usernames
   were applied to the clock and LiveBoard, then slot remap overwrote them
   with Human vs the local Lichess account, so the opponent sat on the
