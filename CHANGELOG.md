@@ -1524,6 +1524,21 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   only that). Centaur's Skill Level setoption is still dropped on the way to
   engines that do not advertise it.
 
+- **Sliding a knight along its L was rejected at the legal destination**:
+  reed-switch boards emit PLACE on every empty square a piece rests on. A
+  knight moved forward two then one to the side therefore PLACes on the
+  orthogonal intermediates of the L, which are never legal knight
+  destinations. That PLACE was formed as an illegal move, correction mode
+  compared occupancy only to the pre-move position, and the legal final
+  layout (knight on the L square) was held as a mismatch. Occupancy that
+  uniquely matches a legal resulting position is now accepted as that
+  move, including from correction mode, whether the PLACE named the
+  destination or a path square. The same recovery covers slider detours
+  off the attack ray. Sixteen knight L-path geometries (eight directions,
+  two orthogonal orders) are covered. A piece that settles on a legal
+  intermediate along a slider's ray is still the short move. Parking on
+  a square that is not a legal layout still enters correction.
+
 - **A PLACE with no lift put the board into correction mode**: the Centaur
   sometimes reports a PLACE with no preceding LIFT -- a reed bounce after the
   piece is already seated, a trailing duplicate after occupancy already accepted

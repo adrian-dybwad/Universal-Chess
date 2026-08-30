@@ -17,6 +17,88 @@ from universalchess.state.chess_game import ChessGameState
 from universalchess.utils.led import LedCallbacks
 
 from .move_state import INVALID_SQUARE
+from universalchess.players.base import PlayerType
+
+
+def find_legal_move_matching_occupancy(
+    board: chess.Board,
+    physical_state,
+    chess_board_to_state_fn: Callable[[chess.Board], Optional[bytearray]],
+    *,
+    from_square: Optional[int] = None,
+    prefer_to_square: Optional[int] = None,
+) -> Optional[chess.Move]:
+    """Return the unique legal move whose resulting occupancy matches ``physical_state``.
+
+    Presence-only boards cannot distinguish promotions of the same from-to: all
+    four share one occupancy, so a match is returned *without* a promotion piece
+    and the chooser in ``on_player_move`` decides. Distinct from-to pairs have
+    distinct occupancy (quiet vs capture vs en passant vs castling), so a unique
+    match is the move that produced the layout.
+
+    ``prefer_to_square`` selects among matches when more than one from-to
+    compares equal (sensor ghosts). It does not reject a unique match whose
+    destination differs from the PLACE square: a knight slid along an L emits
+    PLACE on intermediates that are never legal destinations, while occupancy
+    already (or finally) shows the L destination.
+
+    Returns None when occupancy matches no legal move, or when two from-to
+    pairs match and ``prefer_to_square`` does not name exactly one of them.
+    """
+    if physical_state is None:
+        return None
+    if from_square is not None and from_square == INVALID_SQUARE:
+        from_square = None
+
+    matches: dict[tuple[int, int], chess.Move] = {}
+    for move in board.legal_moves:
+        if from_square is not None and move.from_square != from_square:
+            continue
+        key = (move.from_square, move.to_square)
+        if key in matches:
+            continue
+        after = board.copy(stack=False)
+        after.push(move)
+        expected = chess_board_to_state_fn(after)
+        if expected is not None and ChessGameState.states_match(physical_state, expected):
+            matches[key] = move
+
+    if not matches:
+        return None
+
+    chosen: Optional[chess.Move] = None
+    if prefer_to_square is not None:
+        preferred = [move for (_, to_sq), move in matches.items() if to_sq == prefer_to_square]
+        if len(preferred) == 1:
+            chosen = preferred[0]
+        elif len(preferred) > 1:
+            return None
+    if chosen is None:
+        if len(matches) != 1:
+            return None
+        chosen = next(iter(matches.values()))
+
+    if chosen.promotion is not None:
+        return chess.Move(chosen.from_square, chosen.to_square)
+    return chosen
+
+
+def _side_to_move_forms_own_moves(ctx: FieldEventContext) -> bool:
+    """True when occupancy of a legal resulting position is this side's own ply.
+
+    Engine and remote (Lichess) turns wait for a server or engine move.
+    Occupancy that happens to match a legal layout is not that ply -- it is a
+    displaced piece. Stubs without ``get_current_player`` keep the occupancy
+    shortcut so human-style tests stay unchanged.
+    """
+    getter = getattr(ctx.player_manager, "get_current_player", None)
+    if getter is None:
+        return True
+    player = getter(ctx.chess_board)
+    ptype = getattr(player, "player_type", None)
+    if ptype is None:
+        return True
+    return ptype == PlayerType.HUMAN
 
 
 @dataclass(frozen=True)
@@ -243,14 +325,10 @@ def process_field_event(
     def _try_execute_normal_move_from_physical_state(*, placed_square: int) -> bool:
         """Attempt to execute a normal (non-pending) move based on physical board state.
 
-        This is the normal-move analogue of the pending-move "post-state match" shortcut.
-        It exists to make move acceptance robust against noisy event sequences:
-        if the physical board matches the expected state after a legal move from the lifted
-        source square, accept the move even if other pieces were bumped and replaced.
-        
-        IMPORTANT: Moves to the placed_square are checked first to avoid ambiguity
-        when piece presence alone cannot distinguish between moves (e.g., g5f7 vs g5h7
-        when both result in the same presence pattern due to sensor timing).
+        Occupancy of a unique legal resulting position from the lifted source is
+        accepted even when ``placed_square`` is a path square rather than the
+        destination (knight L-slides, slider detours). ``placed_square`` is only
+        used to break a tie when two from-to pairs match the same occupancy.
         """
         source_square = getattr(ctx.move_state, "source_square", INVALID_SQUARE)
         if source_square == INVALID_SQUARE:
@@ -268,59 +346,32 @@ def process_field_event(
                 ctx.move_state.source_square = INVALID_SQUARE
             return False
 
-        candidate_moves = [m for m in ctx.chess_board.legal_moves if m.from_square == source_square]
-        
-        # Prioritize moves to the placed_square - this is the most likely intended move.
-        # Sort so moves to placed_square come first, then others.
-        candidate_moves.sort(key=lambda m: (0 if m.to_square == placed_square else 1))
-        
-        # Only consider moves to the placed_square - this is the destination the user chose.
-        # This prevents selecting a wrong move that happens to match the board state by coincidence
-        # (e.g., g5h7 selected when user placed on f7, just because both result in similar presence patterns).
-        move_to_placed = chess.Move(source_square, placed_square)
-        
-        # Check if there's a legal move to the placed square (with any promotion)
-        candidate = None
-        for move in candidate_moves:
-            if move.to_square == placed_square:
-                candidate = move
-                break
-        
-        if candidate is None:
+        # Occupancy of a unique legal resulting position is the board layout, not
+        # the PLACE square. Knights slid along an L PLACE on intermediates that
+        # are never legal destinations; requiring placed_square to be the dest
+        # rejected those layouts even when occupancy already matched the L move.
+        # prefer_to_square still wins when two from-to pairs match (sensor
+        # ghosts); a unique match whose dest differs from the PLACE is accepted.
+        submitted_move = find_legal_move_matching_occupancy(
+            ctx.chess_board,
+            current_physical_state,
+            ctx.chess_board_to_state_fn,
+            from_square=source_square,
+            prefer_to_square=placed_square,
+        )
+        if submitted_move is None:
             return False
-        
-        expected_board_after = ctx.chess_board.copy()
-        expected_board_after.push(candidate)
-        expected_state_after = ctx.chess_board_to_state_fn(expected_board_after)
-        if expected_state_after is None:
-            return False
-        
-        if ChessGameState.states_match(current_physical_state, expected_state_after):
-            # Presence sensing cannot tell which piece a promotion produced: all
-            # four promotions of source->placed yield the same occupancy, so
-            # `candidate` is merely whichever `legal_moves` listed first (the
-            # queen). Committing it would silently auto-queen and skip the piece
-            # chooser. Submit the move WITHOUT a promotion piece so
-            # on_player_move's check_and_handle_promotion -- the single place that
-            # asks the user which piece to promote to -- runs. Non-promotion moves
-            # are unaffected (candidate.promotion is None, submitted unchanged).
-            submitted_move = (
-                chess.Move(candidate.from_square, candidate.to_square)
-                if candidate.promotion is not None
-                else candidate
-            )
-            log.info(
-                f"[GameManager.receive_field] Physical board matches expected state after {candidate.uci()} - "
-                f"accepting normal move {submitted_move.uci()} directly"
-            )
-            accepted = bool(ctx.on_player_move_fn(submitted_move))
-            # Defensive: clear the source square on acceptance so subsequent PLACE events
-            # during a noisy sequence don't attempt to "re-accept" the same move.
-            if accepted:
-                ctx.move_state.source_square = INVALID_SQUARE
-            return accepted
 
-        return False
+        log.info(
+            f"[GameManager.receive_field] Physical board matches expected state after {submitted_move.uci()} - "
+            f"accepting normal move {submitted_move.uci()} directly"
+        )
+        accepted = bool(ctx.on_player_move_fn(submitted_move))
+        # Defensive: clear the source square on acceptance so subsequent PLACE events
+        # during a noisy sequence don't attempt to "re-accept" the same move.
+        if accepted:
+            ctx.move_state.source_square = INVALID_SQUARE
+        return accepted
 
     # When a resign menu is active (kings-in-center or king-lift), check for:
     # 1. Board corrected (pieces returned to position) → cancel menu
@@ -369,6 +420,16 @@ def process_field_event(
 
     # Handle correction mode - piece events help correct the board
     if ctx.correction_mode.is_active:
+        # Track the pending source (and capture square) even while correcting.
+        # Those flags live below the correction early-return in the normal path,
+        # so a Lichess ply transcribed during correction never set them and the
+        # PLACE was treated as a remaining pre-move mismatch.
+        if pending_move is not None and is_lift:
+            if field == pending_move.from_square:
+                ctx.move_state.pending_move_source_lifted = pending_move.from_square
+            if is_pending_capture and pending_capture_square is not None and field == pending_capture_square:
+                ctx.move_state.record_capture_square_event(pending_capture_square)
+
         # IMPORTANT: Even while correction mode is active, allow the forced/pending move
         # to be executed if the physical board already matches the expected post-move state.
         #
@@ -394,6 +455,58 @@ def process_field_event(
                     )
                     ctx.execute_pending_move_fn(pending_move)
                     return
+
+            # The indicated ply was transcribed but another piece is still
+            # out of place, so occupancy is not the post-move layout.
+            # Apply the pending ply anyway: remaining guidance must be against
+            # the new position (the leftover piece), not "put this one back".
+            if (
+                field == pending_move.to_square
+                and ctx.move_state.pending_move_source_lifted == pending_move.from_square
+            ):
+                    log.info(
+                        f"[GameManager.receive_field] (correction_mode) Pending move "
+                        f"{pending_move.uci()} transcribed with remaining occupancy mismatch - "
+                        "executing pending move so correction follows the new position"
+                    )
+                    ctx.execute_pending_move_fn(pending_move)
+                    current_state = ctx.board_module.getChessState()
+                    expected_state = ctx.chess_board_to_state_fn(ctx.chess_board)
+                    if (
+                        current_state is not None
+                        and expected_state is not None
+                        and not ChessGameState.states_match(current_state, expected_state)
+                    ):
+                        ctx.enter_correction_mode_fn()
+                        ctx.provide_correction_guidance_fn(current_state, expected_state)
+                    return
+
+        # Human (and any non-pending) move: occupancy that uniquely matches a
+        # legal resulting position is a completed move, even if this PLACE is
+        # on a path square that is not a legal destination. Pending moves are
+        # excluded so an engine/Lichess destination is not replaced by a
+        # different legal occupancy. Exit correction here rather than via
+        # GameManager._exit_correction_mode: that helper re-prompts the side
+        # to move, and execute_complete_move already switched the turn.
+        if pending_move is None and piece_event == 1:
+            source_square = getattr(ctx.move_state, "source_square", INVALID_SQUARE)
+            submitted_move = find_legal_move_matching_occupancy(
+                ctx.chess_board,
+                ctx.board_module.getChessState(),
+                ctx.chess_board_to_state_fn,
+                from_square=source_square if source_square != INVALID_SQUARE else None,
+                prefer_to_square=field,
+            )
+            if submitted_move is not None:
+                log.info(
+                    f"[GameManager.receive_field] (correction_mode) Physical board matches expected state "
+                    f"after {submitted_move.uci()} - accepting legal occupancy as the move"
+                )
+                accepted = bool(ctx.on_player_move_fn(submitted_move))
+                if accepted:
+                    ctx.correction_mode.exit()
+                    ctx.move_state.source_square = INVALID_SQUARE
+                return
 
         ctx.handle_field_event_in_correction_mode_fn(piece_event, field, time_in_seconds)
         return
@@ -475,6 +588,30 @@ def process_field_event(
             "matches logical position and no move is in progress - ignoring"
         )
         return
+
+    # Waiting for engine/Lichess: occupancy of a legal layout is not that ply.
+    # Accepting it locally desyncs from the server, and the later indicated
+    # move then lights from-to over the mismatch so correction asks to undo the
+    # transcribed ply instead of the piece that was out of place.
+    if pending_move is None and not is_lift and not _side_to_move_forms_own_moves(ctx):
+        expected_state = ctx.chess_board_to_state_fn(ctx.chess_board)
+        physical_state = ctx.board_module.getChessState()
+        if expected_state is not None and physical_state is not None:
+            try:
+                physical_len = len(physical_state)
+            except TypeError:
+                physical_len = 0
+            if physical_len == 64 and not ChessGameState.states_match(
+                physical_state, expected_state
+            ):
+                log.warning(
+                    "[GameManager.receive_field] Physical board does not match while "
+                    "waiting for a remote/engine move - entering correction mode"
+                )
+                ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
+                ctx.enter_correction_mode_fn()
+                ctx.provide_correction_guidance_fn(physical_state, expected_state)
+                return
 
     # BOARD STATE VALIDATION FOR NORMAL MOVES (must happen BEFORE forwarding to player)
     if pending_move is None and not is_lift:
@@ -603,6 +740,10 @@ def process_field_event(
     # to ensure it works even during correction mode or Hand+Brain mode.
 
 
-__all__ = ["FieldEventContext", "process_field_event"]
+__all__ = [
+    "FieldEventContext",
+    "find_legal_move_matching_occupancy",
+    "process_field_event",
+]
 
 
