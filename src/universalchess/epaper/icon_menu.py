@@ -104,6 +104,11 @@ class IconMenuWidget(Widget):
     
     Displays a vertical list of icon buttons with keyboard navigation.
     Supports UP/DOWN for navigation, TICK for selection, BACK for cancel.
+
+    ``refresh_priority`` is True so an in-game overlay (Confirm Move, takeback,
+    draw) still paints highlight changes while a timed clock has put the panel
+    in clock-driven refresh. show_menu tears the clock widget down; without this
+    flag the selection redraw waits for a tick that never comes.
     
     When there are more entries than can fit on screen (based on min_button_height),
     the menu becomes scrollable. Navigation automatically scrolls to keep the
@@ -118,7 +123,9 @@ class IconMenuWidget(Widget):
         selected_index: Currently highlighted entry index
         scroll_offset: Index of first visible entry (for scrolling)
     """
-    
+
+    refresh_priority = True
+
     def __init__(self, x: int, y: int, width: int, height: int, update_callback,
                  entries: List[IconMenuEntry],
                  selected_index: int = 0,

@@ -84,6 +84,21 @@ def test_set_selection_requests_immediate_update():
     )
 
 
+def test_icon_menu_is_refresh_priority():
+    """Menu highlight changes must flush even while a timed game defers to the clock.
+
+    Why: show_menu during a game tears the clock widget down. A still-counting
+    clock leaves the panel in clock-driven refresh, so routine updates only
+    mark dirty and wait for a tick that never comes -- UP/DOWN look dead.
+    Resign overlays pause the clock to exit that mode; MenuManager overlays
+    (Confirm Move, takeback, draw) did not. refresh_priority paints the
+    highlight without waiting for a tick. How a regression manifests: the
+    class flag is False, so in-game overlay arrows never appear on the panel.
+    """
+    menu = _make_menu(MagicMock(return_value=None))
+    assert menu.refresh_priority is True
+
+
 def test_no_update_when_selection_unchanged():
     """Re-selecting the current index must not trigger a refresh.
 

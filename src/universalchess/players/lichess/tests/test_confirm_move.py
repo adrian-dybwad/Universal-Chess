@@ -148,7 +148,45 @@ def test_session_confirm_submits_and_restores_the_board():
     assert keys == ["confirm", "cancel"]
     assert menu.show_menu.call_args.kwargs.get("initial_index") == 0
     display.show_game_widgets.assert_called_once()
+    display._pause_clock_for_menu.assert_called_once()
+    display._resume_clock_after_menu.assert_called_once()
     assert rewound == []
+
+
+def test_session_confirm_pauses_the_clock_before_the_overlay():
+    """A counting clock must pause before show_menu clears the clock widget.
+
+    Why: clock-driven refresh plus no clock widget leaves selection redraws
+    queued forever, so UP/DOWN look dead. How a regression manifests: pause is
+    never called, or it is called after show_menu (the overlay is already frozen).
+    """
+    remote = LichessPlayer()
+    session = LichessPlaySession.from_players(HumanPlayer(), remote)
+    display = MagicMock()
+    paused = []
+
+    def show_menu(*_args, **_kwargs):
+        paused.append(display._pause_clock_for_menu.call_count)
+        return MenuSelection.from_key("cancel")
+
+    menu = MagicMock()
+    menu.show_menu.side_effect = show_menu
+    session.attach(
+        player_manager=MagicMock(),
+        game_display=display,
+        panel=MagicMock(),
+        info_overlay=MagicMock(),
+        menu_manager=menu,
+        beep=lambda *_: None,
+        set_game_result=lambda *_: None,
+        splash_seconds=5.0,
+        show_started_splash=lambda *_: None,
+        rewind_to_move_count=lambda *_: None,
+    )
+    session._started_splash_held = False
+    session._confirm_correspondence_move(chess.Move.from_uci("e2e4"), 0)
+    assert paused == [1]
+    display._resume_clock_after_menu.assert_called_once()
 
 
 def test_session_cancel_rewinds_the_local_ply():

@@ -320,8 +320,7 @@ class LichessPlaySession:
             self._beep()
         entries = confirm_move_menu_entries()
         confirm_index = next(i for i, entry in enumerate(entries) if entry.key == "confirm")
-        result = self._menu_manager.show_menu(entries, initial_index=confirm_index)
-        self._restore_game_widgets()
+        result = self._show_game_overlay_menu(entries, initial_index=confirm_index)
         if hasattr(result, "key") and result.key == "confirm":
             return True
         if self._rewind_to_move_count is not None:
@@ -336,12 +335,11 @@ class LichessPlaySession:
             IconMenuEntry(key="accept", label=t("lichess.offer.accept_takeback"), icon_name="undo"),
             IconMenuEntry(key="decline", label=t("lichess.offer.decline"), icon_name="cancel"),
         ]
-        result = self._menu_manager.show_menu(entries)
+        result = self._show_game_overlay_menu(entries)
         if hasattr(result, "key") and result.key == "accept":
             accept_fn()
         else:
             decline_fn()
-        self._restore_game_widgets()
 
     def _on_draw_offer(self, accept_fn, decline_fn) -> None:
         log.info("[Lichess] Draw offer received")
@@ -351,12 +349,29 @@ class LichessPlaySession:
             IconMenuEntry(key="accept", label=t("lichess.offer.accept_draw"), icon_name="draw"),
             IconMenuEntry(key="decline", label=t("lichess.offer.decline"), icon_name="cancel"),
         ]
-        result = self._menu_manager.show_menu(entries)
+        result = self._show_game_overlay_menu(entries)
         if hasattr(result, "key") and result.key == "accept":
             accept_fn()
         else:
             decline_fn()
-        self._restore_game_widgets()
+
+    def _show_game_overlay_menu(self, entries, initial_index: int = 0):
+        """Show a MenuManager overlay during a game without freezing UP/DOWN.
+
+        ``show_menu`` clears the clock widget. A still-counting clock stays in
+        clock-driven refresh, so selection redraws wait for a tick that never
+        comes. Pause first (same as resign/draw on DisplayManager), restore the
+        board after, then resume. IconMenuWidget is also refresh_priority so a
+        highlight change paints even if pause is skipped.
+        """
+        if self._game_display is not None:
+            self._game_display._pause_clock_for_menu()
+        try:
+            return self._menu_manager.show_menu(entries, initial_index=initial_index)
+        finally:
+            self._restore_game_widgets()
+            if self._game_display is not None:
+                self._game_display._resume_clock_after_menu()
 
     def _restore_game_widgets(self) -> None:
         """Put the board back after show_menu cleared the panel."""

@@ -1332,6 +1332,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   suspended game. PLAY now leaves the lobby the same way it leaves Settings.
   Ongoing Games and Seek New Game remain the lobby's start paths.
 
+- **Confirm Move UP/DOWN paint the highlight**: The overlay used
+  ``show_menu`` during a game, which tears the clock widget down while a
+  counting clock stays in clock-driven refresh. Selection redraws then
+  wait for a tick that never comes, so TICK and BACK still worked (they
+  do not need a paint) and the arrows looked dead. The menu widget now
+  flushes immediately, and the session pauses the clock for Confirm Move,
+  takeback, and draw the same way resign already does.
+
 - **Lichess uses Player 1 Color for physical setup and e-paper rotation**:
   A Lichess pairing forced White onto player 1 and rotated the panel only
   when the assigned colour disagreed with the Players control, so a board
