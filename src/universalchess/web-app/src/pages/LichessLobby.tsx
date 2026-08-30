@@ -42,16 +42,22 @@ interface LichessLobbyCardProps {
   /** Whether seeks put the account's rating at stake (game.lichess_rated). */
   rated: boolean;
   onRatedChange: (rated: boolean) => void;
+  /** Board API clock for seeks (game.lichess_clock). */
+  clock: string;
+  onClockChange: (clock: string) => void;
+  /** Color the seeking account plays (game.lichess_color). */
+  color: string;
+  onColorChange: (color: string) => void;
 }
 
 /**
  * Web twin of the board Lichess lobby. Catalog children of ``players.lichess``
- * are Account (picker + nested Accounts), Rated, Ongoing Games, Challenges,
- * Seek New Game. Rated and the play rows stay hidden until a Lichess account
- * exists: without one they cannot seek, list games, or put a rating at stake,
- * and the empty/no-token copy duplicated the Accounts control already on the
- * card. A failed or unauthorized account list is not treated as empty, so
- * those rows are not buried behind a false "add an account" state.
+ * are Account (picker + nested Accounts), Rated, Clock, Color, Ongoing Games,
+ * Challenges, Seek New Game. Rated, Clock, Color, and the play rows stay hidden until
+ * a Lichess account exists: without one they cannot seek, list games, or put a
+ * rating at stake, and the empty/no-token copy duplicated the Accounts control
+ * already on the card. A failed or unauthorized account list is not treated as
+ * empty, so those rows are not buried behind a false "add an account" state.
  */
 export function LichessLobbyCard({
   catalog,
@@ -62,6 +68,10 @@ export function LichessLobbyCard({
   onAccountsChanged,
   rated,
   onRatedChange,
+  clock,
+  onClockChange,
+  color,
+  onColorChange,
 }: LichessLobbyCardProps) {
   const { t } = useTranslation();
   const { dialog, onUnauthorized } = useAuthedAction();
@@ -259,6 +269,22 @@ export function LichessLobbyCard({
           node={byId['field.lichess.rated']}
           value={rated}
           onChange={(value) => onRatedChange(Boolean(value))}
+        />
+      )}
+      {showPlayFeatures && byId['field.lichess.clock'] && (
+        <CatalogField
+          node={byId['field.lichess.clock']}
+          value={clock}
+          options={catalog.optionSets.lichess_clock ?? []}
+          onChange={(value) => onClockChange(String(value))}
+        />
+      )}
+      {showPlayFeatures && byId['field.lichess.color'] && (
+        <CatalogField
+          node={byId['field.lichess.color']}
+          value={color}
+          options={catalog.optionSets.lichess_color ?? []}
+          onChange={(value) => onColorChange(String(value))}
         />
       )}
 

@@ -172,15 +172,15 @@ export interface AccountTypeField {
 
 /**
  * Declarative definition of an online account type (e.g. Lichess). Drives the
- * "Add Account" form and the per-account store. An online player type is one
- * that has a matching entry here (its `id` equals a `player_type` option value).
+ * "Add Account" form and the per-account store. An account type need not be a
+ * player type (Lichess credentials are stored here; slots are Human/Engine/Hand+Brain).
  */
 export interface AccountType {
   id: string;
   label: string;
   icon: string;
-  /** Player type this account binds to when it is not itself a player type.
-   *  Absent means ``id`` is the player type. */
+  /** Player type this account binds to when it is a slot type.
+   *  Absent means the account is credentials-only (Lichess). */
   playerType?: string;
   /** Stored key that uniquely identifies an account of this type. */
   identityField: string;

@@ -84,6 +84,7 @@
   "lichess.started": "Partie gestartet\nSie spielen {color}",
   "lichess.seek.rated": "gewertet",
   "lichess.seek.casual": "ungewertet",
+  "lichess.seek.correspondence": "Fernschach",
   "lichess.color.random": "Zufall",
   "lichess.challenge.incoming": "EMP",
   "lichess.challenge.outgoing": "GES",

@@ -21,8 +21,7 @@
     "player_type": {
       "human": "Humano",
       "engine": "Motor",
-      "hand_brain": "Mano + Cerebro",
-      "lichess": "Lichess"
+      "hand_brain": "Mano + Cerebro"
     },
     "hand_brain_mode": {
       "normal": "Normal (Motor = Cerebro)",
@@ -79,6 +78,21 @@
       "20": "20 s",
       "30": "30 s",
       "60": "60 s"
+    },
+    "lichess_clock": {
+      "none": "Ninguno",
+      "rapid_10_0": "10|0 Rápido",
+      "rapid_10_5": "10|5 Rápido",
+      "rapid_15_10": "15|10 Rápido",
+      "classical_30_0": "30|0 Clásico",
+      "classical_30_20": "30|20 Clásico",
+      "classical_60_30": "60|30 Clásico",
+      "classical_90_30": "90|30 Clásico"
+    },
+    "lichess_color": {
+      "random": "Aleatorio",
+      "white": "Blancas",
+      "black": "Negras"
     },
     "update_channel": {
       "stable": "Estable (Recomendado)",
@@ -182,7 +196,7 @@
     "settings": { "label": "Ajustes" },
     "settings.players": {
       "label": "Jugadores",
-      "help": "Configura nombres de jugadores, tipos, motores y cuentas en línea guardadas."
+      "help": "Configura nombres de jugadores, tipos y motores."
     },
     "players.player1": {
       "label": "Jugador 1\n{fn:player1_summary}",
@@ -199,7 +213,7 @@
     "players.lichess": {
       "label": "Lobby de Lichess",
       "boardLabel": "Lobby\nLichess",
-      "help": "Credenciales de Lichess y juego en línea. Cada cuenta es un servidor y usuario (lichess.org o lichess.dev). Abre el selector de cuenta, Clasificada, partidas en curso, desafíos y Buscar partida nueva."
+      "help": "Credenciales de Lichess y juego en línea. Cada cuenta es un servidor y usuario (lichess.org o lichess.dev). Abre el selector de cuenta, Clasificada, Reloj, Color, partidas en curso, desafíos y Buscar partida nueva."
     },
     "lichess.account": {
       "label": "Cuenta",
@@ -219,7 +233,7 @@
     "lichess.new_game": {
       "label": "Buscar partida nueva",
       "boardLabel": "Buscar\npartida",
-      "help": "Busca un rival nuevo en Lichess con esta cuenta, sea cual sea la configuración de los jugadores. Clasificada es la fila de arriba y el control de tiempo sale de los ajustes de Partida; el color es el que elegiste solo cuando un jugador está puesto en Lichess."
+      "help": "Busca un rival nuevo en Lichess con esta cuenta, sea cual sea la configuración de los jugadores. Clasificada, Reloj y Color son las filas de arriba."
     },
     "players.start": {
       "label": "Nueva\npartida",
@@ -636,7 +650,7 @@
     "field.player.type": {
       "label": "Tipo de jugador",
       "boardLabel": "Tipo\n{value}",
-      "help": "Humano, Motor, Mano+Cerebro o Lichess"
+      "help": "Humano, Motor o Mano+Cerebro"
     },
     "field.player.name": {
       "label": "Nombre del jugador",
@@ -723,6 +737,16 @@
       "label": "Clasificada",
       "boardLabel": "Clasificada",
       "help": "Las partidas clasificadas cuentan para la puntuación de esta cuenta en Lichess; las amistosas no.\n\nSe aplica a todas las búsquedas que publica este tablero, incluidas las del lobby sin ningún jugador puesto en Lichess."
+    },
+    "field.lichess.clock": {
+      "label": "Reloj",
+      "boardLabel": "Reloj",
+      "help": "Reloj de todas las búsquedas que publica este tablero, incluidas las del lobby sin ningún jugador puesto en Lichess.\n\nSolo Rápido, Clásico y por correspondencia: la API de tablero rechaza Blitz y Bullet. Ninguno es una partida por correspondencia (2 días por turno). El reloj de Partida es para partidas locales y no se envía."
+    },
+    "field.lichess.color": {
+      "label": "Color",
+      "boardLabel": "Color",
+      "help": "Color que juega esta cuenta en todas las búsquedas que publica este tablero, incluidas las del lobby sin ningún jugador puesto en Lichess.\n\nBlancas, Negras o Aleatorio. Al empezar el encuentro, el humano ocupa ese bando. El color de Jugadores es para partidas locales y no se envía."
     },
     "field.lichess.api_token": {
       "label": "Token de API",

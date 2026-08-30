@@ -113,7 +113,10 @@ class PlayerSettings:
     Attributes:
         section: Section name in config file
         color: Color this player plays ('white' or 'black', only for player 1)
-        type: Player type ('human', 'engine', 'lichess', 'hand_brain')
+        type: Player type ('human', 'engine', 'hand_brain'). Leftover
+            ``lichess`` is rewritten to ``human`` on load and on set; Lichess
+            play is started from the lobby, which substitutes the pairing
+            without writing slots.
         name: Player name (for human type, empty = use default)
         engine: Engine name (for engine/human/hand_brain type)
         elo: Engine ELO level (for engine/human/hand_brain type)
@@ -124,10 +127,10 @@ class PlayerSettings:
 
     A slot does not name an online account. The Lichess account belongs to the
     lobby (``GameSettings.lichess_account``) because it must exist whether or
-    not a slot is set to Lichess -- a lobby seek runs with a pairing derived for
-    that game, which no saved slot describes. Upgraded configs keep a legacy
-    ``account`` key in the player section; :meth:`AllSettings.load` reads it once
-    to seed the lobby setting and nothing else consults it.
+    not a game was started from the lobby -- a lobby seek runs with a pairing
+    derived for that game, which no saved slot describes. Upgraded configs keep
+    a legacy ``account`` key in the player section; :meth:`AllSettings.load`
+    reads it once to seed the lobby setting and nothing else consults it.
     """
 
     section: str
@@ -176,12 +179,20 @@ class PlayerSettings:
         the persisted/reloaded value, so ``player_config_signature`` does not
         differ purely by type (``"5"`` vs ``5``) after a board edit.
 
+        ``type`` of ``lichess`` is stored as ``human``: Lichess is not a Type
+        picker choice, and persisting it would block Positions and make PLAY seek.
+
         Args:
             key: Setting key to set
             value: New value
         """
         if key == "think_time":
             value = int(value)
+        if key == "type" and value == "lichess":
+            # Lichess is not a Type picker choice. A leftover or stale POST
+            # would block Positions and make PLAY seek. The lobby substitutes
+            # Human vs Lichess at start without writing this field.
+            value = "human"
         setattr(self, key, value)
         self.save(key)
 
@@ -383,6 +394,8 @@ class GameSettings:
     lichess_rated: bool = False
     lichess_use_dev: bool = False
     lichess_account: str = ""
+    lichess_clock: str = "rapid_10_0"
+    lichess_color: str = "random"
     alert_queen_threat: bool = True
     show_board: bool = True
     show_clock: bool = True
@@ -489,6 +502,8 @@ class GameSettings:
             "lichess_rated": self.lichess_rated,
             "lichess_use_dev": self.lichess_use_dev,
             "lichess_account": self.lichess_account,
+            "lichess_clock": self.lichess_clock,
+            "lichess_color": self.lichess_color,
             "alert_queen_threat": self.alert_queen_threat,
             "show_board": self.show_board,
             "show_clock": self.show_clock,
@@ -574,6 +589,8 @@ class GameSettings:
             lichess_rated=data["lichess_rated"],
             lichess_use_dev=data["lichess_use_dev"],
             lichess_account=data["lichess_account"],
+            lichess_clock=data["lichess_clock"],
+            lichess_color=data["lichess_color"],
             alert_queen_threat=data["alert_queen_threat"],
             show_board=data["show_board"],
             show_clock=data["show_clock"],
@@ -639,8 +656,9 @@ def _adopt_legacy_lichess_account(player1, player2, game, game_section: str) -> 
     authenticated as when both were Lichess, and a value left behind on a slot
     that is no longer Lichess is ignored as stale.
 
-    In-memory only, like the coach key migration: the value persists the next
-    time the setting is written.
+    In-memory until the account is written: a newly adopted value is persisted
+    immediately so a following rewrite of leftover ``type=lichess`` to human
+    cannot lose the account on the next boot (adoption only reads Lichess slots).
     """
     if has_setting(game_section, "lichess_account"):
         return
@@ -652,7 +670,22 @@ def _adopt_legacy_lichess_account(player1, player2, game, game_section: str) -> 
         ).get(LEGACY_PLAYER_ACCOUNT_KEY, "")
         if legacy:
             game.lichess_account = legacy
+            game.save("lichess_account")
             return
+
+
+def _migrate_lichess_slot_types(player1, player2) -> None:
+    """Rewrite leftover ``type=lichess`` slots to human and persist.
+
+    Lichess is not a Players Type. A leftover slot blocks Positions and makes
+    PLAY post a seek. The lobby substitutes Human vs Lichess at start without
+    writing the slots, so a saved ``lichess`` type is only a leftover from
+    before the picker lost that option.
+    """
+    for player in (player1, player2):
+        if player.type == "lichess":
+            player.type = "human"
+            player.save("type")
 
 
 @dataclass
@@ -699,6 +732,7 @@ class AllSettings:
         player2 = PlayerSettings.load(player2_section, player2_defaults, log)
         game = GameSettings.load(game_section, game_defaults, log)
         _adopt_legacy_lichess_account(player1, player2, game, game_section)
+        _migrate_lichess_slot_types(player1, player2)
 
         return cls(player1=player1, player2=player2, game=game)
 

@@ -84,6 +84,7 @@
   "lichess.started": "Oyun başladı\nSen {color} oynuyorsun",
   "lichess.seek.rated": "reytingli",
   "lichess.seek.casual": "dostluk",
+  "lichess.seek.correspondence": "Yazışmalı",
   "lichess.color.random": "Rastgele",
   "lichess.challenge.incoming": "GEL",
   "lichess.challenge.outgoing": "GİD",

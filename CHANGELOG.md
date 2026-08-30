@@ -15,6 +15,34 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Lichess Lobby is a main-menu row, not a Players setting**: The lobby
+  sat under Settings → Players, so starting an online game was behind
+  the same list as local slot types, and Type still offered Lichess as
+  a pairing that blocked Positions and made PLAY seek. Lichess Lobby
+  now sits on the board main menu above Original Centaur (PLAY,
+  Positions, Lichess Lobby, Original Centaur, Settings). The web
+  Settings tab strip places Lichess Lobby immediately before Original
+  Centaur. Slots are Human, Engine, or Hand+Brain; leftover
+  ``type=lichess`` is rewritten to Human on load. Online play starts
+  from the lobby, which still substitutes Human vs Lichess at start
+  without writing the slots.
+
+- **Lichess lobby Clock lists only Board API clocks**: Seek New Game
+  took the Game clock, so a 5+0 Blitz Game setting posted a seek Lichess
+  rejected (`Invalid time control`) and nothing appeared in the lobby.
+  The Lichess lobby now has a Clock row beside Rated: Rapid and Classical
+  presets the Board API accepts, plus None for a correspondence seek
+  (2 days per turn). PLAY, lobby Seek New Game, and the web card all
+  read `game.lichess_clock`. The Game clock stays for local games.
+
+- **Lichess lobby Color is White, Black, or Random**: Seek color came
+  from the Players colour control, inverted when Lichess sat in slot 2,
+  and a lobby Seek New Game with no Lichess slot posted random with no
+  way to choose a side. The lobby now has a Color row under Clock.
+  White posts white (the seeking account is the human after remap).
+  PLAY, lobby Seek New Game, and the web card all read
+  `game.lichess_color`. The Players colour control stays for local games.
+
 - **Lichess ongoing games show the position before Join**: Selecting a
   nowPlaying row started the stream immediately, so catch-up asked for a
   physical setup after the remote clock was already running. Ongoing Games
@@ -1231,6 +1259,20 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   during startup, before the display exists to report it; they are now one.
 
 ### Removed
+
+- **Cancel on the Lichess next-game prompt**: After a board-reset or a
+  remote end, the menu listed Lichess Lobby, Seek New Game, and Cancel,
+  with Cancel highlighted so a stray TICK could not seek. BACK already
+  left without seeking, so the Cancel row duplicated it. The prompt is
+  now Lobby and Seek, with Lobby highlighted: TICK opens the lobby, BACK
+  returns to the menu.
+
+- **Lichess as a Players Type**: The Type picker listed Lichess next to
+  Human, Engine, and Hand+Brain. Saving that type blocked Positions and
+  made PLAY post a seek even when the user wanted a local game. The
+  option is gone; a leftover slot is stored as Human. Lichess remains
+  an account type so tokens can still be added. The factory still
+  builds a Lichess player when the lobby substitutes the pairing.
 
 - **Dead `GET /api/engines`**: superseded by `/api/engines/all`, which the web app
   actually calls, and unused by anything for long enough that it still listed

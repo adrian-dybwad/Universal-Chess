@@ -20,7 +20,7 @@ from universalchess.players.lichess.lobby import (
 
 
 def test_lichess_settings_rows_are_always_in_order():
-    """Account, Rated, Ongoing, Challenges, New Game — none of them vanish.
+    """Account, Rated, Clock, Color, Ongoing, Challenges, New Game — none of them vanish.
 
     Why: ongoing/challenges used to vanish when the account had none, so they
     could not be opened to read how they work, and Rated was only reachable
@@ -31,6 +31,8 @@ def test_lichess_settings_rows_are_always_in_order():
     assert [e.key for e in entries] == [
         "Account",
         "Rated",
+        "Clock",
+        "Color",
         "Ongoing",
         "Challenges",
         "NewGame",
@@ -50,6 +52,8 @@ def test_ongoing_and_challenges_carry_how_they_work_help():
     assert by_key["Ongoing"].help == catalog.get_node("lichess.ongoing")["help"]
     assert by_key["Challenges"].help == catalog.get_node("lichess.challenges")["help"]
     assert by_key["Rated"].help == catalog.get_node("field.lichess.rated")["help"]
+    assert by_key["Clock"].help == catalog.get_node("field.lichess.clock")["help"]
+    assert by_key["Color"].help == catalog.get_node("field.lichess.color")["help"]
     assert by_key["Ongoing"].selectable is True
     assert by_key["Challenges"].selectable is True
 

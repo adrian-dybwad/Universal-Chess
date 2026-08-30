@@ -89,7 +89,7 @@ def test_board_main_menu_keys_match_renderer_contract():
     """
     catalog = load_catalog()
     keys = [c["key"] for c in catalog.children("main")]
-    assert keys == ["Universal", "Positions", "Centaur", "Settings"]
+    assert keys == ["Universal", "Positions", "Lichess", "Centaur", "Settings"]
 
 
 def test_settings_order_matches_board_layout():
@@ -558,14 +558,17 @@ def test_packaged_catalog_exposes_lichess_account_type():
 
 
 def test_lichess_lobby_catalog_children_match_board_hierarchy():
-    """players.lichess children: Account, Rated, Ongoing, Challenges, New Game.
+    """players.lichess children: Account, Rated, Clock, Color, Ongoing, Challenges, New Game.
 
-    Why: the web Players card walks this list so it stays in lockstep with the
+    Why: the web lobby tab walks this list so it stays in lockstep with the
     board lobby. Accounts is nested under Account, not a sibling, and Rated sits
     under the account whose rating the seek puts at stake -- it governs every
     seek, including one from a pairing no Lichess slot describes, so a player
-    slot could not hold it. Regression: a row drops, Play returns as a wrapper,
-    Accounts sits on the lobby itself, or Rated goes back to the player card.
+    slot could not hold it. Clock is the Board API list (Rapid, Classical, None)
+    rather than the Game clock, which still offers Blitz. Color is White,
+    Black, or Random rather than the Players colour control. Regression: a row
+    drops, Play returns as a wrapper, Accounts sits on the lobby itself, or
+    Rated, Clock, or Color goes back to the player card.
     """
     from universalchess.players.lichess.lobby import build_lichess_menu_entries
 
@@ -576,6 +579,8 @@ def test_lichess_lobby_catalog_children_match_board_hierarchy():
     assert catalog.child_ids("players.lichess") == [
         "lichess.account",
         "field.lichess.rated",
+        "field.lichess.clock",
+        "field.lichess.color",
         "lichess.ongoing",
         "lichess.challenges",
         "lichess.new_game",
@@ -584,9 +589,24 @@ def test_lichess_lobby_catalog_children_match_board_hierarchy():
     rated = catalog.get_node("field.lichess.rated")
     assert rated["type"] == "toggle"
     assert rated["bind"] == {"store": "game", "key": "lichess_rated"}
+    clock = catalog.get_node("field.lichess.clock")
+    assert clock["type"] == "select"
+    assert clock["bind"] == {"store": "game", "key": "lichess_clock"}
+    assert clock["optionSet"] == "lichess_clock"
+    color = catalog.get_node("field.lichess.color")
+    assert color["type"] == "select"
+    assert color["bind"] == {"store": "game", "key": "lichess_color"}
+    assert color["optionSet"] == "lichess_color"
+    from universalchess.players.lichess.match import LICHESS_CLOCKS, LICHESS_COLORS
+
+    assert [o["value"] for o in catalog.option_set("lichess_clock")] == list(LICHESS_CLOCKS)
+    assert "blitz_5_0" not in {o["value"] for o in catalog.option_set("lichess_clock")}
+    assert [o["value"] for o in catalog.option_set("lichess_color")] == list(LICHESS_COLORS)
     # No player-scoped visibility: the lobby has no slot in context, and the
     # setting applies to every seek the board posts.
     assert "visibleWhen" not in rated
+    assert "visibleWhen" not in clock
+    assert "visibleWhen" not in color
     # The board lobby draws these very nodes, so a row's label and help are the
     # catalog's rather than a second copy of them that can drift or stay English.
     rows = {entry.key: entry for entry in build_lichess_menu_entries("alice")}
@@ -619,24 +639,22 @@ def test_lichess_catalog_hosts_match_plugin():
     assert catalog_hosts == plugin_hosts
 
 
-def test_account_type_ids_are_online_player_types():
-    """Every accountType id must be a value in the player_type option set.
+def test_lichess_is_an_account_type_not_a_player_type():
+    """Lichess credentials are an account type; slots cannot be set to Lichess.
 
-    Why this test exists: an "online" player type is defined as one that has a
-    matching accountTypes entry. This one-to-one link is the whole basis for the
-    "player type must match account type" binding rule, so the two must not drift.
+    Why this test exists: a Type picker option of Lichess left PLAY seeking and
+    Positions blocked whenever a leftover slot named it. Online play starts from
+    the lobby, which substitutes Human vs Lichess at start without writing slots.
+    The account type remains so tokens can be stored.
 
-    How a regression manifests: an accountType id (e.g. a future 'chess_com') is
-    added without a corresponding player_type option, so a player could never be
-    bound to that account type -- caught here as an id with no player_type value.
+    How a regression manifests: ``lichess`` returns to ``player_type``, or the
+    account type is dropped so Add Account has nothing to create.
     """
     catalog = load_catalog()
     player_type_values = {o["value"] for o in catalog.option_set("player_type")}
-    for entry in catalog.account_types():
-        player_type = entry.get("playerType") or entry["id"]
-        assert player_type in player_type_values, (
-            f"account type '{entry['id']}' has no matching player_type option"
-        )
+    assert player_type_values == {"human", "engine", "hand_brain"}
+    assert catalog.has_account_type("lichess")
+    assert "lichess" not in player_type_values
 
 
 def test_account_type_field_control_types_are_valid():
@@ -661,8 +679,9 @@ def test_account_type_field_control_types_are_valid():
 def _account_type_menu(entry: dict) -> dict:
     """Build a minimal valid catalog carrying one accountTypes entry.
 
-    Includes the player_type option set (with the entry id as a value) and the
-    'lichess' icon so only the account-type-specific check under test can fail.
+    Includes a ``player_type`` option set (so catalogs that name ``playerType``
+    can still be validated) and the 'lichess' icon so only the account-type-specific
+    check under test can fail.
     """
     return {
         "roots": ["a"],
@@ -716,12 +735,13 @@ def test_duplicate_account_type_id_raises(tmp_path):
         load_catalog(menu_path, icons_path)
 
 
-def test_account_type_without_matching_player_type_raises(tmp_path):
-    """An account type id with no player_type option value must be rejected.
+def test_account_type_need_not_be_a_player_type(tmp_path):
+    """An account type may exist without a matching player_type option.
 
-    The online-player-type link requires each accountType id to be a player_type
-    value; otherwise no player slot could ever select it. Validation must flag
-    the orphaned id rather than let the two definitions drift silently.
+    Why this test exists: Lichess is stored as credentials and started from the
+    lobby; it is not a Players Type. Requiring every account type to be a slot
+    type would block that split. How a regression manifests: load raises because
+    ``chess_com`` is not in ``player_type``.
     """
     entry = {
         "id": "chess_com",
@@ -732,11 +752,10 @@ def test_account_type_without_matching_player_type_raises(tmp_path):
         "fields": [{"key": "api_token", "label": "Token", "type": "password"}],
     }
     menu = _account_type_menu(entry)
-    # player_type only offers 'lichess', not 'chess_com'.
-    menu["optionSets"]["player_type"] = [{"value": "lichess", "label": "Lichess"}]
+    menu["optionSets"]["player_type"] = [{"value": "human", "label": "Human"}]
     menu_path, icons_path = _write(tmp_path, menu, _ACCOUNT_ICONS)
-    with pytest.raises(CatalogError, match="account type 'chess_com'.*player_type"):
-        load_catalog(menu_path, icons_path)
+    catalog = load_catalog(menu_path, icons_path)
+    assert catalog.has_account_type("chess_com")
 
 
 def test_account_type_entered_identity_must_be_a_field(tmp_path):

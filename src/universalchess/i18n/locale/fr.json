@@ -84,6 +84,7 @@
   "lichess.started": "Partie lancée\nVous jouez les {color}",
   "lichess.seek.rated": "classée",
   "lichess.seek.casual": "amicale",
+  "lichess.seek.correspondence": "Correspondance",
   "lichess.color.random": "Aléatoire",
   "lichess.challenge.incoming": "REÇU",
   "lichess.challenge.outgoing": "ENV",

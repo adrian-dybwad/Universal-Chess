@@ -71,7 +71,7 @@ def test_lobby_rows_read_the_localized_catalog(spanish):
     entries = build_lichess_menu_entries("alice", rated=True)
 
     keys = [entry.key for entry in entries]
-    assert keys == ["Account", "Rated", "Ongoing", "Challenges", "NewGame"]
+    assert keys == ["Account", "Rated", "Clock", "Color", "Ongoing", "Challenges", "NewGame"]
 
     for key, node_id in (
         ("Ongoing", "lichess.ongoing"),
@@ -93,6 +93,20 @@ def test_lobby_rows_read_the_localized_catalog(spanish):
         f"{catalog.get_node('field.lichess.rated')['boardLabel']}\n{i18n.t('common.on')}"
     )
 
+    clock = next(e for e in entries if e.key == "Clock")
+    clock_label = catalog.option_label("lichess_clock", "rapid_10_0")
+    assert clock.label == (
+        f"{catalog.get_node('field.lichess.clock')['boardLabel']}\n{clock_label}"
+    )
+    assert clock_label != english.option_label("lichess_clock", "rapid_10_0")
+
+    color = next(e for e in entries if e.key == "Color")
+    color_label = catalog.option_label("lichess_color", "random")
+    assert color.label == (
+        f"{catalog.get_node('field.lichess.color')['boardLabel']}\n{color_label}"
+    )
+    assert color_label != english.option_label("lichess_color", "random")
+
 
 def test_lobby_row_help_is_the_catalog_help_for_that_row(spanish):
     """Rated, Ongoing and Challenges explain themselves from the catalog.
@@ -107,6 +121,8 @@ def test_lobby_row_help_is_the_catalog_help_for_that_row(spanish):
 
     for key, node_id in (
         ("Rated", "field.lichess.rated"),
+        ("Clock", "field.lichess.clock"),
+        ("Color", "field.lichess.color"),
         ("Ongoing", "lichess.ongoing"),
         ("Challenges", "lichess.challenges"),
     ):
@@ -147,14 +163,15 @@ def test_board_reset_prompt_is_in_the_device_language(spanish):
     board. How the regression manifests: a row still reads the English literal
     while the menu around it is Spanish.
     """
-    manager = _ScriptedMenuManager("Cancel")
+    manager = _ScriptedMenuManager("BACK")
     choose_lichess_reset_action(manager)
     labels = _labels(manager.shown[0])
 
     assert labels[0] == i18n.t("lichess.reset.prompt")
     assert labels[1] == get_localized_catalog(SPANISH).get_node("players.lichess")["boardLabel"]
     assert labels[2] == get_localized_catalog(SPANISH).get_node("lichess.new_game")["boardLabel"]
-    assert labels[3] == i18n.t("common.cancel")
+    assert len(labels) == 3
+    assert i18n.t("common.cancel") not in labels
     assert "Cancel" not in labels
 
 
@@ -165,7 +182,7 @@ def test_abort_prompt_is_in_the_device_language(spanish):
     How the regression manifests: the header is still Seek a new game, or
     English Game aborted on a Spanish board.
     """
-    manager = _ScriptedMenuManager("Cancel")
+    manager = _ScriptedMenuManager("BACK")
     choose_lichess_reset_action(manager, reason="ABORTED")
     labels = _labels(manager.shown[0])
 
@@ -182,7 +199,7 @@ def test_resign_prompt_is_in_the_device_language(spanish):
     How the regression manifests: the header is still Seek a new game, or
     English Opponent resigned on a Spanish board.
     """
-    manager = _ScriptedMenuManager("Cancel")
+    manager = _ScriptedMenuManager("BACK")
     choose_lichess_reset_action(manager, reason="RESIGN")
     labels = _labels(manager.shown[0])
 
@@ -312,6 +329,8 @@ def test_english_still_reads_as_it_did_before(monkeypatch):
     assert _labels(entries) == [
         "Account\nalice",
         "Rated\nOn",
+        "Clock\n10|0 Rapid",
+        "Color\nRandom",
         "Ongoing\nGames",
         "Challenges",
         "Seek New\nGame",

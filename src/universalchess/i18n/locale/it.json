@@ -84,6 +84,7 @@
   "lichess.started": "Partita iniziata\nColore: {color}",
   "lichess.seek.rated": "valida",
   "lichess.seek.casual": "amichevole",
+  "lichess.seek.correspondence": "Corrispondenza",
   "lichess.color.random": "Casuale",
   "lichess.challenge.incoming": "IN",
   "lichess.challenge.outgoing": "OUT",

@@ -96,11 +96,12 @@ def test_build_menu_entries_skip_keys_hides_entry():
 
     Used to hide the Centaur entry when the original software is absent. If skip
     were ignored, a non-functional entry would appear. Builds the main menu
-    without Centaur and asserts it is gone while the others remain.
+    without Centaur and asserts it is gone while PLAY, Positions, Lichess, and
+    Settings remain.
     """
     entries = build_menu_entries("main", skip_keys={"Centaur"})
     keys = [e.key for e in entries]
-    assert keys == ["Universal", "Positions", "Settings"]
+    assert keys == ["Universal", "Positions", "Lichess", "Settings"]
 
 
 def test_help_for_key_returns_catalog_help():

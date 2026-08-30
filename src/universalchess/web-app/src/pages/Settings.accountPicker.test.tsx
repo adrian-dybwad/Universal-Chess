@@ -123,9 +123,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function renderSettings() {
+function renderSettings(tab = 'lichess') {
   return render(
-    <MemoryRouter initialEntries={['/settings/players']}>
+    <MemoryRouter initialEntries={[`/settings/${tab}`]}>
       <Routes>
         <Route path="/settings/:tab" element={<Settings />} />
       </Routes>
@@ -214,7 +214,7 @@ describe('Lichess lobby account picker', () => {
   });
 
   it('shows Lichess Lobby with credential management under Accounts', async () => {
-    // Why: credentials live under Players → Lichess Lobby → Account → Accounts,
+    // Why: credentials live under Settings → Lichess Lobby → Account → Accounts,
     // not Connectivity and not a Game host toggle. Human slots must still see
     // the card so an account can be added before either side is Lichess.
     // Failure: no Lichess Lobby heading, the Use lichess.dev toggle returns, or
@@ -235,10 +235,11 @@ describe('Lichess lobby account picker', () => {
     //
     // How a regression manifests: an "Account" control appears on a player
     // card, alongside the lobby's "Play as" picker.
-    mockFetch({ type: 'lichess' }, { type: 'human' });
-    renderSettings();
-    await findAccountPicker();
+    mockFetch({ type: 'human' }, { type: 'human' });
+    renderSettings('players');
+    await screen.findByText(/configure player names/i);
     expect(screen.queryByLabelText('Account')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/^Play as /)).not.toBeInTheDocument();
   });
 });
 

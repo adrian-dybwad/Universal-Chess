@@ -19,8 +19,7 @@
     "player_type": {
       "human": "Umano",
       "engine": "Motore",
-      "hand_brain": "Mano + Cervello",
-      "lichess": "Lichess"
+      "hand_brain": "Mano + Cervello"
     },
     "hand_brain_mode": {
       "normal": "Normale (Motore = Cervello)",
@@ -77,6 +76,21 @@
       "20": "20 s",
       "30": "30 s",
       "60": "60 s"
+    },
+    "lichess_clock": {
+      "none": "Nessuno",
+      "rapid_10_0": "10|0 Rapida",
+      "rapid_10_5": "10|5 Rapida",
+      "rapid_15_10": "15|10 Rapida",
+      "classical_30_0": "30|0 Classica",
+      "classical_30_20": "30|20 Classica",
+      "classical_60_30": "60|30 Classica",
+      "classical_90_30": "90|30 Classica"
+    },
+    "lichess_color": {
+      "random": "Casuale",
+      "white": "Bianchi",
+      "black": "Neri"
     },
     "update_channel": {
       "stable": "Stabile (consigliato)",
@@ -182,7 +196,7 @@
     },
     "settings.players": {
       "label": "Giocatori",
-      "help": "Configura nomi dei giocatori, tipi, motori e Lichess."
+      "help": "Configura nomi dei giocatori, tipi e motori."
     },
     "players.player1": {
       "label": "Giocatore 1\n{fn:player1_summary}",
@@ -199,7 +213,7 @@
     "players.lichess": {
       "label": "Lobby Lichess",
       "boardLabel": "Lobby\nLichess",
-      "help": "Credenziali Lichess e gioco online. Ogni accesso è un server e un utente (lichess.org o lichess.dev). Apre il selettore account, Valida, partite in corso, sfide e Cerca nuova partita."
+      "help": "Credenziali Lichess e gioco online. Ogni accesso è un server e un utente (lichess.org o lichess.dev). Apre il selettore account, Valida, Orologio, Colore, partite in corso, sfide e Cerca nuova partita."
     },
     "lichess.account": {
       "label": "Account",
@@ -219,7 +233,7 @@
     "lichess.new_game": {
       "label": "Cerca nuova partita",
       "boardLabel": "Cerca\npartita",
-      "help": "Cerca un nuovo avversario su Lichess con questo account, indipendentemente dalle impostazioni dei giocatori. Valida è la riga sopra e la cadenza viene dalle impostazioni Partita; il colore è quello che hai scelto solo quando un giocatore è impostato su Lichess."
+      "help": "Cerca un nuovo avversario su Lichess con questo account, indipendentemente dalle impostazioni dei giocatori. Valida, Orologio e Colore sono le righe sopra."
     },
     "players.start": {
       "label": "Nuova\npartita",
@@ -651,7 +665,7 @@
     "field.player.type": {
       "label": "Tipo di giocatore",
       "boardLabel": "Tipo\n{value}",
-      "help": "Umano, Motore, Mano+Cervello o Lichess"
+      "help": "Umano, Motore o Mano+Cervello"
     },
     "field.player.name": {
       "label": "Nome del giocatore",
@@ -738,6 +752,16 @@
       "label": "Valida",
       "boardLabel": "Valida",
       "help": "Le partite valide contano per il punteggio Lichess di questo account; le amichevoli no.\n\nVale per ogni ricerca che questa scacchiera pubblica, anche una dalla lobby senza nessun giocatore impostato su Lichess."
+    },
+    "field.lichess.clock": {
+      "label": "Orologio",
+      "boardLabel": "Orologio",
+      "help": "Orologio di ogni ricerca che questa scacchiera pubblica, anche una dalla lobby senza nessun giocatore impostato su Lichess.\n\nSolo Rapida, Classica e per corrispondenza: la Board API rifiuta Blitz e Bullet. Nessuno è una partita per corrispondenza (2 giorni a mossa). L'orologio di Partita è per le partite locali e non viene inviato."
+    },
+    "field.lichess.color": {
+      "label": "Colore",
+      "boardLabel": "Colore",
+      "help": "Colore che questo account gioca in ogni ricerca che questa scacchiera pubblica, anche una dalla lobby senza nessun giocatore impostato su Lichess.\n\nBianchi, Neri o Casuale. All'inizio della partita l'umano siede da quel lato. Il colore di Giocatori è per le partite locali e non viene inviato."
     },
     "field.lichess.api_token": {
       "label": "Token API",

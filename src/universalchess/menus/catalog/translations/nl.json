@@ -19,8 +19,7 @@
     "player_type": {
       "human": "Mens",
       "engine": "Motor",
-      "hand_brain": "Hand + Brein",
-      "lichess": "Lichess"
+      "hand_brain": "Hand + Brein"
     },
     "hand_brain_mode": {
       "normal": "Normaal (Motor = Brein)",
@@ -77,6 +76,21 @@
       "20": "20 s",
       "30": "30 s",
       "60": "60 s"
+    },
+    "lichess_clock": {
+      "none": "Geen",
+      "rapid_10_0": "10|0 Rapid",
+      "rapid_10_5": "10|5 Rapid",
+      "rapid_15_10": "15|10 Rapid",
+      "classical_30_0": "30|0 Klassiek",
+      "classical_30_20": "30|20 Klassiek",
+      "classical_60_30": "60|30 Klassiek",
+      "classical_90_30": "90|30 Klassiek"
+    },
+    "lichess_color": {
+      "random": "Willekeurig",
+      "white": "Wit",
+      "black": "Zwart"
     },
     "update_channel": {
       "stable": "Stabiel (aanbevolen)",
@@ -181,7 +195,7 @@
     },
     "settings.players": {
       "label": "Spelers",
-      "help": "Stelt spelersnamen, spelertypen, motoren en Lichess in."
+      "help": "Stelt spelersnamen, spelertypen en motoren in."
     },
     "players.player1": {
       "label": "Speler 1\n{fn:player1_summary}",
@@ -198,7 +212,7 @@
     "players.lichess": {
       "label": "Lichess-lobby",
       "boardLabel": "Lichess\nLobby",
-      "help": "Lichess-gegevens en online spelen. Elke aanmelding bestaat uit een server en een gebruiker (lichess.org of lichess.dev). Opent de accountkeuze, Gewaardeerd, lopende partijen, uitdagingen en Nieuwe partij zoeken."
+      "help": "Lichess-gegevens en online spelen. Elke aanmelding bestaat uit een server en een gebruiker (lichess.org of lichess.dev). Opent de accountkeuze, Gewaardeerd, Klok, Kleur, lopende partijen, uitdagingen en Nieuwe partij zoeken."
     },
     "lichess.account": {
       "label": "Account",
@@ -218,7 +232,7 @@
     "lichess.new_game": {
       "label": "Nieuwe partij zoeken",
       "boardLabel": "Partij\nzoeken",
-      "help": "Zoekt met dit account een nieuwe tegenstander op Lichess, wat er ook bij Spelers staat. Gewaardeerd is de regel erboven en de bedenktijd komt uit de instellingen bij Partij; de gekozen kleur geldt alleen wanneer een speler op Lichess staat."
+      "help": "Zoekt met dit account een nieuwe tegenstander op Lichess, wat er ook bij Spelers staat. Gewaardeerd, Klok en Kleur zijn de regels erboven."
     },
     "players.start": {
       "label": "Nieuwe\npartij",
@@ -650,7 +664,7 @@
     "field.player.type": {
       "label": "Spelertype",
       "boardLabel": "Type\n{value}",
-      "help": "Mens, Motor, Hand+Brein of Lichess"
+      "help": "Mens, Motor of Hand+Brein"
     },
     "field.player.name": {
       "label": "Spelersnaam",
@@ -737,6 +751,16 @@
       "label": "Gewaardeerd",
       "boardLabel": "Gewaar-\ndeerd",
       "help": "Gewaardeerde partijen tellen mee voor de Lichess-rating van dit account, ongewaardeerde niet.\n\nGeldt voor elke zoekopdracht die dit bord plaatst, ook voor een uit de lobby zonder speler op Lichess."
+    },
+    "field.lichess.clock": {
+      "label": "Klok",
+      "boardLabel": "Klok",
+      "help": "Klok van elke zoekopdracht die dit bord plaatst, ook voor een uit de lobby zonder speler op Lichess.\n\nAlleen Rapid, Klassiek en correspondentie: de Board-API weigert Blitz en Bullet. Geen is een correspondentiepartij (2 dagen per zet). De klok bij Partij is voor lokale partijen en wordt niet meegestuurd."
+    },
+    "field.lichess.color": {
+      "label": "Kleur",
+      "boardLabel": "Kleur",
+      "help": "Kleur die dit account speelt in elke zoekopdracht die dit bord plaatst, ook voor een uit de lobby zonder speler op Lichess.\n\nWit, Zwart of Willekeurig. Na de start zit de mens aan die kant. De kleur bij Spelers is voor lokale partijen en wordt niet meegestuurd."
     },
     "field.lichess.api_token": {
       "label": "API-token",

@@ -84,6 +84,7 @@
   "lichess.started": "Game started\nYou play {color}",
   "lichess.seek.rated": "rated",
   "lichess.seek.casual": "casual",
+  "lichess.seek.correspondence": "Correspondence",
   "lichess.color.random": "Random",
   "lichess.challenge.incoming": "IN",
   "lichess.challenge.outgoing": "OUT",

@@ -2724,7 +2724,7 @@ def _live_game_is_remote() -> bool:
 
 
 def _schedule_lichess_after_unfinished(termination: str) -> None:
-    """Offer Lobby / Seek / Cancel after a remote Lichess game ends.
+    """Offer Lobby / Seek (BACK refuses) after a remote Lichess game ends.
 
     Sets the same flag as a board-reset during remote play so the main loop
     shows ``board_reset_rebuild_action``. ``termination`` selects the header
@@ -3940,11 +3940,10 @@ def _build_players_context():
 
     Exposes both players' settings (for the per-player summary labels and the
     Player 1 color icon) and the row actions: opening each player's detail
-    menu, Lichess Lobby (Account, ongoing, challenges, New Game),
-    managing online accounts from that same page, and starting the game.
+    menu, managing online accounts from Accounts on the Account picker (opened
+    from the main-menu Lichess Lobby), and starting the game.
     ``open_player*`` forwards only a break result up (so a game started from a
-    sub-menu unwinds); ``lichess`` opens the lobby; ``open_accounts`` opens the
-    multi-account manager (also reachable from Accounts on the Account picker);
+    sub-menu unwinds); ``open_accounts`` opens the multi-account manager;
     ``start_game`` returns the START_GAME token the Settings handler turns
     into a new game.
     """
@@ -3958,7 +3957,6 @@ def _build_players_context():
     ctx.register_action("open_player1", lambda: _open_player_detail(1))
     ctx.register_action("open_player2", lambda: _open_player_detail(2))
     ctx.register_action("open_accounts", lambda: signal_from(_handle_accounts_menu()))
-    ctx.register_action("lichess", lambda: signal_from(_handle_lichess_menu()))
     ctx.register_action("start_game", lambda: "START_GAME")
     ctx.register_store(
         "game",
@@ -4220,7 +4218,7 @@ def _build_main_menu_entries():
     the top row's PLAY/RESUME label is a computed token and the Original Centaur
     row is gated by ``visibleWhen`` on the ``main`` store, replacing the bespoke
     create_main_menu_entries override/skip logic. The root loop still dispatches
-    by entry key (Universal, Settings, Centaur).
+    by entry key (Universal, Positions, Lichess, Settings, Centaur).
     """
     from universalchess.menus.board_context import render_container
 
@@ -5645,6 +5643,10 @@ def _handle_lichess_menu():
         bind_account_fn=_bind_lichess_play_account,
         rated_fn=lambda: bool(_get_settings().game.lichess_rated),
         set_rated_fn=lambda rated: _save_game_setting("lichess_rated", rated),
+        clock_fn=lambda: str(_get_settings().game.lichess_clock or ""),
+        set_clock_fn=lambda clock: _save_game_setting("lichess_clock", clock),
+        color_fn=lambda: str(_get_settings().game.lichess_color or ""),
+        set_color_fn=lambda color: _save_game_setting("lichess_color", color),
     )
 
 
@@ -5669,12 +5671,12 @@ def _bind_lichess_play_account(account_id: str) -> None:
 def _start_lichess_game(lichess_config) -> bool:
     """Stash a Lichess join so Settings can start the game after menus unwind.
 
-    New Game, Ongoing, and Challenges all enter the same Human vs Lichess
-    path. Seek color/clock/rated come from Players + Game settings; this only
-    carries the lobby's join ids (ongoing game or challenge). Starting here
-    left the Players menu loop alive: it redrew player rows over the board
-    (analysis still painted below). The lobby returns START_GAME; Settings
-    calls ``_start_game_mode`` once the nested menus have exited.
+    Seek color, clock, and rated come from Players settings and the lobby Clock,
+    Color, and Rated rows; this only carries the lobby's join ids (ongoing game or
+    challenge). Starting here left the Players menu loop alive: it redrew
+    player rows over the board (analysis still painted below). The lobby
+    returns START_GAME; Settings calls ``_start_game_mode`` once the nested
+    menus have exited.
     """
     global _lichess_join
 
@@ -7733,6 +7735,13 @@ def main():
                         ctx.clear()
                         _launch_original_centaur()
                         # Note: the launch exits the process when centaur ends
+
+                    elif result == "Lichess":
+                        lobby_result = _handle_lichess_menu()
+                        if is_break_result(lobby_result):
+                            _enter_game(explicit_lichess_seek=_is_play_start(lobby_result))
+                        elif signal_from(lobby_result) == "START_GAME":
+                            _start_game_mode()
 
                     elif result in ("Universal", "PLAY", "CLIENT_CONNECTED", "PIECE_MOVED"):
                         # Start a new game or resume the suspended one. _enter_game()

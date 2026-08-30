@@ -23,8 +23,7 @@
     "player_type": [
       { "value": "human", "label": "Human", "icon": "universal_logo" },
       { "value": "engine", "label": "Engine", "icon": "engine" },
-      { "value": "hand_brain", "label": "Hand + Brain", "icon": "engine" },
-      { "value": "lichess", "label": "Lichess", "icon": "lichess" }
+      { "value": "hand_brain", "label": "Hand + Brain", "icon": "engine" }
     ],
     "hand_brain_mode": [
       { "value": "normal", "label": "Normal (Engine = Brain)" },
@@ -77,6 +76,21 @@
       { "value": "none", "label": "None" },
       { "value": "simple", "label": "Simple (US)" },
       { "value": "bronstein", "label": "Bronstein" }
+    ],
+    "lichess_clock": [
+      { "value": "none", "label": "None" },
+      { "value": "rapid_10_0", "label": "10|0 Rapid" },
+      { "value": "rapid_10_5", "label": "10|5 Rapid" },
+      { "value": "rapid_15_10", "label": "15|10 Rapid" },
+      { "value": "classical_30_0", "label": "30|0 Classical" },
+      { "value": "classical_30_20", "label": "30|20 Classical" },
+      { "value": "classical_60_30", "label": "60|30 Classical" },
+      { "value": "classical_90_30", "label": "90|30 Classical" }
+    ],
+    "lichess_color": [
+      { "value": "random", "label": "Random", "icon": "random" },
+      { "value": "white", "label": "White", "icon": "white_piece" },
+      { "value": "black", "label": "Black", "icon": "black_piece" }
     ],
     "engine_move_delay": [
       { "value": "0", "label": "None" },
@@ -229,7 +243,7 @@
       "type": "menu",
       "label": "Main Menu",
       "platforms": ["board"],
-      "children": ["main.play", "main.positions", "main.centaur", "main.settings"]
+      "children": ["main.play", "main.positions", "players.lichess", "main.centaur", "main.settings"]
     },
     {
       "id": "main.play",
@@ -251,7 +265,7 @@
       "icon": "positions",
       "help": "Set up a predefined position on the board to practice or analyze.",
       "platforms": ["board", "web"],
-      "epaper": { "height_ratio": 0.67, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
+      "epaper": { "height_ratio": 1.0, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
     },
     {
       "id": "main.centaur",
@@ -262,7 +276,7 @@
       "help": "Switch back to the original DGT Centaur software.",
       "visibleWhen": { "store": "main", "key": "centaur_available", "equals": true },
       "platforms": ["board", "web"],
-      "epaper": { "height_ratio": 0.67, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
+      "epaper": { "height_ratio": 1.0, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
     },
     {
       "id": "main.settings",
@@ -273,7 +287,7 @@
       "help": "Configure players, time control, display, connectivity, and system options.",
       "target": "settings",
       "platforms": ["board"],
-      "epaper": { "height_ratio": 0.67, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
+      "epaper": { "height_ratio": 1.0, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
     },
 
     {
@@ -290,10 +304,10 @@
       "label": "Players",
       "boardLabel": "{fn:players_summary}",
       "icon": "players",
-      "help": "Configure player names, types, engines, and Lichess.",
+      "help": "Configure player names, types, and engines.",
       "section": "players",
       "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["players.player1", "players.player2", "players.lichess", "players.start"]
+      "children": ["players.player1", "players.player2", "players.start"]
     },
     {
       "id": "players.player1",
@@ -320,15 +334,14 @@
       "id": "players.lichess",
       "key": "Lichess",
       "type": "action",
-      "action": "lichess",
       "label": "Lichess Lobby",
       "boardLabel": "Lichess\nLobby",
       "icon": "lichess",
-      "help": "Lichess credentials and online play. Each login is a server and user (lichess.org or lichess.dev). Opens the account picker, Rated, ongoing games, challenges, and Seek New Game.",
+      "help": "Lichess credentials and online play. Each login is a server and user (lichess.org or lichess.dev). Opens the account picker, Rated, Clock, Color, ongoing games, challenges, and Seek New Game.",
       "section": "players",
       "platforms": ["board", "web"],
-      "epaper": { "font_size": 12, "height_ratio": 0.8 },
-      "children": ["lichess.account", "field.lichess.rated", "lichess.ongoing", "lichess.challenges", "lichess.new_game"]
+      "epaper": { "height_ratio": 1.0, "icon_size": 28, "layout": "horizontal", "font_size": 14 },
+      "children": ["lichess.account", "field.lichess.rated", "field.lichess.clock", "field.lichess.color", "lichess.ongoing", "lichess.challenges", "lichess.new_game"]
     },
     {
       "id": "lichess.account",
@@ -364,7 +377,7 @@
       "label": "Seek New Game",
       "boardLabel": "Seek New\nGame",
       "icon": "play",
-      "help": "Seek a new opponent on Lichess with this account, whatever the Players slots are set to. Rated is the row above and the time control comes from Game settings; color is the one you chose only when a player is set to Lichess.",
+      "help": "Seek a new opponent on Lichess with this account, whatever the Players slots are set to. Rated, Clock, and Color are the rows above.",
       "section": "players"
     },
     {
@@ -1550,7 +1563,7 @@
       "type": "select",
       "label": "Player Type",
       "boardLabel": "Type\n{value}",
-      "help": "Human, Engine, Hand+Brain, or Lichess",
+      "help": "Human, Engine, or Hand+Brain",
       "optionSet": "player_type",
       "bind": { "store": "player", "key": "type" },
       "icon": "universal_logo",
@@ -1630,6 +1643,30 @@
       "help": "Rated games count towards this account's Lichess rating; casual games do not.\n\nApplies to every seek this board posts, including one from the lobby with no player set to Lichess.",
       "bind": { "store": "game", "key": "lichess_rated" },
       "icon": { "true": "checkbox_checked", "false": "checkbox_empty" },
+      "section": "players",
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "field.lichess.clock",
+      "type": "select",
+      "label": "Clock",
+      "boardLabel": "Clock",
+      "help": "Clock for every seek this board posts, including one from the lobby with no player set to Lichess.\n\nOnly Rapid, Classical, and correspondence: the Board API rejects Blitz and Bullet. None is a correspondence game (2 days per turn). The Game clock is for local games and is not sent.",
+      "bind": { "store": "game", "key": "lichess_clock" },
+      "optionSet": "lichess_clock",
+      "icon": "timer_checked",
+      "section": "players",
+      "platforms": ["board", "web"]
+    },
+    {
+      "id": "field.lichess.color",
+      "type": "select",
+      "label": "Color",
+      "boardLabel": "Color",
+      "help": "Color this account plays in every seek this board posts, including one from the lobby with no player set to Lichess.\n\nWhite, Black, or Random. After the match starts, the human sits that side. The Players colour control is for local games and is not sent.",
+      "bind": { "store": "game", "key": "lichess_color" },
+      "optionSet": "lichess_color",
+      "icon": { "white": "white_piece", "black": "black_piece", "random": "random" },
       "section": "players",
       "platforms": ["board", "web"]
     },

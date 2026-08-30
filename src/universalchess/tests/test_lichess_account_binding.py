@@ -22,7 +22,7 @@ the user has since replaced with Default.
 import pytest
 
 import universalchess.players.settings as settings_mod
-from universalchess.players.settings import AllSettings, GameSettings
+from universalchess.players.settings import AllSettings, GameSettings, PlayerSettings
 
 LOBBY_ACCOUNT = "org:bob"
 SLOT_ACCOUNT = "org:alice"
@@ -48,8 +48,13 @@ def stored(monkeypatch):
     def fake_has_setting(section, key):
         return key in sections.get(section, {})
 
+    def fake_save_setting(section, key, value):
+        sections.setdefault(section, {})[key] = value
+        return True
+
     monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
     monkeypatch.setattr(settings_mod, "has_setting", fake_has_setting)
+    monkeypatch.setattr(settings_mod, "save_setting", fake_save_setting)
     return sections
 
 
@@ -133,3 +138,39 @@ def test_an_account_left_on_a_slot_that_is_not_lichess_is_not_adopted(stored):
     stored["player2"] = {"type": "human", "account": "org:carol"}
 
     assert _load(stored).game.lichess_account == ""
+
+
+def test_a_lichess_slot_is_rewritten_to_human_and_persisted(stored):
+    """Leftover type=lichess must become human on load, and the write must stick.
+
+    Why this test exists: Lichess is no longer a Type picker choice. A leftover
+    slot blocks Positions and makes PLAY post a seek. The lobby substitutes the
+    pairing at start without writing slots, so the saved type must not stay
+    lichess. The rewrite is persisted so the next boot does not need the
+    Lichess slot to re-adopt the lobby account (that account is persisted first).
+
+    How a regression manifests: player2.type is still lichess after load, or
+    the INI still says lichess so the next load sees it again.
+    """
+    stored["player2"] = {"type": "lichess", "account": SLOT_ACCOUNT}
+
+    loaded = _load(stored)
+    assert loaded.player2.type == "human"
+    assert loaded.player1.type == "human"
+    assert stored["player2"]["type"] == "human"
+    assert loaded.game.lichess_account == SLOT_ACCOUNT
+    assert stored["game"]["lichess_account"] == SLOT_ACCOUNT
+
+
+def test_set_type_lichess_is_stored_as_human(stored):
+    """A Type write of lichess (old web client, leftover POST) must not stick.
+
+    Why this test exists: the picker no longer offers Lichess, but a stale
+    client can still POST it. Persisting that would block Positions again.
+
+    How a regression manifests: set('type', 'lichess') leaves type=lichess.
+    """
+    player = PlayerSettings(section="player1", type="human")
+    player.set("type", "lichess")
+    assert player.type == "human"
+    assert stored["player1"]["type"] == "human"

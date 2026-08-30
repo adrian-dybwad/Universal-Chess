@@ -19,8 +19,7 @@
     "player_type": {
       "human": "İnsan",
       "engine": "Motor",
-      "hand_brain": "El + Beyin",
-      "lichess": "Lichess"
+      "hand_brain": "El + Beyin"
     },
     "hand_brain_mode": {
       "normal": "Normal (Motor = Beyin)",
@@ -77,6 +76,21 @@
       "20": "20 s",
       "30": "30 s",
       "60": "60 s"
+    },
+    "lichess_clock": {
+      "none": "Yok",
+      "rapid_10_0": "10|0 Rapid",
+      "rapid_10_5": "10|5 Rapid",
+      "rapid_15_10": "15|10 Rapid",
+      "classical_30_0": "30|0 Klasik",
+      "classical_30_20": "30|20 Klasik",
+      "classical_60_30": "60|30 Klasik",
+      "classical_90_30": "90|30 Klasik"
+    },
+    "lichess_color": {
+      "random": "Rastgele",
+      "white": "Beyaz",
+      "black": "Siyah"
     },
     "update_channel": {
       "stable": "Kararlı (önerilen)",
@@ -181,7 +195,7 @@
     },
     "settings.players": {
       "label": "Oyuncular",
-      "help": "Oyuncu adlarını, türlerini, motorları ve Lichess'i yapılandırır."
+      "help": "Oyuncu adlarını, türlerini ve motorları yapılandırır."
     },
     "players.player1": {
       "label": "Oyuncu 1\n{fn:player1_summary}",
@@ -198,7 +212,7 @@
     "players.lichess": {
       "label": "Lichess lobisi",
       "boardLabel": "Lichess\nlobisi",
-      "help": "Lichess kimlik bilgileri ve çevrimiçi oyun. Her giriş bir sunucu ve kullanıcıdır (lichess.org veya lichess.dev). Hesap seçiciyi, Reytingli'yi, devam eden oyunları, meydan okumaları ve Yeni oyun ara'yı açar."
+      "help": "Lichess kimlik bilgileri ve çevrimiçi oyun. Her giriş bir sunucu ve kullanıcıdır (lichess.org veya lichess.dev). Hesap seçiciyi, Reytingli'yi, Saati, Rengi, devam eden oyunları, meydan okumaları ve Yeni oyun ara'yı açar."
     },
     "lichess.account": {
       "label": "Hesap",
@@ -218,7 +232,7 @@
     "lichess.new_game": {
       "label": "Yeni oyun ara",
       "boardLabel": "Oyun\nara",
-      "help": "Oyuncu ayarlarından bağımsız olarak bu hesapla Lichess'te yeni rakip arar. Reytingli üst satırdır ve tempo Oyun ayarlarından gelir; seçilen renk yalnızca bir oyuncu Lichess olarak ayarlıysa geçerlidir."
+      "help": "Oyuncu ayarlarından bağımsız olarak bu hesapla Lichess'te yeni rakip arar. Reytingli, Saat ve Renk üst satırlardır."
     },
     "players.start": {
       "label": "Yeni\noyun",
@@ -650,7 +664,7 @@
     "field.player.type": {
       "label": "Oyuncu türü",
       "boardLabel": "Tür\n{value}",
-      "help": "İnsan, Motor, El+Beyin veya Lichess"
+      "help": "İnsan, Motor veya El+Beyin"
     },
     "field.player.name": {
       "label": "Oyuncu adı",
@@ -737,6 +751,16 @@
       "label": "Reytingli",
       "boardLabel": "Reytingli",
       "help": "Reytingli oyunlar bu hesabın Lichess reytingine sayılır, dostluk oyunları sayılmaz.\n\nBu tahtanın yayınladığı her arama için geçerlidir, lobiden ve hiç oyuncu Lichess olarak ayarlı değilken bile."
+    },
+    "field.lichess.clock": {
+      "label": "Saat",
+      "boardLabel": "Saat",
+      "help": "Bu tahtanın yayınladığı her aramanın saati, lobiden ve hiç oyuncu Lichess olarak ayarlı değilken bile.\n\nYalnızca Rapid, Klasik ve yazışmalı: Board API Blitz ve Bullet'i reddeder. Yok, yazışmalı oyundur (hamle başına 2 gün). Oyun saati yerel oyunlar içindir ve gönderilmez."
+    },
+    "field.lichess.color": {
+      "label": "Renk",
+      "boardLabel": "Renk",
+      "help": "Bu tahtanın yayınladığı her aramada bu hesabın oynadığı renk, lobiden ve hiç oyuncu Lichess olarak ayarlı değilken bile.\n\nBeyaz, Siyah veya Rastgele. Maç başlayınca insan o tarafa oturur. Oyuncular rengi yerel oyunlar içindir ve gönderilmez."
     },
     "field.lichess.api_token": {
       "label": "API token",

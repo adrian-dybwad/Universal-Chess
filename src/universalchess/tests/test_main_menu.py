@@ -70,7 +70,7 @@ class TestMainMenuCentaurVisibility:
         fallback path the user relies on to return to the original software.
         """
         keys = [r.key for r in _rows(centaur_available=True)]
-        assert keys == ["Universal", "Positions", "Centaur", "Settings"]
+        assert keys == ["Universal", "Positions", "Lichess", "Centaur", "Settings"]
 
     def test_centaur_hidden_when_unavailable(self):
         """Original Centaur is hidden when the Centaur software is absent.
@@ -79,4 +79,4 @@ class TestMainMenuCentaurVisibility:
         dead row that fails or does nothing when selected.
         """
         keys = [r.key for r in _rows(centaur_available=False)]
-        assert keys == ["Universal", "Positions", "Settings"]
+        assert keys == ["Universal", "Positions", "Lichess", "Settings"]

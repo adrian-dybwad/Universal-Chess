@@ -232,6 +232,71 @@ def test_load_reads_stored_coach_multipv(monkeypatch):
     assert settings.to_dict()["coach_multipv"] == 4
 
 
+def test_lichess_clock_defaults_to_rapid_10_0():
+    """A fresh install must seek a Board API Rapid, not the Game Blitz 5+0.
+
+    How a regression manifests: the default is empty or 5+0, so the first
+    Seek New Game is rejected as Invalid time control.
+    """
+    settings = GameSettings(section="game")
+    assert settings.to_dict()["lichess_clock"] == "rapid_10_0"
+
+
+def test_to_dict_includes_lichess_clock():
+    """Guards the to_dict() round-trip the lobby and web read the clock through."""
+    settings = GameSettings(section="game", lichess_clock="none")
+    assert settings.to_dict()["lichess_clock"] == "none"
+
+
+def test_load_reads_stored_lichess_clock(monkeypatch):
+    """load() must surface a persisted lobby clock; otherwise None is forgotten.
+
+    How a regression manifests: correspondence is saved on the web and the
+    board re-reads Rapid on the next boot.
+    """
+    def fake_load_section(section, defaults):
+        data = dict(defaults)
+        data["lichess_clock"] = "none"
+        return data
+
+    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
+    settings = GameSettings.load("game", {})
+    assert settings.lichess_clock == "none"
+    assert settings.to_dict()["lichess_clock"] == "none"
+
+
+def test_lichess_color_defaults_to_random():
+    """A fresh install seeks random until the lobby Color row is changed.
+
+    How a regression manifests: White or Black is posted on every new seek.
+    """
+    settings = GameSettings(section="game")
+    assert settings.to_dict()["lichess_color"] == "random"
+
+
+def test_to_dict_includes_lichess_color():
+    """Guards the to_dict() round-trip the lobby and web read the color through."""
+    settings = GameSettings(section="game", lichess_color="black")
+    assert settings.to_dict()["lichess_color"] == "black"
+
+
+def test_load_reads_stored_lichess_color(monkeypatch):
+    """load() must surface a persisted lobby color; otherwise White is forgotten.
+
+    How a regression manifests: White is saved on the web and the board
+    re-reads Random on the next boot.
+    """
+    def fake_load_section(section, defaults):
+        data = dict(defaults)
+        data["lichess_color"] = "white"
+        return data
+
+    monkeypatch.setattr(settings_mod, "load_section", fake_load_section)
+    settings = GameSettings.load("game", {})
+    assert settings.lichess_color == "white"
+    assert settings.to_dict()["lichess_color"] == "white"
+
+
 def test_chess960_defaults_to_off():
     # Chess960 must default off so a fresh install starts standard games; a
     # missing field or wrong default would silently randomize every new game.

@@ -23,6 +23,7 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  */
 
 const CENTAUR_TAB = 'Original Centaur';
+const LICHESS_TAB = 'Lichess Lobby';
 
 // A settings child with no matching entry in `sections`. A tab needs a section to
 // supply its label and icon, so such a child must be left out of the tab strip.
@@ -158,7 +159,7 @@ describe('Settings tab order', () => {
     renderSettings();
 
     const rendered = await tabLabels();
-    expect(rendered).toEqual([...catalogTabLabels(reversed), CENTAUR_TAB]);
+    expect(rendered).toEqual([...catalogTabLabels(reversed), LICHESS_TAB, CENTAUR_TAB]);
     // Reversing must actually have changed something, or this proves nothing.
     expect(catalogTabLabels(reversed)).not.toEqual(catalogTabLabels(catalog));
   });
@@ -170,7 +171,7 @@ describe('Settings tab order', () => {
     mockFetch(catalog);
     renderSettings();
 
-    expect(await tabLabels()).toEqual([...catalogTabLabels(catalog), CENTAUR_TAB]);
+    expect(await tabLabels()).toEqual([...catalogTabLabels(catalog), LICHESS_TAB, CENTAUR_TAB]);
   });
 
   it('omits a settings entry with no section to name it', async () => {
@@ -184,19 +185,19 @@ describe('Settings tab order', () => {
     renderSettings();
 
     const rendered = await tabLabels();
-    expect(rendered).toEqual([...catalogTabLabels(catalog), CENTAUR_TAB]);
+    expect(rendered).toEqual([...catalogTabLabels(catalog), LICHESS_TAB, CENTAUR_TAB]);
     expect(rendered.filter((label) => label === '')).toEqual([]);
   });
 
-  it('keeps the web-only Centaur tab last', async () => {
-    // Centaur is not a catalog section -- its label comes from the web i18n --
-    // so it is appended after whatever the catalog supplied. Failure manifests
-    // as it disappearing with the hardcoded list, taking the SD import flow's
-    // only entry point with it.
+  it('keeps the Lichess Lobby tab immediately before Original Centaur', async () => {
+    // Lichess Lobby is a web Settings tab (the board puts it on the main menu
+    // above Original Centaur). Centaur is still last. How a regression
+    // manifests: the lobby returns under Players, or Centaur is no longer last.
     mockFetch(menuSchemaFixture);
     renderSettings();
 
     const rendered = await tabLabels();
+    expect(rendered[rendered.length - 2]).toBe(LICHESS_TAB);
     expect(rendered[rendered.length - 1]).toBe(CENTAUR_TAB);
   });
 });

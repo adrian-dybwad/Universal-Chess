@@ -7,7 +7,7 @@ import { Settings } from './Settings';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
- * The Players Lichess card must follow the board lobby hierarchy: Account
+ * The Lichess Settings tab must follow the board lobby hierarchy: Account
  * (picker + Accounts last), Ongoing Games, Challenges, Seek New Game. Selecting
  * a game or Seek New Game posts /api/lichess/start, not /api/board/new-game.
  *
@@ -27,8 +27,8 @@ vi.mock('../components/ChessBoard', () => ({ ChessBoard: () => <div data-testid=
 const menuSchema: unknown = menuSchemaFixture;
 
 const settingsPayload = {
-  PlayerOne: { type: 'lichess', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', account: '' },
-  PlayerTwo: { type: 'human', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', account: '' },
+  PlayerOne: { type: 'human', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', account: '' },
+  PlayerTwo: { type: 'engine', name: '', engine: 'stockfish', elo: 'Default', hand_brain_mode: 'normal', account: '' },
   game: { time_control: '0', analysis_mode: 'True', analysis_engine: 'stockfish', notation: 'figurine', coach_provider: 'none', coach_id: 'off' },
   lichess: { api_token: '', range: '', username: '' },
   sound: {},
@@ -125,9 +125,9 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function renderPlayers() {
+function renderLobby() {
   return render(
-    <MemoryRouter initialEntries={['/settings/players']}>
+    <MemoryRouter initialEntries={['/settings/lichess']}>
       <Routes>
         <Route path="/settings/:tab" element={<Settings />} />
       </Routes>
@@ -144,7 +144,7 @@ describe('Settings Lichess lobby card', () => {
 
   it('renders Account, Ongoing, Challenges, Seek New Game in catalog order', async () => {
     mockLobbyFetch();
-    renderPlayers();
+    renderLobby();
     expect(await screen.findByRole('heading', { name: 'Lichess Lobby' })).toBeInTheDocument();
     const lobby = document.querySelector('.lichess-lobby');
     expect(lobby).not.toBeNull();
@@ -168,7 +168,7 @@ describe('Settings Lichess lobby card', () => {
     // Accounts is already on the card. A regression draws those rows (or the
     // Rated toggle) when GET /api/accounts returns [].
     mockLobbyFetch({ accounts: { accounts: [] } });
-    renderPlayers();
+    renderLobby();
     expect(await screen.findByText(/no accounts yet/i)).toBeInTheDocument();
     const lobby = document.querySelector('.lichess-lobby');
     expect(lobby).not.toBeNull();
@@ -186,7 +186,7 @@ describe('Settings Lichess lobby card', () => {
     // the account picker offers. A regression drops those rows on 401 the same
     // way it used to collapse the picker to Default-only.
     mockLobbyFetch({ accountsStatus: 401 });
-    renderPlayers();
+    renderLobby();
     expect(await screen.findByLabelText('Rated')).toBeInTheDocument();
     const lobby = document.querySelector('.lichess-lobby');
     expect([...lobby!.querySelectorAll('.lichess-lobby-heading')].map((el) => el.textContent)).toEqual([
@@ -205,10 +205,10 @@ describe('Settings Lichess lobby card', () => {
     // (or drops it entirely), so the setting governing every seek cannot be
     // changed unless a slot happens to be set to Lichess.
     mockLobbyFetch();
-    renderPlayers();
-    // PlayerOne is a Lichess slot in this fixture, which is exactly where the
-    // toggle used to be drawn, so a single control inside the lobby fails both
-    // ways: an extra copy on the player card, or the only copy still there.
+    renderLobby();
+    // Rated used to live on a Lichess player card. A single control inside
+    // the lobby fails both ways: an extra copy on a player card, or the only
+    // copy still there instead of the lobby.
     const rated = await screen.findByLabelText('Rated');
     expect(screen.getAllByLabelText('Rated')).toHaveLength(1);
     expect(document.querySelector('.lichess-lobby')!.contains(rated)).toBe(true);
@@ -219,7 +219,7 @@ describe('Settings Lichess lobby card', () => {
     // A regression writes a player-scoped key (or nothing), and the board keeps
     // seeking casual games while the web shows Rated on.
     const { fetchMock } = mockLobbyFetch();
-    renderPlayers();
+    renderLobby();
     fireEvent.click(await screen.findByLabelText('Rated'));
     await waitFor(() => {
       const save = fetchMock.mock.calls.find(
@@ -231,12 +231,57 @@ describe('Settings Lichess lobby card', () => {
     });
   });
 
+  it('offers Clock in the lobby and saves a Board API choice', async () => {
+    // The Game clock still offers Blitz; a 5+0 seek is rejected. Clock must be
+    // on the lobby card and write game.lichess_clock. How a regression
+    // manifests: Clock is missing, Blitz is listed, or the save writes the
+    // Game time_control key instead.
+    const { fetchMock } = mockLobbyFetch();
+    renderLobby();
+    const clock = await screen.findByLabelText('Clock');
+    expect(document.querySelector('.lichess-lobby')!.contains(clock)).toBe(true);
+    expect(screen.queryByRole('option', { name: '5|0 Blitz' })).not.toBeInTheDocument();
+    fireEvent.change(clock, { target: { value: 'none' } });
+    await waitFor(() => {
+      const save = fetchMock.mock.calls.find(
+        (call) => call[0] === '/api/settings' && (call[1] as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(save).toBeTruthy();
+      const body = JSON.parse(String((save![1] as RequestInit).body));
+      expect(body.game.lichess_clock).toBe('none');
+    });
+  });
+
+  it('offers Color in the lobby and saves White, Black, or Random', async () => {
+    // Seek color was the Players control, so a lobby seek over two engines
+    // posted random and White could not be chosen unless a slot was Lichess.
+    // Color must be on the lobby card and write game.lichess_color. How a
+    // regression manifests: Color is missing, or the save writes a player
+    // slot color instead.
+    const { fetchMock } = mockLobbyFetch();
+    renderLobby();
+    const color = await screen.findByLabelText('Color');
+    expect(document.querySelector('.lichess-lobby')!.contains(color)).toBe(true);
+    expect(screen.getByRole('option', { name: 'Random' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'White' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Black' })).toBeInTheDocument();
+    fireEvent.change(color, { target: { value: 'white' } });
+    await waitFor(() => {
+      const save = fetchMock.mock.calls.find(
+        (call) => call[0] === '/api/settings' && (call[1] as RequestInit | undefined)?.method === 'POST',
+      );
+      expect(save).toBeTruthy();
+      const body = JSON.parse(String((save![1] as RequestInit).body));
+      expect(body.game.lichess_color).toBe('white');
+    });
+  });
+
   it('lists ongoing games with a position and starts Join, not the row label', async () => {
     // Selecting the opponent used to post immediately, so the clock ran
     // before the pieces were set. How a regression manifests: Bob (1500) W is
     // still the join control, Join is missing, or the diagram is omitted.
     const { fetchMock } = mockLobbyFetch();
-    renderPlayers();
+    renderLobby();
     expect(await screen.findByText('Bob (1500) W')).toBeInTheDocument();
     expect(screen.getByTestId('board')).toBeInTheDocument();
     expect(screen.getByText(/Set the pieces to this position/i)).toBeInTheDocument();
@@ -262,7 +307,7 @@ describe('Settings Lichess lobby card', () => {
     // rows. How a regression manifests: the first click does not POST, or it
     // posts mode ongoing for g1.
     const { fetchMock } = mockLobbyFetch();
-    renderPlayers();
+    renderLobby();
     fireEvent.click(await screen.findByRole('button', { name: 'Seek New Game' }));
     await waitFor(() => {
       const start = fetchMock.mock.calls.find(

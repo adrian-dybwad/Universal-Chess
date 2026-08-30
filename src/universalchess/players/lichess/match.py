@@ -1,7 +1,9 @@
 """Pure Lichess matchmaking helpers: host, pairing, seek, splash copy.
 
-Seek parameters are derived from Players + Game settings so PLAY, lobby New
-Game, and a board-reset to the start position cannot drift. The bound
+Seek parameters are derived from Players settings and the lobby's Rated,
+Clock, and Color so PLAY, lobby New Game, and a board-reset to the start
+position cannot drift. The Game clock and Players colour control are for
+local games and are not posted. The bound
 credential's host (``org:alice`` / ``dev:bob``) selects the API server;
 lichess.dev is never chosen by a game-level toggle.
 """
@@ -10,7 +12,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from universalchess.i18n import t
-from universalchess.state.time_control import DelayMode, build_time_control
 from .hosts import (
     ACCOUNT_TYPE_LICHESS,
     HOST_BY_ID,
@@ -28,11 +29,30 @@ LICHESS_DEV_BASE_URL = get_host("dev").base_url
 START_PLAYING_SPLASH_SECONDS = 5.0
 
 
+# Board API Rapid/Classical clocks plus correspondence. Keys match the Game
+# presets that qualify; ``none`` is correspondence (the API has no unlimited
+# seek). Blitz/Bullet are omitted: Lichess rejects them with Invalid time control.
+DEFAULT_LICHESS_CLOCK = "rapid_10_0"
+DEFAULT_LICHESS_COLOR = "random"
+LICHESS_COLORS = ("random", "white", "black")
+LICHESS_CORRESPONDENCE_DAYS = 2
+LICHESS_CLOCKS = {
+    "none": None,
+    "rapid_10_0": (10, 0),
+    "rapid_10_5": (10, 5),
+    "rapid_15_10": (15, 10),
+    "classical_30_0": (30, 0),
+    "classical_30_20": (30, 20),
+    "classical_60_30": (60, 30),
+    "classical_90_30": (90, 30),
+}
+
+
 class LichessSeekError(Exception):
     """Settings cannot produce a Lichess seek.
 
-    ``code`` is ``pairing`` (not Human vs Lichess) or ``clock`` (not a simple
-    Fischer/sudden-death control). ``message`` is e-paper-sized copy.
+    ``code`` is ``pairing`` (not Human vs Lichess) or ``clock`` (not a Board API
+    Rapid, Classical, or correspondence clock). ``message`` is e-paper-sized copy.
     """
 
     def __init__(self, code: str, message: str):
@@ -52,6 +72,7 @@ class LichessSeek:
     rating_range: str
     account_id: str
     host_id: str = ""
+    days: int = 0
 
     @property
     def account_type(self) -> str:
@@ -223,7 +244,11 @@ def lichess_waiting_message(mode, seek=None, *, awaiting_opponent: bool = False)
     lines = [headline]
     if include_clock:
         rated = t("lichess.seek.rated") if seek.rated else t("lichess.seek.casual")
-        lines.append(f"{seek.time_minutes}+{seek.increment_seconds} {rated}")
+        if seek.days:
+            clock = t("lichess.seek.correspondence")
+        else:
+            clock = f"{seek.time_minutes}+{seek.increment_seconds}"
+        lines.append(f"{clock} {rated}")
         lines.append(color_label(seek.color))
     host_id, username = parse_credential_id(seek.account_id)
     if not username:
@@ -295,29 +320,18 @@ def has_lichess_slot(player1, player2) -> bool:
     return any(getattr(player, "type", "") == "lichess" for player in (player1, player2))
 
 
-def seek_color_from_settings(player1, player2) -> str:
-    """Color a new seek asks Lichess for: the account's side, not the human's.
+def _lobby_seek_color(game) -> str:
+    """Map the lobby Color setting to the Board API ``color`` field.
 
-    Lichess reads ``color`` as the side the *seeking* account wants, and the
-    account is the human's opponent, so a human who chose White seeks Black.
-    Player 1 owns the color control, so its value is the account's color when
-    Lichess sits in slot 1 and the opposite when it sits in slot 2.
-
-    Only a pairing with exactly one Lichess slot states a color. Anything else
-    -- a lobby Seek New Game over two engines, two humans, or two Lichess slots
-    -- was never configured as a Lichess game, so no side was chosen for it and
-    it seeks ``random`` rather than waiting for a color nobody asked for.
+    The seeking account is the human after remap, so White on the row posts
+    white. The Players colour control is for local games and is not consulted.
+    Empty (a config that predates the setting) is random. Unknown keys fall
+    through to random rather than posting a value Lichess will reject.
     """
-    slots = [p for p in (player1, player2) if getattr(p, "type", "") == "lichess"]
-    if len(slots) != 1:
-        return "random"
-    lichess = slots[0]
-    player1_color = (getattr(player1, "color", "") or "").lower()
-    if player1_color not in ("white", "black"):
-        return "random"
-    if lichess is player1:
-        return player1_color
-    return "black" if player1_color == "white" else "white"
+    key = str(getattr(game, "lichess_color", "") or "").strip().lower()
+    if key in LICHESS_COLORS:
+        return key
+    return DEFAULT_LICHESS_COLOR
 
 
 def epaper_is_flipped(player1_color: str, human_is_white: bool) -> bool:
@@ -337,26 +351,43 @@ def epaper_is_flipped(player1_color: str, human_is_white: bool) -> bool:
     return player1_is_white != human_is_white
 
 
-def _seek_clock(game) -> tuple[int, int]:
-    """Map Game time control to Lichess (minutes, increment).
+def board_seek_form(seek: LichessSeek) -> dict:
+    """Form body for ``POST /api/board/seek``.
 
-    Lichess ``board.seek`` is a single Fischer/sudden-death pair. Delay,
-    Bronstein, stages, time-odds, untimed, and non-whole-minute bases cannot be
-    sent without lying about the local clock.
+    Real-time sends ``time`` and ``increment``. Correspondence sends ``days`` and
+    omits the clock pair: ``0+0`` is Blitz and Lichess rejects it as invalid.
     """
-    control = build_time_control(game)
-    if (
-        not control.is_timed
-        or not control.is_symmetric
-        or control.delay_mode is not DelayMode.NONE
-        or control.delay_seconds
-        or len(control.white_stages) != 1
-    ):
+    data = {
+        "rated": "true" if seek.rated else "false",
+        "variant": "standard",
+        "color": seek.color or "random",
+        "ratingRange": seek.rating_range or "",
+    }
+    if seek.days:
+        data["days"] = int(seek.days)
+        return data
+    data["time"] = int(seek.time_minutes)
+    data["increment"] = int(seek.increment_seconds)
+    return data
+
+
+def _lobby_seek_clock(game) -> tuple[int, int, int]:
+    """Map the lobby clock setting to ``(minutes, increment, days)``.
+
+    The Game clock is for local games and is not consulted. Empty (a config
+    that predates the setting) is Rapid 10+0, which the Board API accepts.
+    ``days`` is non-zero only for correspondence (``none``).
+    """
+    key = str(getattr(game, "lichess_clock", "") or "").strip()
+    if not key:
+        key = DEFAULT_LICHESS_CLOCK
+    if key not in LICHESS_CLOCKS:
         raise LichessSeekError("clock", t("lichess.error.clock"))
-    stage = control.white_stages[0]
-    if stage.base_seconds <= 0 or stage.base_seconds % 60 != 0:
-        raise LichessSeekError("clock", t("lichess.error.clock"))
-    return stage.base_seconds // 60, int(stage.increment_seconds)
+    clock = LICHESS_CLOCKS[key]
+    if clock is None:
+        return 0, 0, LICHESS_CORRESPONDENCE_DAYS
+    minutes, increment = clock
+    return minutes, increment, 0
 
 
 def lichess_seek_from_settings(
@@ -373,26 +404,25 @@ def lichess_seek_from_settings(
     (``game.lichess_account``) and the host follows from its id (``dev:bob`` →
     lichess.dev), not from a player slot or a Game toggle.
 
-    ``require_clock`` is True for a NEW seek (Lichess ``board.seek`` needs a
-    simple Fischer pair). Ongoing/challenge join already has a remote clock, so
-    a local delay/staged/untimed control must not block connecting.
+    ``require_clock`` is True for a NEW seek. Ongoing/challenge join already
+    has a remote clock, so a missing lobby clock must not block connecting.
 
     ``lobby_seek`` marks a start the Lichess lobby asked for outright. Those
     buttons seek whatever the Players slots say, so the Human vs Lichess pairing
     the other paths require is not demanded of them; the caller runs the game
-    with the pairing ``effective_lichess_players`` derives. Color still comes
-    from the saved slots, so a lobby seek over a pairing that names no Lichess
-    slot has no color preference.
+    with the pairing ``effective_lichess_players`` derives. Color is the lobby
+    Color row, so a lobby seek over a pairing that names no Lichess slot still
+    posts White, Black, or Random.
     """
     if not lobby_seek:
         # Validation only: raises unless the slots are exactly Human vs Lichess.
         # The account no longer comes from the slot it returns.
         _human_and_lichess(settings.player1, settings.player2)
     if require_clock:
-        minutes, increment = _seek_clock(settings.game)
+        minutes, increment, days = _lobby_seek_clock(settings.game)
     else:
-        minutes, increment = 10, 5
-    color = seek_color_from_settings(settings.player1, settings.player2)
+        minutes, increment, days = 10, 5, 0
+    color = _lobby_seek_color(settings.game)
     account_id = lichess_account_id(settings)
     from .accounts import default_lichess_credential, get_lichess_credential, host_id_of
 
@@ -412,4 +442,5 @@ def lichess_seek_from_settings(
         rating_range=rating_range or "",
         account_id=account_id,
         host_id=host_id,
+        days=days,
     )

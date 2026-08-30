@@ -84,6 +84,7 @@
   "lichess.started": "Партия начата\nТвой цвет: {color}",
   "lichess.seek.rated": "рейтинговая",
   "lichess.seek.casual": "товарищеская",
+  "lichess.seek.correspondence": "Переписка",
   "lichess.color.random": "Случайно",
   "lichess.challenge.incoming": "ВХ",
   "lichess.challenge.outgoing": "ИСХ",

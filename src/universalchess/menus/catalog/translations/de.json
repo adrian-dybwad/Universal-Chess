@@ -19,8 +19,7 @@
     "player_type": {
       "human": "Mensch",
       "engine": "Engine",
-      "hand_brain": "Hand + Gehirn",
-      "lichess": "Lichess"
+      "hand_brain": "Hand + Gehirn"
     },
     "hand_brain_mode": {
       "normal": "Normal (Engine = Gehirn)",
@@ -77,6 +76,21 @@
       "20": "20 s",
       "30": "30 s",
       "60": "60 s"
+    },
+    "lichess_clock": {
+      "none": "Ohne",
+      "rapid_10_0": "10|0 Schnell",
+      "rapid_10_5": "10|5 Schnell",
+      "rapid_15_10": "15|10 Schnell",
+      "classical_30_0": "30|0 Klassisch",
+      "classical_30_20": "30|20 Klassisch",
+      "classical_60_30": "60|30 Klassisch",
+      "classical_90_30": "90|30 Klassisch"
+    },
+    "lichess_color": {
+      "random": "Zufall",
+      "white": "Weiß",
+      "black": "Schwarz"
     },
     "update_channel": {
       "stable": "Stabil (empfohlen)",
@@ -181,7 +195,7 @@
     },
     "settings.players": {
       "label": "Spieler",
-      "help": "Konfiguriert Spielernamen, Spielertypen, Engines und Lichess."
+      "help": "Konfiguriert Spielernamen, Spielertypen und Engines."
     },
     "players.player1": {
       "label": "Spieler 1\n{fn:player1_summary}",
@@ -198,7 +212,7 @@
     "players.lichess": {
       "label": "Lichess-Lobby",
       "boardLabel": "Lichess\nLobby",
-      "help": "Lichess-Zugangsdaten und Onlinespiel. Jede Anmeldung besteht aus Server und Benutzer (lichess.org oder lichess.dev). Öffnet die Kontoauswahl, Gewertet, laufende Partien, Herausforderungen und Neue Partie suchen."
+      "help": "Lichess-Zugangsdaten und Onlinespiel. Jede Anmeldung besteht aus Server und Benutzer (lichess.org oder lichess.dev). Öffnet die Kontoauswahl, Gewertet, Uhr, Farbe, laufende Partien, Herausforderungen und Neue Partie suchen."
     },
     "lichess.account": {
       "label": "Konto",
@@ -218,7 +232,7 @@
     "lichess.new_game": {
       "label": "Neue Partie suchen",
       "boardLabel": "Partie\nsuchen",
-      "help": "Sucht mit diesem Konto einen neuen Gegner auf Lichess, unabhängig von den Spieler-Einstellungen. Gewertet ist die Zeile darüber, die Bedenkzeit stammt aus den Partie-Einstellungen; die gewählte Farbe gilt nur, wenn ein Spieler auf Lichess gesetzt ist."
+      "help": "Sucht mit diesem Konto einen neuen Gegner auf Lichess, unabhängig von den Spieler-Einstellungen. Gewertet, Uhr und Farbe sind die Zeilen darüber."
     },
     "players.start": {
       "label": "Neue\nPartie",
@@ -650,7 +664,7 @@
     "field.player.type": {
       "label": "Spielertyp",
       "boardLabel": "Typ\n{value}",
-      "help": "Mensch, Engine, Hand+Gehirn oder Lichess"
+      "help": "Mensch, Engine oder Hand+Gehirn"
     },
     "field.player.name": {
       "label": "Spielername",
@@ -737,6 +751,16 @@
       "label": "Gewertet",
       "boardLabel": "Gewertet",
       "help": "Gewertete Partien zählen für die Lichess-Wertung dieses Kontos, ungewertete nicht.\n\nGilt für jede Partiesuche, die dieses Brett veröffentlicht, auch für eine aus der Lobby ohne einen auf Lichess gesetzten Spieler."
+    },
+    "field.lichess.clock": {
+      "label": "Uhr",
+      "boardLabel": "Uhr",
+      "help": "Uhr für jede Partiesuche, die dieses Brett veröffentlicht, auch für eine aus der Lobby ohne einen auf Lichess gesetzten Spieler.\n\nNur Schnell, Klassisch und Fernschach: die Board-API lehnt Blitz und Bullet ab. Ohne ist eine Fernpartie (2 Tage pro Zug). Die Partie-Uhr gilt für lokale Partien und wird nicht gesendet."
+    },
+    "field.lichess.color": {
+      "label": "Farbe",
+      "boardLabel": "Farbe",
+      "help": "Farbe, die dieses Konto in jeder Partiesuche spielt, die dieses Brett veröffentlicht, auch für eine aus der Lobby ohne einen auf Lichess gesetzten Spieler.\n\nWeiß, Schwarz oder Zufall. Nach dem Start sitzt der Mensch auf dieser Seite. Die Spieler-Farbe gilt für lokale Partien und wird nicht gesendet."
     },
     "field.lichess.api_token": {
       "label": "API-Token",

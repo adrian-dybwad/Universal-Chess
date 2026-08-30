@@ -39,6 +39,9 @@ CATALOG_JSON = Path(universalchess.__file__).resolve().parent / "menus" / "catal
 
 POSITIONS_NODE = "main.positions"
 POSITIONS_KEY = "Positions"
+LICHESS_NODE = "players.lichess"
+LICHESS_KEY = "Lichess"
+CENTAUR_NODE = "main.centaur"
 ROOT_DISPATCH = "main"
 SETTINGS_DISPATCH = "_handle_settings"
 
@@ -170,16 +173,58 @@ def test_settings_no_longer_dispatches_positions():
     assert POSITIONS_KEY not in _compared_strings(SETTINGS_DISPATCH)
 
 
+def test_lichess_lobby_is_a_main_menu_entry():
+    """The main menu lists Lichess Lobby directly, above Original Centaur.
+
+    Why this test exists: the lobby is a way into a game, not a Players setting.
+    How a regression manifests: the row returns under Players, so starting a
+    Lichess game is buried behind Settings → Players.
+    """
+    catalog = _catalog()
+    assert catalog.has_node(LICHESS_NODE)
+    assert LICHESS_NODE in catalog.child_ids("main")
+
+
+def test_lichess_lobby_sits_between_positions_and_centaur():
+    """Lichess Lobby is ordered after Positions and before Original Centaur.
+
+    Why this test exists: the requested placement is the main-menu slot above
+    the Original Centaur button. How a regression manifests: an append puts it
+    last, or it sits above PLAY.
+    """
+    children = _catalog().child_ids("main")
+    assert children.index(POSITIONS_NODE) < children.index(LICHESS_NODE)
+    assert children.index(LICHESS_NODE) < children.index(CENTAUR_NODE)
+
+
+def test_lichess_lobby_is_no_longer_a_players_entry():
+    """Players no longer offers the Lichess lobby row.
+
+    Why this test exists: leaving the old row would give two routes to the
+    same screen. How a regression manifests: Players still lists players.lichess.
+    """
+    assert LICHESS_NODE not in _catalog().child_ids("settings.players")
+
+
+def test_root_dispatch_handles_lichess():
+    """Selecting Lichess on the main menu must have a dispatch branch.
+
+    Why this test exists: the menu is rendered from the catalog but dispatched
+    by row key. How a regression manifests: the row draws and does nothing.
+    """
+    assert LICHESS_KEY in _compared_strings(ROOT_DISPATCH)
+
+
 def test_the_main_menu_still_fits_on_one_screen():
-    """Four rows draw without scrolling, and PLAY stays the dominant one.
+    """Five rows draw without scrolling, and PLAY stays the dominant one.
 
     Why this test exists: the main menu allocates height by weight, so adding a
     row takes screen from the rows already there. Below the widget's minimum
     button height the menu silently starts scrolling, which turns a glanceable
     list into one the user has to page through, and PLAY -- deliberately the
-    largest target on the board -- would shrink toward the others. Settings was
-    reduced to the same weight as Positions and Original Centaur to pay for the
-    new row.
+    largest target on the board -- would shrink toward the others. Positions,
+    Lichess, Original Centaur, and Settings share the same weight so PLAY stays
+    at least twice as tall as every other row.
 
     How a regression manifests: a later row or a raised weight pushes the total
     past the screen, and the bottom entry disappears below the fold with no

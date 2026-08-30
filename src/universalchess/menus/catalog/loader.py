@@ -452,11 +452,9 @@ def _validate(menu_data: dict, icons_data: dict) -> None:
 def _validate_account_types(menu_data: dict, icon_ids: "set[str]") -> None:
     """Validate the optional ``accountTypes`` block, raising :class:`CatalogError`.
 
-    Each entry defines an online player type's account. Checks guard the exact
+    Each entry defines an online account type's credentials. Checks guard the exact
     ways a malformed entry would break the Add Account form or the account store:
     - ids present and unique (a duplicate would shadow a definition);
-    - the id is also a ``player_type`` option value (the online-player-type link,
-      so a slot can actually select this account type);
     - ``label`` present and ``icon`` registered (blank/placeholder chrome);
     - ``fields`` non-empty, each with a unique ``key``, a ``label``, and a
       supported control ``type`` (an unfillable/blank row otherwise);
@@ -464,6 +462,11 @@ def _validate_account_types(menu_data: dict, icon_ids: "set[str]") -> None:
       ``identityField`` names a real field (else uniqueness has no value to key);
     - optional ``hosts`` is a non-empty list of ``{id, label, baseUrl}`` with
       unique ids and ``https://`` URLs (the web Add Account server picker).
+
+    An account type need not be a ``player_type`` option. Lichess is stored as
+    credentials and started from the lobby; slots are Human, Engine, or
+    Hand+Brain. A future plugin that *is* a slot type can still declare
+    ``playerType``.
 
     The block is optional; a catalog without ``accountTypes`` is valid.
     """
@@ -486,11 +489,11 @@ def _validate_account_types(menu_data: dict, icon_ids: "set[str]") -> None:
             raise CatalogError(f"duplicate account type id: {type_id}")
         seen_ids.add(type_id)
 
-        player_type = entry.get("playerType") or type_id
-        if player_type not in player_type_values:
+        player_type = entry.get("playerType")
+        if player_type is not None and player_type not in player_type_values:
             raise CatalogError(
-                f"account type '{type_id}' has no matching value in the "
-                f"'player_type' option set (an online player type must exist)"
+                f"account type '{type_id}' names playerType '{player_type}' "
+                f"which is not in the 'player_type' option set"
             )
 
         if not entry.get("label"):

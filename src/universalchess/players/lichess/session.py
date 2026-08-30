@@ -111,7 +111,7 @@ class LichessPlaySession:
         the assigned color turns the display around (:func:`epaper_is_flipped`).
         ``on_unfinished_game`` is called with the termination when the remote
         game ends (abort, resign, mate, timeout, draw), so the main loop can
-        offer Lobby / Seek / Cancel with that reason in the header.
+        offer Lobby / Seek with that reason in the header (BACK refuses).
         ``catch_up_moves`` replays a multi-ply first snapshot (joining a game
         already in progress) onto the logical board and starts piece setup.
         """
@@ -273,6 +273,7 @@ class LichessPlaySession:
             ),
             account_id=str(cfg.account_id or ""),
             host_id=getattr(self._remote, "_host_id", "") or "",
+            days=int(getattr(cfg, "days", 0) or 0),
         )
         show_lichess_waiting_splash(
             self._panel,

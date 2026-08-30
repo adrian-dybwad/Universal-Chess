@@ -21,8 +21,7 @@
     "player_type": {
       "human": "Humain",
       "engine": "Moteur",
-      "hand_brain": "Main + Cerveau",
-      "lichess": "Lichess"
+      "hand_brain": "Main + Cerveau"
     },
     "hand_brain_mode": {
       "normal": "Normal (Moteur = Cerveau)",
@@ -79,6 +78,21 @@
       "20": "20 s",
       "30": "30 s",
       "60": "60 s"
+    },
+    "lichess_clock": {
+      "none": "Aucun",
+      "rapid_10_0": "10|0 Rapide",
+      "rapid_10_5": "10|5 Rapide",
+      "rapid_15_10": "15|10 Rapide",
+      "classical_30_0": "30|0 Classique",
+      "classical_30_20": "30|20 Classique",
+      "classical_60_30": "60|30 Classique",
+      "classical_90_30": "90|30 Classique"
+    },
+    "lichess_color": {
+      "random": "Aléatoire",
+      "white": "Blancs",
+      "black": "Noirs"
     },
     "update_channel": {
       "stable": "Stable (recommandé)",
@@ -182,7 +196,7 @@
     "settings": { "label": "Paramètres" },
     "settings.players": {
       "label": "Joueurs",
-      "help": "Configure les noms des joueurs, les types, les moteurs et les comptes en ligne enregistrés."
+      "help": "Configure les noms des joueurs, les types et les moteurs."
     },
     "players.player1": {
       "label": "Joueur 1\n{fn:player1_summary}",
@@ -199,7 +213,7 @@
     "players.lichess": {
       "label": "Lobby Lichess",
       "boardLabel": "Lobby\nLichess",
-      "help": "Identifiants Lichess et jeu en ligne. Chaque compte est un serveur et un utilisateur (lichess.org ou lichess.dev). Ouvre le sélecteur de compte, Classée, les parties en cours, les défis et Chercher une partie."
+      "help": "Identifiants Lichess et jeu en ligne. Chaque compte est un serveur et un utilisateur (lichess.org ou lichess.dev). Ouvre le sélecteur de compte, Classée, Pendule, Couleur, les parties en cours, les défis et Chercher une partie."
     },
     "lichess.account": {
       "label": "Compte",
@@ -219,7 +233,7 @@
     "lichess.new_game": {
       "label": "Chercher une partie",
       "boardLabel": "Chercher\nune partie",
-      "help": "Cherche un nouvel adversaire sur Lichess avec ce compte, quels que soient les réglages des joueurs. Classée est la ligne au-dessus et la cadence vient des réglages Partie ; la couleur est celle que vous avez choisie seulement lorsqu'un joueur est réglé sur Lichess."
+      "help": "Cherche un nouvel adversaire sur Lichess avec ce compte, quels que soient les réglages des joueurs. Classée, Pendule et Couleur sont les lignes au-dessus."
     },
     "players.start": {
       "label": "Nouvelle\npartie",
@@ -636,7 +650,7 @@
     "field.player.type": {
       "label": "Type de joueur",
       "boardLabel": "Type\n{value}",
-      "help": "Humain, Moteur, Main+Cerveau ou Lichess"
+      "help": "Humain, Moteur ou Main+Cerveau"
     },
     "field.player.name": {
       "label": "Nom du joueur",
@@ -723,6 +737,16 @@
       "label": "Classée",
       "boardLabel": "Classée",
       "help": "Les parties classées comptent pour le classement Lichess de ce compte ; les parties amicales non.\n\nS'applique à toutes les recherches publiées par ce plateau, y compris celles du lobby sans aucun joueur réglé sur Lichess."
+    },
+    "field.lichess.clock": {
+      "label": "Pendule",
+      "boardLabel": "Pendule",
+      "help": "Pendule de toutes les recherches publiées par ce plateau, y compris celles du lobby sans aucun joueur réglé sur Lichess.\n\nSeulement Rapide, Classique et par correspondance : l'API plateau refuse Blitz et Bullet. Aucun est une partie par correspondance (2 jours par coup). La pendule de Partie est pour les parties locales et n'est pas envoyée."
+    },
+    "field.lichess.color": {
+      "label": "Couleur",
+      "boardLabel": "Couleur",
+      "help": "Couleur que ce compte joue dans toutes les recherches publiées par ce plateau, y compris celles du lobby sans aucun joueur réglé sur Lichess.\n\nBlancs, Noirs ou Aléatoire. Une fois la partie commencée, l'humain occupe ce camp. La couleur des Joueurs est pour les parties locales et n'est pas envoyée."
     },
     "field.lichess.api_token": {
       "label": "Jeton d'API",

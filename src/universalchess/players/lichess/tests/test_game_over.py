@@ -1,4 +1,4 @@
-"""A remote abort or resign must end the board game and offer Seek / Lobby / Cancel.
+"""A remote abort or resign must end the board game and offer Lobby / Seek.
 
 Why these tests exist
 ---------------------
@@ -127,7 +127,7 @@ def test_a_second_abort_event_does_not_notify_again():
 
 
 def test_session_abort_asks_what_to_do_next():
-    """Opponent abort must offer Lobby / Seek / Cancel, not sit on a live board.
+    """Opponent abort must offer Lobby / Seek, not sit on a live board.
 
     How the regression manifests: unfinished is never called, so the main loop
     never shows board_reset_rebuild_action.
@@ -156,7 +156,7 @@ def test_session_abort_asks_what_to_do_next():
 
 
 def test_session_resign_asks_what_to_do_next():
-    """Opponent resign must offer Lobby / Seek / Cancel, headed with the reason.
+    """Opponent resign must offer Lobby / Seek, headed with the reason.
 
     Why: abort already opened that menu; resign only painted GameOverWidget, so
     the next-game menu never appeared. How the regression manifests: unfinished

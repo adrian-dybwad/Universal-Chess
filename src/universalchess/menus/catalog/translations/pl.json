@@ -19,8 +19,7 @@
     "player_type": {
       "human": "Człowiek",
       "engine": "Silnik",
-      "hand_brain": "Ręka + Mózg",
-      "lichess": "Lichess"
+      "hand_brain": "Ręka + Mózg"
     },
     "hand_brain_mode": {
       "normal": "Normalny (silnik = mózg)",
@@ -77,6 +76,21 @@
       "20": "20 s",
       "30": "30 s",
       "60": "60 s"
+    },
+    "lichess_clock": {
+      "none": "Brak",
+      "rapid_10_0": "10|0 Rapid",
+      "rapid_10_5": "10|5 Rapid",
+      "rapid_15_10": "15|10 Rapid",
+      "classical_30_0": "30|0 Klasyczne",
+      "classical_30_20": "30|20 Klasyczne",
+      "classical_60_30": "60|30 Klasyczne",
+      "classical_90_30": "90|30 Klasyczne"
+    },
+    "lichess_color": {
+      "random": "Losowy",
+      "white": "Białe",
+      "black": "Czarne"
     },
     "update_channel": {
       "stable": "Stabilny (zalecany)",
@@ -181,7 +195,7 @@
     },
     "settings.players": {
       "label": "Gracze",
-      "help": "Skonfiguruj nazwy graczy, typy graczy, silniki i Lichess."
+      "help": "Skonfiguruj nazwy graczy, typy graczy i silniki."
     },
     "players.player1": {
       "label": "Gracz 1\n{fn:player1_summary}",
@@ -198,7 +212,7 @@
     "players.lichess": {
       "label": "Lobby Lichess",
       "boardLabel": "Lichess\nLobby",
-      "help": "Dane Lichess i gra online. Każde logowanie to serwer i użytkownik (lichess.org lub lichess.dev). Otwiera wybór konta, Rankingowa, trwające partie, wyzwania i Szukaj nowej partii."
+      "help": "Dane Lichess i gra online. Każde logowanie to serwer i użytkownik (lichess.org lub lichess.dev). Otwiera wybór konta, Rankingowa, Zegar, Kolor, trwające partie, wyzwania i Szukaj nowej partii."
     },
     "lichess.account": {
       "label": "Konto",
@@ -218,7 +232,7 @@
     "lichess.new_game": {
       "label": "Szukaj nowej partii",
       "boardLabel": "Szukaj\npartii",
-      "help": "Znajdź na Lichess nowego przeciwnika dla tego konta, niezależnie od tego, co jest ustawione w Graczach. Rankingowa to wiersz powyżej, a tempo gry pochodzi z ustawień Partii; wybrany kolor obowiązuje tylko wtedy, gdy gracz jest ustawiony na Lichess."
+      "help": "Znajdź na Lichess nowego przeciwnika dla tego konta, niezależnie od tego, co jest ustawione w Graczach. Rankingowa, Zegar i Kolor to wiersze powyżej."
     },
     "players.start": {
       "label": "Rozpocznij\nnową partię",
@@ -650,7 +664,7 @@
     "field.player.type": {
       "label": "Typ gracza",
       "boardLabel": "Typ\n{value}",
-      "help": "Człowiek, Silnik, Ręka+Mózg albo Lichess"
+      "help": "Człowiek, Silnik albo Ręka+Mózg"
     },
     "field.player.name": {
       "label": "Nazwa gracza",
@@ -737,6 +751,16 @@
       "label": "Rankingowa",
       "boardLabel": "Rankin-\ngowa",
       "help": "Partie rankingowe liczą się do rankingu Lichess tego konta; towarzyskie nie.\n\nDotyczy każdego ogłoszenia wystawionego przez tę szachownicę, także tego z lobby, gdy żaden gracz nie jest ustawiony na Lichess."
+    },
+    "field.lichess.clock": {
+      "label": "Zegar",
+      "boardLabel": "Zegar",
+      "help": "Zegar każdego ogłoszenia wystawionego przez tę szachownicę, także tego z lobby, gdy żaden gracz nie jest ustawiony na Lichess.\n\nTylko Rapid, Klasyczne i korespondencyjne: Board API odrzuca Blitz i Bullet. Brak to partia korespondencyjna (2 dni na ruch). Zegar w Partii jest do gier lokalnych i nie jest wysyłany."
+    },
+    "field.lichess.color": {
+      "label": "Kolor",
+      "boardLabel": "Kolor",
+      "help": "Kolor, którym to konto gra w każdym ogłoszeniu wystawionym przez tę szachownicę, także z lobby, gdy żaden gracz nie jest ustawiony na Lichess.\n\nBiałe, Czarne albo Losowy. Po starcie człowiek siada po tej stronie. Kolor w Graczach jest do gier lokalnych i nie jest wysyłany."
     },
     "field.lichess.api_token": {
       "label": "Token API",

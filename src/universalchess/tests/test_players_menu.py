@@ -165,14 +165,14 @@ def test_engine_hides_name_and_hand_brain_rows():
 
 
 def test_think_time_row_visibility_and_board_label():
-    """Think Time shows for engine/hand_brain (with its {value} label), not human/lichess.
+    """Think Time shows for engine/hand_brain (with its {value} label), not human.
 
     Why this test exists: per-move think time only applies when a player is driven
-    by an engine (engine or hand_brain); a human/lichess slot has no engine to
+    by an engine (engine or hand_brain); a human slot has no engine to
     time, so the row is gated to ["engine", "hand_brain"]. The board label uses
     the "Think\\n{value}" template resolved through the ``think_time`` option set
     (stored int 5 -> "5 sec"). How a regression manifests: the row leaks onto a
-    human/lichess slot, disappears for an engine slot, or the label shows the raw
+    human slot, disappears for an engine slot, or the label shows the raw
     value ("Think\\n5") or the long web label instead of "Think\\n5 sec".
     """
     engine_rows = {r.node["id"]: r for r in _detail_rows(_player_state(type="engine", think_time=5))}
@@ -183,8 +183,6 @@ def test_think_time_row_visibility_and_board_label():
 
     human_ids = [r.node["id"] for r in _detail_rows(_player_state(type="human"))]
     assert "field.player.think_time" not in human_ids
-    lichess_ids = [r.node["id"] for r in _detail_rows(_player_state(type="lichess"))]
-    assert "field.player.think_time" not in lichess_ids
 
 
 def test_selecting_think_time_writes_chosen_option_value():
@@ -222,22 +220,15 @@ def test_hand_brain_shows_mode_row_with_checkbox_icon():
     assert normal["field.player.hand_brain_mode"].icon == "checkbox_empty"
 
 
-def test_lichess_shows_only_color_and_type_on_the_slot():
-    """A Lichess player exposes Color and Type -- no account, no Rated.
+def test_player_type_picker_does_not_offer_lichess():
+    """The Type row lists Human, Engine, and Hand+Brain only.
 
-    Why this test exists: the slot used to carry both the saved account and the
-    Rated toggle, so each existed only while a slot was set to Lichess. Both
-    govern seeks the lobby posts from any pairing, so both are the lobby's now
-    (Players → Lichess Lobby). How a regression manifests: the engine/ELO/name
-    rows (non-Lichess) leak in, or an Account or Rated row reappears on the slot
-    and reintroduces a second place to set it -- one the lobby's own seek would
-    ignore.
+    Why this test exists: Lichess as a slot type left PLAY seeking and Positions
+    blocked. Online play starts from the lobby. How a regression manifests:
+    ``lichess`` is back in the option set, so a slot can be set to it again.
     """
-    ids = [r.node["id"] for r in _detail_rows(_player_state(type="lichess"))]
-    assert ids == [
-        "field.player.color",
-        "field.player.type",
-    ]
+    values = {o["value"] for o in load_catalog().option_set("player_type")}
+    assert values == {"human", "engine", "hand_brain"}
 
 
 def test_no_player_row_binds_an_account():
@@ -514,7 +505,6 @@ def _players_ctx(p1, p2, *, calls=None, p1_summary="P1", p2_summary="P2"):
     ctx.register_action("open_player1", lambda: calls.append("open_player1") or None)
     ctx.register_action("open_player2", lambda: calls.append("open_player2") or None)
     ctx.register_action("open_accounts", lambda: calls.append("open_accounts") or None)
-    ctx.register_action("lichess", lambda: calls.append("lichess") or None)
     ctx.register_action("start_game", lambda: "START_GAME")
     game = {"lichess_use_dev": False, "lichess_rated": False}
     ctx.register_store(
@@ -529,54 +519,19 @@ def _players_rows(p1, p2, **kwargs):
     return build_rows("settings.players", _players_ctx(p1, p2, **kwargs), platform="board", catalog=load_catalog())
 
 
-def test_top_level_lists_two_players_lichess_then_start():
-    """Players lists Player 1, Player 2, Lichess Settings, then Start.
+def test_top_level_lists_two_players_then_start():
+    """Players lists Player 1, Player 2, then Start -- not the Lichess lobby.
 
-    Why: Lichess Settings holds credentials and the lobby, not a per-slot row.
-    How a regression manifests: Lichess Settings is missing/reordered, Accounts
-    returns to the top level, or Start Game is no longer last.
+    Why: the lobby is a main-menu entry. How a regression manifests: the lobby
+    row returns under Players, Accounts becomes a sibling of Start, or Start
+    Game is no longer last.
     """
     ids = [r.node["id"] for r in _players_rows(_player_state(), _player_state())]
     assert ids == [
         "players.player1",
         "players.player2",
-        "players.lichess",
         "players.start",
     ]
-
-
-def test_lichess_settings_opens_the_lobby():
-    """Selecting Lichess Settings runs the lobby (Account, Ongoing, Challenges, New Game).
-
-    Why: those rows used to sit behind Players → Lichess Settings → Play. The
-    Settings row itself is the lobby now. How a regression manifests: the node
-    is a submenu with a Play child, or dispatch does not run lichess.
-    """
-    calls = []
-    ctx = _players_ctx(_player_state(), _player_state(), calls=calls)
-    node = load_catalog().get_node("players.lichess")
-    assert node["type"] == "action" and node["action"] == "lichess"
-    outcome = dispatch(node, ctx)
-    assert outcome.kind == "action" and outcome.action == "lichess"
-    assert calls == ["lichess"]
-
-
-def test_lichess_lobby_start_game_unwinds_from_lichess_settings():
-    """START_GAME from Lichess Settings must leave Players, not redraw the rows.
-
-    Why: New Game / Challenges run inside Players → Lichess Settings. The
-    engine only forwarded break results from a submenu, so START_GAME was
-    dropped and Players painted over the board (analysis still showed below).
-
-    How a regression manifests: result is None or BACK, meaning Players stayed
-    open after the lobby asked to start.
-    """
-    ctx = _players_ctx(_player_state(), _player_state())
-    ctx.register_action("lichess", lambda: "START_GAME")
-    mm = _FakeMenuManager(["Lichess"])
-    result = run_engine_menu("settings.players", ctx, mm, catalog=load_catalog())
-    assert result is not None
-    assert result.key == "START_GAME"
 
 
 def test_accounts_row_dispatches_open_accounts():

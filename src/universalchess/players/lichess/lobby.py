@@ -133,13 +133,20 @@ def resolve_lichess_identity(token, log=None, host_id: str = ""):
 DEFAULT_ACCOUNT_MENU_KEY = "Default"
 ACCOUNTS_MENU_KEY = "Accounts"
 
-def build_lichess_menu_entries(username: Optional[str], rated: bool = False):
+def build_lichess_menu_entries(
+    username: Optional[str], rated: bool = False, clock: str = "", color: str = ""
+):
     """Build Lichess Settings rows (the lobby, not a nested Play page).
 
     Account is first and selectable: it opens the account picker. Rated follows
     it, because it decides what the account's rating is exposed to and applies
     to every seek this board posts -- a player slot could not hold it, since a
-    lobby seek runs from a pairing no saved slot describes. Ongoing Games and
+    lobby seek runs from a pairing no saved slot describes. Clock sits under
+    Rated for the same reason: the Board API accepts only Rapid, Classical, and
+    correspondence, so the Game clock (which still offers Blitz) is not sent.
+    Color sits under Clock: White, Black, or Random for the seeking account,
+    which is the side the human plays after remap. The Players colour control
+    still swaps sides for engine games and is not sent. Ongoing Games and
     Challenges are always listed; selecting either shows how it works, then the
     live list. Seek New Game is last. Add or delete logins is Accounts on the
     picker, not a lobby sibling.
@@ -151,7 +158,14 @@ def build_lichess_menu_entries(username: Optional[str], rated: bool = False):
     Labels and help come from the catalog nodes the web card renders, so the row
     reads the same on both surfaces and in the device's language.
     """
+    from universalchess.menus.catalog.loader import get_catalog
+    from .match import DEFAULT_LICHESS_CLOCK, DEFAULT_LICHESS_COLOR
+
     account = username or t("common.unknown")
+    clock_key = clock or DEFAULT_LICHESS_CLOCK
+    clock_label = get_catalog().option_label("lichess_clock", clock_key)
+    color_key = color or DEFAULT_LICHESS_COLOR
+    color_label = get_catalog().option_label("lichess_color", color_key)
     return [
         IconMenuEntry(
             key="Account",
@@ -166,6 +180,18 @@ def build_lichess_menu_entries(username: Optional[str], rated: bool = False):
             ),
             icon_name="checkbox_checked" if rated else "checkbox_empty",
             help=_row("field.lichess.rated", "help"),
+        ),
+        IconMenuEntry(
+            key="Clock",
+            label=f"{_row('field.lichess.clock', 'boardLabel')}\n{clock_label}",
+            icon_name="timer" if clock_key == "none" else "timer_checked",
+            help=_row("field.lichess.clock", "help"),
+        ),
+        IconMenuEntry(
+            key="Color",
+            label=f"{_row('field.lichess.color', 'boardLabel')}\n{color_label}",
+            icon_name=_lichess_color_icon(color_key),
+            help=_row("field.lichess.color", "help"),
         ),
         IconMenuEntry(
             key="Ongoing",
@@ -185,6 +211,20 @@ def build_lichess_menu_entries(username: Optional[str], rated: bool = False):
             icon_name="play",
         ),
     ]
+
+
+_LICHESS_COLOR_ICONS = {
+    "white": "white_piece",
+    "black": "black_piece",
+    "random": "random",
+}
+
+
+def _lichess_color_icon(color_key: str) -> str:
+    """King icon for White/Black, dice for Random."""
+    from .match import DEFAULT_LICHESS_COLOR
+
+    return _LICHESS_COLOR_ICONS.get(color_key, _LICHESS_COLOR_ICONS[DEFAULT_LICHESS_COLOR])
 
 
 def build_lichess_account_picker_entries(choices):
@@ -242,6 +282,97 @@ def show_lichess_account_picker(menu_manager, choices):
         return None
     if result.key == DEFAULT_ACCOUNT_MENU_KEY:
         return ""
+    return result.key
+
+
+def build_lichess_clock_picker_entries(selected: str):
+    """Radio rows for the lobby Clock picker.
+
+    Choices come from the catalog ``lichess_clock`` set, which is only the
+    Board API clocks plus None for correspondence. Blitz is not listed.
+    """
+    from universalchess.menus.catalog.loader import get_catalog
+    from .match import DEFAULT_LICHESS_CLOCK
+
+    current = selected or DEFAULT_LICHESS_CLOCK
+    entries = []
+    for option in get_catalog().option_set("lichess_clock"):
+        value = str(option["value"])
+        entries.append(
+            IconMenuEntry(
+                key=value,
+                label=option["label"],
+                icon_name="timer" if value == "none" else "timer_checked",
+                trailing_icon_name="radio_checked" if value == current else "radio_empty",
+            )
+        )
+    return entries
+
+
+def show_lichess_clock_picker(menu_manager, selected: str):
+    """Show the clock picker and return the chosen key, or None on BACK.
+
+    Break results are returned unchanged so Play can unwind.
+    """
+    entries = build_lichess_clock_picker_entries(selected)
+    selected_index = next(
+        (
+            index
+            for index, entry in enumerate(entries)
+            if entry.trailing_icon_name == "radio_checked"
+        ),
+        0,
+    )
+    result = menu_manager.show_menu(entries, initial_index=selected_index)
+    if result.is_break:
+        return result
+    if result.is_exit():
+        return None
+    return result.key
+
+
+def build_lichess_color_picker_entries(selected: str):
+    """Radio rows for the lobby Color picker.
+
+    Choices come from the catalog ``lichess_color`` set: Random, White, Black.
+    """
+    from universalchess.menus.catalog.loader import get_catalog
+    from .match import DEFAULT_LICHESS_COLOR
+
+    current = selected or DEFAULT_LICHESS_COLOR
+    entries = []
+    for option in get_catalog().option_set("lichess_color"):
+        value = str(option["value"])
+        entries.append(
+            IconMenuEntry(
+                key=value,
+                label=option["label"],
+                icon_name=_lichess_color_icon(value),
+                trailing_icon_name="radio_checked" if value == current else "radio_empty",
+            )
+        )
+    return entries
+
+
+def show_lichess_color_picker(menu_manager, selected: str):
+    """Show the color picker and return the chosen key, or None on BACK.
+
+    Break results are returned unchanged so Play can unwind.
+    """
+    entries = build_lichess_color_picker_entries(selected)
+    selected_index = next(
+        (
+            index
+            for index, entry in enumerate(entries)
+            if entry.trailing_icon_name == "radio_checked"
+        ),
+        0,
+    )
+    result = menu_manager.show_menu(entries, initial_index=selected_index)
+    if result.is_break:
+        return result
+    if result.is_exit():
+        return None
     return result.key
 
 
@@ -376,9 +507,10 @@ def choose_lichess_reset_action(menu_manager, *, reason: Optional[str] = None) -
     (board-reset to the start, or the opponent aborted). Seeking is only one
     of the things wanted -- an ongoing game, a challenge, a different account
     or a rated change are all in the lobby -- so the lobby is offered first.
-    Cancel is highlighted so a stray TICK cannot register a seek, and anything
-    that is not a row (BACK, break) is a refusal. ``reason`` selects the
-    header: resign names that the opponent resigned; omitted is board-reset.
+    Lobby is highlighted so a stray TICK cannot register a seek. BACK (or any
+    key that is not a row) is the refusal; a Cancel row duplicated that.
+    ``reason`` selects the header: resign names that the opponent resigned;
+    omitted is board-reset.
     """
     entries = [
         IconMenuEntry(
@@ -401,11 +533,8 @@ def choose_lichess_reset_action(menu_manager, *, reason: Optional[str] = None) -
             icon_name="play",
             enabled=True,
         ),
-        IconMenuEntry(
-            key="Cancel", label=t("common.cancel"), icon_name="undo", enabled=True
-        ),
     ]
-    result = menu_manager.show_menu(entries, initial_index=3)
+    result = menu_manager.show_menu(entries, initial_index=1)
     key = result.key if hasattr(result, "key") else result
     if key == "Lobby":
         return "lobby"
@@ -421,7 +550,7 @@ def board_reset_rebuild_action(
 
     Setting the pieces back to the start, or a remote abort, rebuilds through
     ``_start_game_mode``, which posts a new seek. Those paths are not PLAY,
-    lobby Seek New Game, or web New Game, so they ask first. Cancel (or no menu)
+    lobby Seek New Game, or web New Game, so they ask first. BACK (or no menu)
     returns ``menu`` so the caller leaves the game without seeking, ``lobby``
     asks for the Lichess lobby instead, and ``seek`` means the caller stashes an
     explicit NEW join. Engine/human rebuilds return ``rebuild`` without a prompt.
@@ -1000,6 +1129,10 @@ def handle_lichess_menu(
     bind_account_fn: Optional[Callable] = None,
     rated_fn: Optional[Callable] = None,
     set_rated_fn: Optional[Callable] = None,
+    clock_fn: Optional[Callable] = None,
+    set_clock_fn: Optional[Callable] = None,
+    color_fn: Optional[Callable] = None,
+    set_color_fn: Optional[Callable] = None,
 ):
     """Handle Lichess Settings: Account, Ongoing, Challenges, New Game.
 
@@ -1020,6 +1153,10 @@ def handle_lichess_menu(
         rated_fn: ``() -> bool``, the stored Rated setting. Read on every
             redraw so the row shows what the next seek will be.
         set_rated_fn: ``(bool) -> None``, persists a Rated change.
+        clock_fn: ``() -> str``, the stored lobby clock key. Read on every redraw.
+        set_clock_fn: ``(str) -> None``, persists a Clock pick.
+        color_fn: ``() -> str``, the stored lobby color key. Read on every redraw.
+        set_color_fn: ``(str) -> None``, persists a Color pick.
 
     Returns:
         ``"START_GAME"`` if a Lichess game was requested (join stashed; Settings
@@ -1095,6 +1232,22 @@ def handle_lichess_menu(
         """Stored Rated setting; False when the caller wired no reader."""
         return bool(rated_fn()) if rated_fn is not None else False
 
+    def _clock() -> str:
+        """Stored lobby clock key; Rapid 10+0 when the caller wired no reader."""
+        from .match import DEFAULT_LICHESS_CLOCK
+
+        if clock_fn is None:
+            return DEFAULT_LICHESS_CLOCK
+        return str(clock_fn() or "") or DEFAULT_LICHESS_CLOCK
+
+    def _color() -> str:
+        """Stored lobby color key; Random when the caller wired no reader."""
+        from .match import DEFAULT_LICHESS_COLOR
+
+        if color_fn is None:
+            return DEFAULT_LICHESS_COLOR
+        return str(color_fn() or "") or DEFAULT_LICHESS_COLOR
+
     def handle_selection(result: MenuSelection):
         if result.key == "Account":
             while True:
@@ -1122,6 +1275,24 @@ def handle_lichess_menu(
             # rated_fn, so the checkbox shows the value that was just written.
             if set_rated_fn is not None:
                 set_rated_fn(not _rated())
+            return None
+        if result.key == "Clock":
+            if set_clock_fn is None:
+                return None
+            picked = show_lichess_clock_picker(menu_manager, _clock())
+            if is_break_result(picked):
+                return picked
+            if picked is not None:
+                set_clock_fn(picked)
+            return None
+        if result.key == "Color":
+            if set_color_fn is None:
+                return None
+            picked = show_lichess_color_picker(menu_manager, _color())
+            if is_break_result(picked):
+                return picked
+            if picked is not None:
+                set_color_fn(picked)
             return None
         if result.key == "NewGame":
             if start_game(LichessConfig(mode=LichessGameMode.NEW)):
@@ -1159,7 +1330,9 @@ def handle_lichess_menu(
 
     try:
         result = menu_manager.run_menu_loop(
-            lambda: build_lichess_menu_entries(username, _rated()),
+            lambda: build_lichess_menu_entries(
+                username, _rated(), _clock(), _color()
+            ),
             handle_selection,
         )
         if is_play_start(result):

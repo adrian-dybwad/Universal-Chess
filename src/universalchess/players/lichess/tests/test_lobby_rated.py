@@ -61,7 +61,7 @@ def _run_lobby(selections, **kwargs):
 
 
 def test_rated_sits_directly_under_account_in_the_lobby():
-    """The lobby lists Account, Rated, Ongoing, Challenges, Seek New Game.
+    """The lobby lists Account, Rated, Clock, Color, Ongoing, Challenges, Seek New Game.
 
     Rated is what the seek is posted as, so it belongs beside the account that
     posts it rather than on a player slot that a lobby seek does not consult.
@@ -75,6 +75,8 @@ def test_rated_sits_directly_under_account_in_the_lobby():
     assert [entry.key for entry in entries] == [
         "Account",
         "Rated",
+        "Clock",
+        "Color",
         "Ongoing",
         "Challenges",
         "NewGame",

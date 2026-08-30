@@ -113,7 +113,7 @@ def test_menu_schema_includes_known_field_help(client):
     resp = client.get("/api/menu-schema")
     data = json.loads(resp.data)
     by_id = {n["id"]: n for n in data["nodes"]}
-    assert by_id["field.player.type"]["help"] == "Human, Engine, Hand+Brain, or Lichess"
+    assert by_id["field.player.type"]["help"] == "Human, Engine, or Hand+Brain"
 
 
 def test_menu_schema_is_localized_to_device_language(client, monkeypatch):

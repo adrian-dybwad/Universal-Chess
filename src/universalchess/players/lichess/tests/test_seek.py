@@ -6,17 +6,15 @@ PLAY ignored the Game clock and always sought 10+5 casual random, while the
 e-paper Lichess menu sought minutes+0 and forced Human White. The unified
 helper is the single place seek color, clock, rated, rating range, and host
 are decided, so a board-reset new game and lobby Seek New Game cannot drift.
-Color follows the Players colour control only when exactly one slot is set to
-Lichess, and is sent inverted because the seek names the *account's* side, not
-the human's. Every other pairing seeks random.
+Color is the lobby Color row (``game.lichess_color``), not the Players colour
+control: that control still swaps sides for engine games, and a lobby seek
+runs from a pairing no Lichess slot describes.
 
 How a regression manifests
 --------------------------
-A configured colour is dropped or sent uninverted (pairing the human as the
-side they did not choose); a pairing with no Lichess slot invents a colour; a
-delay/staged clock is sent as a Fischer seek the local clock does not match; a
-lichess.dev lookup reads an org account's range; engine ELO leaks into
-rating_range.
+A lobby White/Black pick is dropped or inverted from a player slot; a delay
+clock is sent as a Fischer seek the local clock does not match; a lichess.dev
+lookup reads an org account's range; engine ELO leaks into rating_range.
 """
 
 from types import SimpleNamespace
@@ -68,23 +66,28 @@ def _settings(p1, p2, game, rating_range=""):
     return SimpleNamespace(player1=p1, player2=p2, game=game), rating_range
 
 
-def test_seek_blitz_5_3_takes_the_game_clock():
-    """A 5+3 Game clock seeks 5+3, with the account taking the free side.
+def test_seek_uses_the_lobby_clock_not_the_game_clock():
+    """A Blitz Game clock must not become the seek; the lobby clock is posted.
 
-    Why: PLAY used dataclass 10+5 regardless of the Game clock. Failure: minutes
-    or increment is 10/5, or the human's White choice is not inverted into the
-    account's Black.
+    Why: PLAY used to send the Game clock, so 5+3 and 5+0 were posted and
+    Lichess returned Invalid time control. How a regression manifests: minutes
+    or increment is 5, matching the Game preset instead of rapid_10_5.
     """
     settings, rng = _settings(
         _player(type="human", color="white"),
         _player(type="lichess"),
-        _game(time_control_preset="blitz_5_3", lichess_account="org:alice"),
+        _game(
+            time_control_preset="blitz_5_3",
+            lichess_clock="rapid_10_5",
+            lichess_account="org:alice",
+        ),
         rating_range="1000-1600",
     )
     seek = lichess_seek_from_settings(settings, rating_range=rng)
-    assert seek.time_minutes == 5
-    assert seek.increment_seconds == 3
-    assert seek.color == "black"
+    assert seek.time_minutes == 10
+    assert seek.increment_seconds == 5
+    assert seek.days == 0
+    assert seek.color == "random"
     assert seek.rated is False
     assert seek.rating_range == "1000-1600"
     assert seek.account_id == "org:alice"
@@ -93,84 +96,74 @@ def test_seek_blitz_5_3_takes_the_game_clock():
     assert seek.use_dev is False
 
 
-def test_seek_legacy_minutes_has_zero_increment():
-    """Legacy time_control minutes with no preset is N+0.
+def test_empty_lichess_clock_defaults_to_rapid_10_0():
+    """A config that predates the lobby clock still seeks a Board API Rapid.
 
-    Why: the dedicated menu used minutes+0 while PLAY used 10+5. Failure: increment
-    is 5 or minutes is the dataclass 10.
+    Why: missing or empty lichess_clock used to fall through to the Game
+    minutes, often 5+0. How a regression manifests: minutes is 5 or 7 from the
+    Game setting, or the seek is correspondence.
     """
     settings, rng = _settings(
         _player(type="human", color="white"),
         _player(type="lichess"),
-        _game(time_control=7, time_control_preset=""),
+        _game(time_control=7, time_control_preset="", lichess_clock=""),
     )
     seek = lichess_seek_from_settings(settings, rating_range=rng)
-    assert seek.time_minutes == 7
+    assert seek.time_minutes == 10
     assert seek.increment_seconds == 0
+    assert seek.days == 0
 
 
-@pytest.mark.parametrize(
-    "p1, p2, expected_color",
-    [
-        # Human White in slot 1: the account is the opponent, so it seeks Black.
-        (dict(type="human", color="white"), dict(type="lichess"), "black"),
-        (dict(type="human", color="black"), dict(type="lichess"), "white"),
-        # Lichess in slot 1: player1.color IS the account's colour, not the
-        # human's, so it is sent as-is rather than inverted.
-        (dict(type="lichess", color="white"), dict(type="human"), "white"),
-        (dict(type="lichess", color="black"), dict(type="human"), "black"),
-    ],
-)
-def test_a_configured_lichess_slot_seeks_the_color_the_human_did_not_choose(
-    p1, p2, expected_color
-):
-    """With a Lichess slot configured, the seek asks for the account's colour.
+@pytest.mark.parametrize("lichess_color,expected", [("white", "white"), ("black", "black"), ("random", "random")])
+def test_the_seek_posts_the_lobby_color_not_the_players_color(lichess_color, expected):
+    """The posted color is game.lichess_color, whatever player1.color is.
 
-    Why this test exists: ``color`` on a Lichess seek names the side the
-    *seeking account* wants, and the account is the human's opponent. Sending
-    the human's own choice therefore reverses the game -- a human who chose
-    White would be paired as Black.
+    Why: Human at the board plays as the seeking account after remap, so White
+    on the lobby row must post white. Reading player1.color (and inverting it
+    because the Lichess slot is the opponent) made a lobby White seek Black.
 
-    How a regression manifests: colour equals the human's own colour (an
-    inversion that is missing), or falls back to ``random`` and ignores the
-    Players colour control entirely.
+    How a regression manifests: color is black when the lobby says white, or
+    random when a side was chosen.
     """
-    settings, rng = _settings(_player(**p1), _player(**p2), _game(time_control=10))
+    settings, rng = _settings(
+        _player(type="human", color="black"),
+        _player(type="lichess"),
+        _game(lichess_color=lichess_color),
+    )
     seek = lichess_seek_from_settings(settings, rating_range=rng)
-    assert seek.color == expected_color
+    assert seek.color == expected
 
 
-@pytest.mark.parametrize(
-    "p1, p2",
-    [
-        # No Lichess slot at all: a lobby Seek New Game still seeks, with no
-        # colour to honour because no side was ever chosen for a Lichess game.
-        (dict(type="human", color="white"), dict(type="engine")),
-        (dict(type="engine"), dict(type="engine")),
-        (dict(type="human", color="black"), dict(type="human")),
-        # Both slots Lichess is not a pairing anyone chose a human colour for.
-        (
-            dict(type="lichess", color="white", account="alice"),
-            dict(type="lichess", account="bob"),
-        ),
-    ],
-)
-def test_a_seek_without_exactly_one_lichess_slot_states_no_color_preference(p1, p2):
-    """Any pairing but one-Lichess-slot seeks random, whoever answers it.
+def test_empty_lichess_color_defaults_to_random():
+    """A config that predates the lobby Color still seeks random.
 
-    Why this test exists: the colour control only describes a game the user
-    configured as Lichess. A lobby Seek New Game from an engine-vs-engine (or
-    two-Lichess) configuration has no chosen side, and inventing one from
-    player1.color would make the board wait for an opponent the user never
-    asked for.
-
-    How a regression manifests: colour is white or black, so the seek sits in
-    the lobby waiting for the complementary side instead of taking the first
-    opponent.
+    Why: missing lichess_color used to fall through to player1.color (and
+    invert it). How a regression manifests: color is white or black from a
+    Players slot.
     """
-    settings, rng = _settings(_player(**p1), _player(**p2), _game(time_control=10))
-    seek = lichess_seek_from_settings(settings, rating_range=rng, lobby_seek=True)
+    settings, rng = _settings(
+        _player(type="human", color="white"),
+        _player(type="lichess"),
+        _game(lichess_color=""),
+    )
+    seek = lichess_seek_from_settings(settings, rating_range=rng)
     assert seek.color == "random"
+
+
+def test_a_lobby_seek_posts_the_lobby_color_when_no_slot_is_lichess():
+    """Seek New Game honours Color even over two engines.
+
+    Why: the Players color control does not describe that pairing. How a
+    regression manifests: color is random (the old no-slot fallback) while
+    the lobby row says White.
+    """
+    settings, rng = _settings(
+        _player(type="human", color="black"),
+        _player(type="engine"),
+        _game(lichess_color="white"),
+    )
+    seek = lichess_seek_from_settings(settings, rating_range=rng, lobby_seek=True)
+    assert seek.color == "white"
 
 
 def test_seek_clock_when_lichess_is_player_one():
@@ -183,13 +176,13 @@ def test_seek_clock_when_lichess_is_player_one():
     settings, rng = _settings(
         _player(type="lichess", color="white"),
         _player(type="human"),
-        _game(time_control_preset="rapid_10_5", lichess_account="org:bob"),
+        _game(time_control_preset="rapid_10_5", lichess_clock="rapid_10_5", lichess_account="org:bob"),
     )
     seek = lichess_seek_from_settings(settings, rating_range=rng)
     assert seek.account_id == "org:bob"
     assert seek.time_minutes == 10
     assert seek.increment_seconds == 5
-    assert seek.color == "white"
+    assert seek.color == "random"
 
 
 def test_seek_rated_and_dev_host():
@@ -230,15 +223,15 @@ def test_empty_rating_range_is_unrestricted():
 
 
 def test_join_skips_clock_when_require_clock_false():
-    """Ongoing/challenge join must not refuse a local delay/untimed clock.
+    """Ongoing/challenge join must not refuse a missing lobby clock.
 
-    Why: board.seek needs a Fischer pair; a game already on Lichess does not.
-    Failure: require_clock=False still raises clock for an untimed preset.
+    Why: a NEW seek needs a Board API clock; a game already on Lichess does not.
+    Failure: require_clock=False still raises clock for an unknown lichess_clock.
     """
     settings, rng = _settings(
         _player(type="human", color="white"),
         _player(type="lichess"),
-        _game(time_control_preset="untimed", lichess_account="alice"),
+        _game(lichess_clock="blitz_5_0", lichess_account="alice"),
     )
     with pytest.raises(LichessSeekError) as caught:
         lichess_seek_from_settings(settings, rating_range=rng)
@@ -247,7 +240,7 @@ def test_join_skips_clock_when_require_clock_false():
         settings, rating_range=rng, require_clock=False
     )
     assert seek.account_id == "alice"
-    assert seek.color == "black"
+    assert seek.color == "random"
 
 
 def test_a_lobby_seek_is_allowed_when_no_slot_is_set_to_lichess():
@@ -273,7 +266,8 @@ def test_a_lobby_seek_is_allowed_when_no_slot_is_set_to_lichess():
     assert caught.value.code == "pairing"
 
     seek = lichess_seek_from_settings(settings, rating_range=rng, lobby_seek=True)
-    assert seek.time_minutes == 5
+    assert seek.time_minutes == 10
+    assert seek.increment_seconds == 0
     assert seek.color == "random"
 
 
@@ -372,24 +366,25 @@ def test_default_uses_the_only_saved_credentials_host(tmp_path, monkeypatch):
     "preset",
     ["delay_5_3_simple", "delay_5_3_bronstein", "tournament_40_90_30", "untimed"],
 )
-def test_unsupported_clock_raises(preset):
-    """Delay, Bronstein, staged, and untimed clocks cannot be a Lichess seek.
+def test_local_game_clock_does_not_block_a_lichess_seek(preset):
+    """Delay, Bronstein, staged, and untimed Game clocks still seek Rapid.
 
-    Why: board.seek is minutes+increment. Sending a different game than the local
-    clock shows is how PLAY/menu drifted. Failure: the helper returns a seek.
+    Why: the lobby clock is independent of the Game clock used for engine
+    games. How a regression manifests: those Game presets still raise clock.
     """
     settings, rng = _settings(
         _player(type="human", color="white"),
         _player(type="lichess"),
-        _game(time_control_preset=preset),
+        _game(time_control_preset=preset, lichess_clock="rapid_10_0"),
     )
-    with pytest.raises(LichessSeekError) as caught:
-        lichess_seek_from_settings(settings, rating_range=rng)
-    assert caught.value.code == "clock"
+    seek = lichess_seek_from_settings(settings, rating_range=rng)
+    assert seek.time_minutes == 10
+    assert seek.increment_seconds == 0
+    assert seek.days == 0
 
 
-def test_asymmetric_clock_raises():
-    """Time-odds custom clocks are not a Lichess seek."""
+def test_asymmetric_game_clock_does_not_block_a_lichess_seek():
+    """Time-odds Game clocks are local-only; the lobby clock is still posted."""
     settings, rng = _settings(
         _player(type="human", color="white"),
         _player(type="lichess"),
@@ -398,7 +393,48 @@ def test_asymmetric_clock_raises():
             tc_custom_asymmetric=True,
             tc_custom_base_seconds=300,
             tc_custom_black_base_seconds=180,
+            lichess_clock="classical_30_0",
         ),
+    )
+    seek = lichess_seek_from_settings(settings, rating_range=rng)
+    assert seek.time_minutes == 30
+    assert seek.increment_seconds == 0
+
+
+def test_none_lichess_clock_seeks_correspondence():
+    """None posts days, not a zero real-time clock.
+
+    Why: 0+0 is Blitz and Lichess rejects it. How a regression manifests: days
+    is 0 and time_minutes is 0, so the form still sends time and increment.
+    """
+    from universalchess.players.lichess.match import (
+        LICHESS_CORRESPONDENCE_DAYS,
+        board_seek_form,
+    )
+
+    settings, rng = _settings(
+        _player(type="human", color="white"),
+        _player(type="lichess"),
+        _game(lichess_clock="none"),
+    )
+    seek = lichess_seek_from_settings(settings, rating_range=rng)
+    assert seek.days == LICHESS_CORRESPONDENCE_DAYS
+    assert seek.time_minutes == 0
+    form = board_seek_form(seek)
+    assert form["days"] == LICHESS_CORRESPONDENCE_DAYS
+    assert "time" not in form
+    assert "increment" not in form
+
+
+def test_unknown_lichess_clock_raises():
+    """A leftover Blitz key in lichess_clock must not be posted.
+
+    How a regression manifests: the helper returns a 5+0 seek.
+    """
+    settings, rng = _settings(
+        _player(type="human", color="white"),
+        _player(type="lichess"),
+        _game(lichess_clock="blitz_5_0"),
     )
     with pytest.raises(LichessSeekError) as caught:
         lichess_seek_from_settings(settings, rating_range=rng)
@@ -465,6 +501,19 @@ def test_waiting_and_started_splash_copy():
     assert "15+10 casual" in waiting
     assert "White" in waiting
     assert "lichess.org:alice" in waiting
+    correspondence = LichessSeek(
+        time_minutes=0,
+        increment_seconds=0,
+        color="random",
+        rated=False,
+        rating_range="",
+        account_id="org:alice",
+        host_id="org",
+        days=2,
+    )
+    corr_wait = lichess_waiting_message(LichessGameMode.NEW, seek=correspondence)
+    assert "Correspondence casual" in corr_wait
+    assert "0+0" not in corr_wait
     assert lichess_cancelling_message() == "Exiting..."
     assert lichess_started_message(True) == "Game started\nYou play White"
     assert lichess_started_message(False) == "Game started\nYou play Black"
@@ -488,6 +537,7 @@ def test_lichess_player_from_seek_copies_seek_and_join():
         rating_range="1000-1600",
         account_id="dev:bob",
         host_id="dev",
+        days=2,
     )
     player = lichess_player_from_seek(
         seek,
@@ -508,6 +558,7 @@ def test_lichess_player_from_seek_copies_seek_and_join():
     assert cfg.color_preference == "black"
     assert cfg.rating_range == "1000-1600"
     assert cfg.account_id == "dev:bob"
+    assert cfg.days == 2
     assert cfg.game_id == "abc123"
     assert cfg.challenge_id == ""
 
@@ -559,3 +610,37 @@ def test_lichess_player_from_seek_new_join_still_seeks():
         },
     )
     assert player._lichess_config.mode is LichessGameMode.NEW
+
+
+def test_correspondence_seek_posts_days_not_board_seek():
+    """Correspondence must POST days and must not call berserk's real-time seek.
+
+    Why: board.seek always sends time+increment, so None became 0+0 and Lichess
+    rejected it. How a regression manifests: board.seek is called, or the POST
+    body still has time/increment.
+    """
+    from unittest.mock import MagicMock
+
+    from universalchess.players.lichess import LichessPlayer, LichessPlayerConfig
+    from universalchess.players.lichess.http_session import LichessConnection
+
+    player = LichessPlayer(
+        LichessPlayerConfig(days=2, time_minutes=0, increment_seconds=0, rated=False)
+    )
+    player._client = MagicMock()
+    player._client.games.get_ongoing.return_value = []
+    session = MagicMock()
+    player._connection = LichessConnection(client=player._client, session=session)
+    player._host_id = "dev"
+    player._seek_game_thread()
+
+    player._client.board.seek.assert_not_called()
+    session.post.assert_called_once()
+    url = session.post.call_args.args[0]
+    data = session.post.call_args.kwargs["data"]
+    assert url.endswith("/api/board/seek")
+    assert "lichess.dev" in url
+    assert data["days"] == 2
+    assert "time" not in data
+    assert "increment" not in data
+

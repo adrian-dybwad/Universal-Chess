@@ -84,6 +84,7 @@
   "lichess.started": "Partia zaczęta\nTwój kolor: {color}",
   "lichess.seek.rated": "rankingowa",
   "lichess.seek.casual": "towarzyska",
+  "lichess.seek.correspondence": "Korespondencyjna",
   "lichess.color.random": "Losowy",
   "lichess.challenge.incoming": "WE",
   "lichess.challenge.outgoing": "WY",

@@ -51,6 +51,7 @@ class LichessPlayerConfig(PlayerConfig):
         account_id: Lichess credential id this slot plays as (``org:alice``).
             Empty uses the default (first) credential for back-compat; the
             token, host, and rating range are resolved at start().
+        days: Days per turn for a correspondence seek. Zero is a real-time seek.
     """
     mode: LichessGameMode = LichessGameMode.NEW
     time_minutes: int = 10
@@ -62,6 +63,7 @@ class LichessPlayerConfig(PlayerConfig):
     challenge_id: str = ''
     challenge_direction: str = 'in'
     account_id: str = ''
+    days: int = 0
 
 
 def ongoing_game_id(game: dict) -> str:
@@ -974,7 +976,14 @@ class LichessPlayer(Player):
         """
         if self._should_stop.is_set():
             return False
-        log.info(f"[LichessPlayer] Seeking: {self._lichess_config.time_minutes}+{self._lichess_config.increment_seconds}")
+        days = int(self._lichess_config.days or 0)
+        if days:
+            log.info(f"[LichessPlayer] Seeking: correspondence {days}d")
+        else:
+            log.info(
+                f"[LichessPlayer] Seeking: "
+                f"{self._lichess_config.time_minutes}+{self._lichess_config.increment_seconds}"
+            )
         self._report_status("Finding opponent...")
         self._record_preexisting_games()
         self._listen_for_match()
@@ -1193,14 +1202,36 @@ class LichessPlayer(Player):
                 self._lichess_config.rating_range
                 or self._account_range
             )
-            
-            self._client.board.seek(
-                int(self._lichess_config.time_minutes),
-                int(self._lichess_config.increment_seconds),
-                rated,
-                color=color,
-                rating_range=rating_range
-            )
+            days = int(self._lichess_config.days or 0)
+            if days:
+                from .match import LichessSeek, board_seek_form, lichess_base_url
+
+                session = self._connection.session if self._connection is not None else None
+                if session is None:
+                    raise RuntimeError("No Lichess session for correspondence seek")
+                session.post(
+                    f"{lichess_base_url(self._host_id)}/api/board/seek",
+                    data=board_seek_form(
+                        LichessSeek(
+                            time_minutes=0,
+                            increment_seconds=0,
+                            color=color,
+                            rated=rated,
+                            rating_range=rating_range or "",
+                            account_id=self._lichess_config.account_id or "",
+                            host_id=self._host_id or "",
+                            days=days,
+                        )
+                    ),
+                )
+            else:
+                self._client.board.seek(
+                    int(self._lichess_config.time_minutes),
+                    int(self._lichess_config.increment_seconds),
+                    rated,
+                    color=color,
+                    rating_range=rating_range
+                )
             
             if not self._should_stop.is_set() and not self._game_id:
                 self._try_attach_ongoing_game()
@@ -1581,7 +1612,7 @@ class LichessPlayer(Player):
         
         Fires game over callback with result, termination type, and winner.
         Abort and noStart use result ``*`` so the board ends; skipping the
-        callback left clocks running and never offered Seek / Cancel.
+        callback left clocks running and never offered Lobby / Seek.
         """
         result, termination = lichess_terminal_result(status, winner)
         if result is None:
@@ -1674,5 +1705,6 @@ def lichess_player_from_seek(seek, *, color, join=None) -> LichessPlayer:
             challenge_id=join.get("challenge_id", "") or "",
             challenge_direction=join.get("challenge_direction", "in") or "in",
             account_id=seek.account_id,
+            days=int(getattr(seek, "days", 0) or 0),
         )
     )

@@ -84,6 +84,7 @@
   "lichess.started": "Partida iniciada\nJuegas con {color}",
   "lichess.seek.rated": "clasificada",
   "lichess.seek.casual": "amistosa",
+  "lichess.seek.correspondence": "Correspondencia",
   "lichess.color.random": "Aleatorio",
   "lichess.challenge.incoming": "REC",
   "lichess.challenge.outgoing": "ENV",

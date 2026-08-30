@@ -84,6 +84,7 @@
   "lichess.started": "Partij gestart\nJe speelt {color}",
   "lichess.seek.rated": "gewaardeerd",
   "lichess.seek.casual": "ongewaardeerd",
+  "lichess.seek.correspondence": "Correspondentie",
   "lichess.color.random": "Willekeurig",
   "lichess.challenge.incoming": "IN",
   "lichess.challenge.outgoing": "UIT",

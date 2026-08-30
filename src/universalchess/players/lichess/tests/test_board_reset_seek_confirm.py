@@ -5,8 +5,8 @@ Why these tests exist
 PLAY, lobby New Game, and web New Game are explicit and seek immediately.
 Setting the pieces back to the start is not: it rebuilds through
 ``_start_game_mode`` with no join stash, which posts a new seek. That
-implicit path must ask what to do (Cancel default) and leave the game without
-seeking when the user declines. Seeking is not the only thing wanted there --
+implicit path must ask what to do and leave the game without seeking when
+the user presses BACK. Seeking is not the only thing wanted there --
 an ongoing game, a challenge, or a different account are all in the lobby --
 so the lobby is offered beside it.
 """
@@ -38,17 +38,16 @@ class _ScriptedMenuManager:
 
 
 def test_reset_action_follows_the_row_that_was_chosen():
-    """Each row means one thing; BACK means the same as Cancel.
+    """Each row means one thing; BACK leaves without seeking.
 
     Why: a stray TICK on the prompt must not register a Lichess seek, and the
     lobby row must not be read as one either. How the regression manifests:
-    Cancel, BACK, or Lobby returns seek, or Lobby is answered as a cancel so
+    BACK or an unknown key returns seek, or Lobby is answered as a cancel so
     the lobby never opens.
     """
     for key, expected in (
         ("Lobby", "lobby"),
         ("Seek", "seek"),
-        ("Cancel", "cancel"),
         ("BACK", "cancel"),
     ):
         assert choose_lichess_reset_action(
@@ -56,26 +55,24 @@ def test_reset_action_follows_the_row_that_was_chosen():
         ) == expected
 
 
-def test_reset_prompt_lists_lobby_then_seek_then_cancel_and_highlights_cancel():
-    """The lobby comes first, the seek second, Cancel last and highlighted.
+def test_reset_prompt_lists_lobby_then_seek_and_highlights_lobby():
+    """The lobby comes first, the seek second; BACK is the refusal, not a row.
 
     Why: resetting the pieces most often means picking up something else --
-    an ongoing game or a challenge -- and posting a seek is never what an
-    accidental TICK should do. How the regression manifests: the rows come
-    back in another order, the lobby row is missing, the prompt becomes
-    selectable, or the highlight lands on a row that acts.
+    an ongoing game or a challenge -- and a Cancel row duplicated BACK.
+    How the regression manifests: Cancel is listed, the lobby row is
+    missing, the prompt becomes selectable, or the highlight lands on Seek.
     """
-    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("BACK")])
     choose_lichess_reset_action(manager)
     entries = manager.shown[0]
-    assert [e.key for e in entries] == ["prompt", "Lobby", "Seek", "Cancel"]
+    assert [e.key for e in entries] == ["prompt", "Lobby", "Seek"]
     assert [e.label.replace("\n", " ") for e in entries[1:]] == [
         "Lichess Lobby",
         "Seek New Game",
-        "Cancel",
     ]
     assert entries[0].selectable is False
-    assert manager.show_initial_indexes == [3]
+    assert manager.show_initial_indexes == [1]
 
 
 def test_next_game_prompt_names_why_the_game_stopped():
@@ -107,7 +104,7 @@ def test_abort_prompt_is_the_header_when_the_reason_is_aborted():
     """
     from universalchess.i18n import t
 
-    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("BACK")])
     choose_lichess_reset_action(manager, reason="ABORTED")
     assert manager.shown[0][0].label == t("lichess.unfinished.aborted")
     assert "Seek" not in manager.shown[0][0].label
@@ -121,7 +118,7 @@ def test_resign_prompt_is_the_header_when_the_reason_is_resign():
     """
     from universalchess.i18n import t
 
-    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("BACK")])
     choose_lichess_reset_action(manager, reason="RESIGN")
     assert manager.shown[0][0].label == t("lichess.unfinished.resign")
     assert "Seek" not in manager.shown[0][0].label
@@ -134,7 +131,7 @@ def test_board_reset_rebuild_uses_the_reason_for_its_header():
     """
     from universalchess.i18n import t
 
-    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("BACK")])
     board_reset_rebuild_action(manager, is_lichess=True, reason="ABORTED")
     assert manager.shown[0][0].label == t("lichess.unfinished.aborted")
 
@@ -143,9 +140,9 @@ def test_board_reset_rebuild_skips_confirm_when_not_lichess():
     """Engine/human board-reset rebuilds without a seek prompt.
 
     Why: that path does not post a Lichess seek. How the regression manifests:
-    show_menu is called and a local new game waits on Seek/Cancel.
+    show_menu is called and a local new game waits on Seek.
     """
-    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("BACK")])
     assert board_reset_rebuild_action(manager, is_lichess=False) == "rebuild"
     assert manager.shown == []
 
@@ -154,14 +151,14 @@ def test_board_reset_rebuild_seeks_only_after_seek_choice():
     """A Lichess board-reset rebuilds only when Seek is chosen.
 
     Why: setting the pieces to start used to seek with no prompt. How the
-    regression manifests: Cancel still returns seek, so a new seek is posted,
+    regression manifests: BACK still returns seek, so a new seek is posted,
     or the lobby choice seeks instead of opening the lobby.
     """
     seek = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Seek")])
-    cancel = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Cancel")])
+    back = _ScriptedMenuManager(show_results=[MenuSelection.from_key("BACK")])
     lobby = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Lobby")])
     assert board_reset_rebuild_action(seek, is_lichess=True) == "seek"
-    assert board_reset_rebuild_action(cancel, is_lichess=True) == "menu"
+    assert board_reset_rebuild_action(back, is_lichess=True) == "menu"
     assert board_reset_rebuild_action(lobby, is_lichess=True) == "lobby"
 
 

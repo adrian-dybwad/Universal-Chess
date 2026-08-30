@@ -111,6 +111,7 @@ type SettingsTab =
   | 'connectivity'
   | 'engines'
   | 'system'
+  | 'lichess'
   | 'centaur';
 
 // Structured engine-install status from GET /api/engines/status. The backend
@@ -164,10 +165,11 @@ interface CentaurImportStatus {
 // seventh here.
 //
 // About and Licenses are reached from the main nav and footer respectively, not
-// as Settings tabs. 'centaur' is a web-only tab rather than a catalog section,
-// so its chrome comes from the web i18n.
+// as Settings tabs. 'lichess' and 'centaur' are web-only tabs rather than catalog
+// sections (the board puts Lichess Lobby on the main menu above Original Centaur),
+// so their chrome comes from the catalog node and the web i18n respectively.
 const VALID_SETTINGS_TABS: SettingsTab[] = [
-  'players', 'game', 'agents', 'display', 'sound', 'connectivity', 'engines', 'system', 'centaur',
+  'players', 'game', 'agents', 'display', 'sound', 'connectivity', 'engines', 'system', 'lichess', 'centaur',
 ];
 
 /** Whether a catalog-derived section id is a tab this page can render. */
@@ -256,6 +258,12 @@ interface FormSettings {
     // setting: a lobby seek runs with a pairing no saved slot describes, so a
     // per-slot binding had nowhere to live when neither slot was Lichess.
     lichess_account: string;
+    // Board API clock for every seek this board posts (Rapid/Classical/none).
+    // Independent of the Game clock, which still offers Blitz.
+    lichess_clock: string;
+    // Color the seeking account plays (white/black/random). Independent of the
+    // Players colour control, which still swaps sides for engine games.
+    lichess_color: string;
     // Show the YOUR QUEEN warning when the side to move's own queen is attacked.
     // On by default; the CHECK warning has no equivalent flag because it cannot be
     // turned off (see GameSettings.alert_queen_threat).
@@ -322,6 +330,8 @@ const defaultFormSettings: FormSettings = {
     lichess_rated: false,
     lichess_use_dev: false,
     lichess_account: '',
+    lichess_clock: 'rapid_10_0',
+    lichess_color: 'random',
     alert_queen_threat: true,
     show_board: true,
     show_clock: true,
@@ -410,6 +420,8 @@ function parseRawSettings(data: SettingsData): FormSettings {
       lichess_rated: parseConfigBool(data.game?.lichess_rated, false),
       lichess_use_dev: parseConfigBool(data.game?.lichess_use_dev, false),
       lichess_account: data.game?.lichess_account || '',
+      lichess_clock: data.game?.lichess_clock || 'rapid_10_0',
+      lichess_color: data.game?.lichess_color || 'random',
       alert_queen_threat: parseConfigBool(data.game?.alert_queen_threat, true),
       show_board: parseConfigBool(data.game?.show_board, true),
       show_clock: parseConfigBool(data.game?.show_clock, true),
@@ -1781,8 +1793,13 @@ export function Settings() {
 
   // Tabs, labels, icons and order all come from the shared catalog, so the board
   // menu and this page present the same sections in the same sequence.
+  const lobbyNode = fieldById(catalog, 'players.lichess');
   const tabs: { id: SettingsTab; label: string; icon?: string }[] = [
     ...settingsTabsFromCatalog(catalog),
+    // Lichess Lobby is a main-menu row on the board (above Original Centaur).
+    // On the web it is a Settings tab in that same position: immediately before
+    // the web-only Centaur tab. Label/icon come from the shared catalog node.
+    { id: 'lichess', label: lobbyNode?.label ?? 'Lichess Lobby', icon: typeof lobbyNode?.icon === 'string' ? lobbyNode.icon : 'lichess' },
     // Original Centaur is a web-only feature tab, so its label/icon come from the
     // web i18n rather than the shared board catalog. Always shown (discoverable)
     // even before Centaur is installed, so the import flow is reachable.
@@ -2063,30 +2080,6 @@ export function Settings() {
                 show the same fields, order, and gating. */}
             {renderPlayerCard('player1', t('settingsPage.player1Title'))}
             {renderPlayerCard('player2', t('settingsPage.player2Title'))}
-
-            {/* Web twin of the board Lichess lobby. Catalog children of
-                players.lichess: Account (picker + nested Accounts), then
-                Rated, Ongoing Games, Challenges, Seek New Game when a
-                Lichess account exists. The board still opens this as an
-                action; the web walks the same hierarchy here. */}
-            {catalog && (
-              <LichessLobbyCard
-                catalog={catalog}
-                accounts={accounts}
-                accountsState={accountsState}
-                accountId={formSettings.game.lichess_account}
-                onAccountChange={(id) => {
-                  updateFormSettings('game', { lichess_account: id });
-                }}
-                onAccountsChanged={() => {
-                  void fetchAccounts();
-                }}
-                rated={formSettings.game.lichess_rated}
-                onRatedChange={(value) => {
-                  updateFormSettings('game', { lichess_rated: value });
-                }}
-              />
-            )}
 
             {/* Hand+Brain Explanation */}
             {showHandBrainExplanation && (
@@ -2490,6 +2483,36 @@ export function Settings() {
                 takes the board and web UI offline, so it is placed after the
                 routine settings and the collapsed setup/diagnostics sections. */}
             <PowerActions />
+          </section>
+        )}
+
+        {/* LICHESS LOBBY TAB -- board main-menu counterpart, immediately before Centaur */}
+        {activeTab === 'lichess' && (
+          <section>
+            <LichessLobbyCard
+              catalog={catalog}
+              accounts={accounts}
+              accountsState={accountsState}
+              accountId={formSettings.game.lichess_account}
+              onAccountChange={(id) => {
+                updateFormSettings('game', { lichess_account: id });
+              }}
+              onAccountsChanged={() => {
+                void fetchAccounts();
+              }}
+              rated={formSettings.game.lichess_rated}
+              onRatedChange={(value) => {
+                updateFormSettings('game', { lichess_rated: value });
+              }}
+              clock={formSettings.game.lichess_clock}
+              onClockChange={(value) => {
+                updateFormSettings('game', { lichess_clock: value });
+              }}
+              color={formSettings.game.lichess_color}
+              onColorChange={(value) => {
+                updateFormSettings('game', { lichess_color: value });
+              }}
+            />
           </section>
         )}
 
