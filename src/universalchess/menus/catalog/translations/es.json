@@ -212,7 +212,7 @@
     },
     "players.lichess": {
       "label": "Lobby de Lichess",
-      "boardLabel": "Lobby\nLichess",
+      "boardLabel": "Lichess",
       "help": "Credenciales de Lichess y juego en línea. Cada cuenta es un servidor y usuario (lichess.org o lichess.dev). Abre el selector de cuenta, Clasificada, Reloj, Color, partidas en curso, desafíos y Buscar partida nueva."
     },
     "lichess.account": {
@@ -746,7 +746,7 @@
     "field.lichess.color": {
       "label": "Color",
       "boardLabel": "Color",
-      "help": "Color que juega esta cuenta en todas las búsquedas que publica este tablero, incluidas las del lobby sin ningún jugador puesto en Lichess.\n\nBlancas, Negras o Aleatorio. Al empezar el encuentro, el humano ocupa ese bando. El color de Jugadores es para partidas locales y no se envía."
+        "help": "Color que juega esta cuenta en todas las búsquedas que publica este tablero, incluidas las del lobby sin ningún jugador puesto en Lichess.\n\nBlancas, Negras o Aleatorio. Al empezar el encuentro, el humano ocupa ese bando. El color de Jugadores es para partidas locales y no se envía."
     },
     "field.lichess.api_token": {
       "label": "Token de API",

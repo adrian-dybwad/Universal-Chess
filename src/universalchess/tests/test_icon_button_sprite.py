@@ -18,7 +18,7 @@ test_star_icon.
 import sys
 import types
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -143,3 +143,38 @@ def test_render_with_icon_image_composites_preview_onto_button():
     # The left icon region must contain black pixels from the composited king.
     icon_region = sprite.crop((0, 0, 60, 60))
     assert 0 in set(icon_region.getdata()), "preview king was not composited into the icon area"
+
+
+def test_empty_vertical_label_skips_text_and_centers_the_icon():
+    """A blank label must not reserve a text slot under the icon.
+
+    Why this test exists: the main-menu Positions/Settings pair is icon-only.
+    Vertical layout still reserved font_size+2 plus a 4px gap for an empty
+    string, so the glyph sat in the top half of the half-width cell.
+
+    How a regression manifests: _get_cached_text_widget is called (text path
+    still runs) or icon_y is start_y + icon_size/2 instead of the content
+    midpoint (the 4px text gap still lifts the glyph).
+    """
+    IconButtonWidget = _import_icon_button_widget()
+    width, height = 64, 56
+    icon_size = 32
+    widget = IconButtonWidget(
+        0, 0, width, height,
+        update_callback=lambda *a, **k: None,
+        key="Positions", label="", icon_name="positions",
+        icon_size=icon_size, layout="vertical", font_size=13,
+    )
+    sprite = Image.new("1", (width, height), 1)
+    content_top = widget.margin + widget.border_width + widget.padding
+    content_height = (
+        height - 2 * (widget.margin + widget.border_width + widget.padding)
+    )
+    with patch.object(widget, "_get_cached_text_widget") as mock_text, patch.object(
+        widget, "_draw_main_icon"
+    ) as mock_icon:
+        widget.render(sprite)
+    mock_text.assert_not_called()
+    mock_icon.assert_called()
+    icon_y = mock_icon.call_args[0][2]
+    assert icon_y == content_top + content_height // 2

@@ -211,7 +211,7 @@
     },
     "players.lichess": {
       "label": "Lichess-lobby",
-      "boardLabel": "Lichess\nLobby",
+      "boardLabel": "Lichess",
       "help": "Lichess-gegevens en online spelen. Elke aanmelding bestaat uit een server en een gebruiker (lichess.org of lichess.dev). Opent de accountkeuze, Gewaardeerd, Klok, Kleur, lopende partijen, uitdagingen en Nieuwe partij zoeken."
     },
     "lichess.account": {
@@ -760,7 +760,7 @@
     "field.lichess.color": {
       "label": "Kleur",
       "boardLabel": "Kleur",
-      "help": "Kleur die dit account speelt in elke zoekopdracht die dit bord plaatst, ook voor een uit de lobby zonder speler op Lichess.\n\nWit, Zwart of Willekeurig. Na de start zit de mens aan die kant. De kleur bij Spelers is voor lokale partijen en wordt niet meegestuurd."
+        "help": "Kleur die dit account speelt in elke zoekopdracht die dit bord plaatst, ook voor een uit de lobby zonder speler op Lichess.\n\nWit, Zwart of Willekeurig. Na de start zit de mens aan die kant. De kleur bij Spelers is voor lokale partijen en wordt niet meegestuurd."
     },
     "field.lichess.api_token": {
       "label": "API-token",

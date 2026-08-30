@@ -39,7 +39,8 @@ class IconMenuEntry:
 
     Attributes:
         key: Unique identifier returned on selection
-        label: Display text
+        label: Display text. Empty or whitespace means icon-only: the
+            renderer centers the glyph and does not reserve a text slot.
         icon_name: Icon identifier for rendering
         enabled: Whether the entry is interactable. A disabled entry (False)
                    still renders -- greyed/faded -- and is skipped during
@@ -69,6 +70,10 @@ class IconMenuEntry:
                     background rather than painting a solid box.
         trailing_icon_name: Optional icon drawn at the right edge of the button
                     (e.g. "radio_checked"/"radio_empty" to mark a radio selection).
+        row: Optional id. Consecutive entries with the same non-empty row share
+                    one visual line (half-width columns). None is a full-width
+                    band of its own. The board has no left/right keys, so UP/DOWN
+                    still visits each half.
     """
     key: str
     label: str
@@ -91,6 +96,7 @@ class IconMenuEntry:
     icon_mask: Optional[Image.Image] = None
     trailing_icon_name: Optional[str] = None
     scale_with_text_size: bool = True
+    row: Optional[str] = None
 
 
 class IconMenuWidget(Widget):
@@ -178,7 +184,8 @@ class IconMenuWidget(Widget):
         
         # Scrolling state
         self.scroll_offset = 0  # Index of first visible entry
-        self._visible_count = 0  # Number of entries that fit on screen
+        self._visible_count = 0  # Number of visual rows that fit on screen
+        self._visible_entry_indices: List[int] = []
         
         # Selection event handling for blocking mode
         self._selection_event = threading.Event()
@@ -190,9 +197,10 @@ class IconMenuWidget(Widget):
         self._calculate_visible_count()
         
         # Adjust scroll_offset so selected item is visible before creating buttons
-        if self._visible_count < len(self.entries) and self.selected_index >= self._visible_count:
-            # Selected item is below the initially visible area
-            self.scroll_offset = self.selected_index - self._visible_count + 1
+        visual_rows = self._visual_rows()
+        selected_row = self._visual_row_index_of(self.selected_index)
+        if self._visible_count < len(visual_rows) and selected_row >= self._visible_count:
+            self.scroll_offset = selected_row - self._visible_count + 1
         
         self._create_buttons()
         
@@ -203,121 +211,178 @@ class IconMenuWidget(Widget):
         """Handle update requests from child widgets by forwarding to parent callback."""
         return self._update_callback(full, immediate)
     
-    def _calculate_visible_count(self) -> None:
-        """Calculate how many entries can fit on screen.
-        
-        Uses min_button_height to determine if scrolling is needed.
-        Each entry's minimum height is min_button_height * height_ratio.
+    def _visual_rows(self) -> List[List[int]]:
+        """Group consecutive entries that share a ``row`` id into visual lines.
+
+        An entry with ``row`` None is a full-width band. Consecutive entries with
+        the same non-empty ``row`` share one line (half-width columns).
         """
-        if not self.entries:
+        rows: List[List[int]] = []
+        index = 0
+        while index < len(self.entries):
+            row_id = self.entries[index].row
+            if row_id:
+                group = [index]
+                index += 1
+                while index < len(self.entries) and self.entries[index].row == row_id:
+                    group.append(index)
+                    index += 1
+                rows.append(group)
+            else:
+                rows.append([index])
+                index += 1
+        return rows
+
+    def _visual_row_index_of(self, entry_index: int) -> int:
+        """Visual-row index that contains ``entry_index``, or 0 if none."""
+        for row_index, group in enumerate(self._visual_rows()):
+            if entry_index in group:
+                return row_index
+        return 0
+
+    def _row_height_ratio(self, indices: List[int]) -> float:
+        """Height weight of a visual row: the max of its members, not the sum.
+
+        Sharing a line must not consume two stacked units or PLAY shrinks and
+        the menu can start scrolling.
+        """
+        return max(self.entries[index].height_ratio for index in indices)
+
+    def _calculate_visible_count(self) -> None:
+        """Calculate how many visual rows can fit on screen.
+
+        Uses min_button_height to determine if scrolling is needed.
+        Each visual row's minimum height is min_button_height * height_ratio.
+        """
+        rows = self._visual_rows()
+        if not rows:
             self._visible_count = 0
             return
-        
-        # Calculate minimum required height for each entry based on its height_ratio
-        # An entry with height_ratio=2.0 needs 2x the min_button_height
-        min_total_height = sum(self.min_button_height * entry.height_ratio for entry in self.entries)
-        
+
+        min_total_height = sum(
+            self.min_button_height * self._row_height_ratio(group) for group in rows
+        )
+
         if min_total_height <= self.height:
-            # All entries fit without scrolling
-            self._visible_count = len(self.entries)
-        else:
-            # Calculate how many entries fit by accumulating minimum heights
-            accumulated_height = 0
-            visible = 0
-            for entry in self.entries:
-                entry_min_height = self.min_button_height * entry.height_ratio
-                if accumulated_height + entry_min_height <= self.height:
-                    accumulated_height += entry_min_height
-                    visible += 1
-                else:
-                    break
-            self._visible_count = max(1, visible)
-    
+            self._visible_count = len(rows)
+            return
+
+        accumulated_height = 0
+        visible = 0
+        for group in rows:
+            row_min_height = self.min_button_height * self._row_height_ratio(group)
+            if accumulated_height + row_min_height <= self.height:
+                accumulated_height += row_min_height
+                visible += 1
+            else:
+                break
+        self._visible_count = max(1, visible)
+
     def _create_buttons(self) -> None:
-        """Create IconButtonWidget instances for visible entries.
-        
-        Only creates buttons for entries from scroll_offset to 
-        scroll_offset + visible_count. Buttons are placed directly 
-        adjacent to each other with their own transparent margins.
-        
-        Button heights are proportional to their height_ratio values
-        within the visible subset.
+        """Create IconButtonWidget instances for visible visual rows.
+
+        Shared-row members sit side by side at half width. Full-width entries
+        occupy the panel. Heights are proportional to each visual row's
+        height_ratio within the visible subset.
         """
         self._buttons = []
-        
+        self._visible_entry_indices = []
+
         if not self.entries or self._visible_count == 0:
             return
-        
-        # Get visible entries
-        visible_start = self.scroll_offset
-        visible_end = min(visible_start + self._visible_count, len(self.entries))
-        visible_entries = self.entries[visible_start:visible_end]
-        
-        if not visible_entries:
-            return
-        
-        # Calculate total height ratio for visible entries
-        total_ratio = sum(entry.height_ratio for entry in visible_entries)
-        available_height = self.height
-        
-        current_y = 0
-        for vis_idx, entry in enumerate(visible_entries):
-            # Actual index in full entries list
-            actual_idx = visible_start + vis_idx
-            
-            # Calculate this button's height based on its ratio
-            button_height = int(available_height * entry.height_ratio / total_ratio)
-            
-            # Apply max_height constraint if specified (only for selectable entries)
-            # Non-selectable info widgets are exempt from height constraints
-            max_height = entry.max_height
-            if entry.scale_with_text_size and max_height is not None:
-                max_height = scale_font(max_height, self._text_size)
-            if entry.selectable and max_height is not None and button_height > max_height:
-                button_height = max_height
-            
-            # Determine icon size - use entry's custom size or derive from height
-            if entry.icon_size is not None:
-                icon_size = entry.icon_size
-            else:
-                # Default icon size scales with button height
-                icon_size = min(36, max(20, button_height - 24))
-            
-            if entry.scale_with_text_size:
-                font_size = scale_font(entry.font_size, self._text_size)
-                description_font_size = scale_font(
-                    entry.description_font_size, self._text_size
-                )
-            else:
-                font_size = entry.font_size
-                description_font_size = entry.description_font_size
 
-            is_selected = (actual_idx == self.selected_index)
-            button = IconButtonWidget(
-                0,
-                current_y,
-                self.width,
-                button_height,
-                self._handle_child_update,
-                key=entry.key,
-                label=entry.label,
-                icon_name=entry.icon_name,
-                selected=is_selected,
-                enabled=entry.enabled,
-                margin=self.button_margin,
-                icon_size=icon_size,
-                layout=entry.layout,
-                font_size=font_size,
-                bold=entry.bold,
-                border_width=entry.border_width,
-                description=entry.description,
-                description_font_size=description_font_size,
-                icon_image=entry.icon_image,
-                icon_mask=entry.icon_mask,
-                trailing_icon_name=entry.trailing_icon_name
+        visual_rows = self._visual_rows()
+        visible_start = self.scroll_offset
+        visible_end = min(visible_start + self._visible_count, len(visual_rows))
+        visible_groups = visual_rows[visible_start:visible_end]
+        if not visible_groups:
+            return
+
+        total_ratio = sum(self._row_height_ratio(group) for group in visible_groups)
+        available_height = self.height
+
+        current_y = 0
+        for group in visible_groups:
+            button_height = int(
+                available_height * self._row_height_ratio(group) / total_ratio
             )
-            self._buttons.append(button)
+            columns = len(group)
+            for column, actual_idx in enumerate(group):
+                entry = self.entries[actual_idx]
+                column_width = self.width // columns
+                x = column * column_width
+                width = self.width - x if column == columns - 1 else column_width
+                height = self._clamped_button_height(entry, button_height)
+                self._buttons.append(
+                    self._make_button(
+                        entry,
+                        x=x,
+                        y=current_y,
+                        width=width,
+                        height=height,
+                        selected=(actual_idx == self.selected_index),
+                    )
+                )
+                self._visible_entry_indices.append(actual_idx)
             current_y += button_height
+
+    def _clamped_button_height(self, entry: IconMenuEntry, button_height: int) -> int:
+        """Apply max_height when the entry is selectable."""
+        max_height = entry.max_height
+        if entry.scale_with_text_size and max_height is not None:
+            max_height = scale_font(max_height, self._text_size)
+        if entry.selectable and max_height is not None and button_height > max_height:
+            return max_height
+        return button_height
+
+    def _make_button(
+        self,
+        entry: IconMenuEntry,
+        *,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        selected: bool,
+    ) -> IconButtonWidget:
+        """Build one visible button from an entry and its allocated box."""
+        if entry.icon_size is not None:
+            icon_size = entry.icon_size
+        else:
+            icon_size = min(36, max(20, height - 24))
+
+        if entry.scale_with_text_size:
+            font_size = scale_font(entry.font_size, self._text_size)
+            description_font_size = scale_font(
+                entry.description_font_size, self._text_size
+            )
+        else:
+            font_size = entry.font_size
+            description_font_size = entry.description_font_size
+
+        return IconButtonWidget(
+            x,
+            y,
+            width,
+            height,
+            self._handle_child_update,
+            key=entry.key,
+            label=entry.label,
+            icon_name=entry.icon_name,
+            selected=selected,
+            enabled=entry.enabled,
+            margin=self.button_margin,
+            icon_size=icon_size,
+            layout=entry.layout,
+            font_size=font_size,
+            bold=entry.bold,
+            border_width=entry.border_width,
+            description=entry.description,
+            description_font_size=description_font_size,
+            icon_image=entry.icon_image,
+            icon_mask=entry.icon_mask,
+            trailing_icon_name=entry.trailing_icon_name,
+        )
     
     def _ensure_selection_visible(self) -> bool:
         """Ensure the currently selected item is within the visible scroll region.
@@ -327,19 +392,17 @@ class IconMenuWidget(Widget):
         Returns:
             True if scroll_offset was changed, False otherwise
         """
-        if self._visible_count >= len(self.entries):
-            # No scrolling needed - all items visible
+        if self._visible_count >= len(self._visual_rows()):
+            # No scrolling needed - all visual rows visible
             return False
-        
-        if self.selected_index < self.scroll_offset:
-            # Selected item is above visible area - scroll up
-            self.scroll_offset = self.selected_index
+
+        row_index = self._visual_row_index_of(self.selected_index)
+        if row_index < self.scroll_offset:
+            self.scroll_offset = row_index
             return True
-        elif self.selected_index >= self.scroll_offset + self._visible_count:
-            # Selected item is below visible area - scroll down
-            self.scroll_offset = self.selected_index - self._visible_count + 1
+        if row_index >= self.scroll_offset + self._visible_count:
+            self.scroll_offset = row_index - self._visible_count + 1
             return True
-        
         return False
     
     def _is_selectable(self, index: int) -> bool:
@@ -428,9 +491,8 @@ class IconMenuWidget(Widget):
             self._create_buttons()
         else:
             # Just update selection state on existing buttons
-            visible_start = self.scroll_offset
             for vis_idx, button in enumerate(self._buttons):
-                actual_idx = visible_start + vis_idx
+                actual_idx = self._visible_entry_indices[vis_idx]
                 button.set_selected(actual_idx == self.selected_index)
         
         self.invalidate_and_update(immediate=True)

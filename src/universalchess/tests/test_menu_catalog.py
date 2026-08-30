@@ -89,7 +89,7 @@ def test_board_main_menu_keys_match_renderer_contract():
     """
     catalog = load_catalog()
     keys = [c["key"] for c in catalog.children("main")]
-    assert keys == ["Universal", "Positions", "Lichess", "Centaur", "Settings"]
+    assert keys == ["Universal", "Lichess", "Centaur", "Positions", "Settings"]
 
 
 def test_settings_order_matches_board_layout():
@@ -575,7 +575,12 @@ def test_lichess_lobby_catalog_children_match_board_hierarchy():
     catalog = load_catalog()
     node = catalog.get_node("players.lichess")
     assert node["label"] == "Lichess Lobby"
-    assert node["boardLabel"] == "Lichess\nLobby"
+    assert node["boardLabel"] == "Lichess"
+    assert node["visibleWhen"] == {
+        "store": "main",
+        "key": "lichess_available",
+        "equals": True,
+    }
     assert catalog.child_ids("players.lichess") == [
         "lichess.account",
         "field.lichess.rated",

@@ -4176,11 +4176,10 @@ def _build_settings_context():
 def _build_main_menu_context():
     """Build the BoardMenuContext for rendering the root Main menu.
 
-    Supplies the two runtime variations the catalog cannot express on its own:
-    the ``main`` store's ``centaur_available`` flag (gates the Original Centaur
-    row via the node's ``visibleWhen``) and the ``play_label`` compute (the top
-    row reads RESUME while a game is suspended, else PLAY). Rendering only -- the
-    root loop owns dispatch -- so no actions are registered.
+    Supplies the runtime variations the catalog cannot express on its own:
+    ``centaur_available`` (Original Centaur), ``lichess_available`` (a saved
+    Lichess token), and the ``play_label`` compute (RESUME vs PLAY). Rendering
+    only -- the root loop owns dispatch -- so no actions are registered.
     """
     from universalchess.menus.board_context import BoardMenuContext
 
@@ -4192,6 +4191,10 @@ def _build_main_menu_context():
             from universalchess.services.centaur_import import centaur_app_installed
 
             return centaur_app_installed()
+        if key == "lichess_available":
+            from universalchess.players.lichess.accounts import list_lichess_credentials
+
+            return bool(list_lichess_credentials())
         raise KeyError(f"unknown main store key: {key!r}")
 
     def main_set(key, value):
@@ -4215,10 +4218,11 @@ def _build_main_menu_entries():
     """Render the root Main menu through the menu engine.
 
     Structure, labels, and icons come from the shared ``main`` catalog container:
-    the top row's PLAY/RESUME label is a computed token and the Original Centaur
-    row is gated by ``visibleWhen`` on the ``main`` store, replacing the bespoke
-    create_main_menu_entries override/skip logic. The root loop still dispatches
-    by entry key (Universal, Positions, Lichess, Settings, Centaur).
+    the top row's PLAY/RESUME label is a computed token, Lichess is gated by
+    ``visibleWhen`` on ``main.lichess_available`` (a saved token), and Original
+    Centaur is gated on ``centaur_available``. Positions and Settings share an
+    ``epaper.row`` so they sit half-width on one line. The root loop still
+    dispatches by entry key (Universal, Lichess, Positions, Settings, Centaur).
     """
     from universalchess.menus.board_context import render_container
 

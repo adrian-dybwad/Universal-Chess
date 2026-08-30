@@ -19,13 +19,21 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   sat under Settings → Players, so starting an online game was behind
   the same list as local slot types, and Type still offered Lichess as
   a pairing that blocked Positions and made PLAY seek. Lichess Lobby
-  now sits on the board main menu above Original Centaur (PLAY,
-  Positions, Lichess Lobby, Original Centaur, Settings). The web
+  now sits on the board main menu after PLAY (PLAY, Lichess, Original
+  Centaur, then Positions and Settings as a pair). The web
   Settings tab strip places Lichess Lobby immediately before Original
   Centaur. Slots are Human, Engine, or Hand+Brain; leftover
   ``type=lichess`` is rewritten to Human on load. Online play starts
   from the lobby, which still substitutes Human vs Lichess at start
   without writing the slots.
+
+- **E-paper main menu is Play, then Lichess and Original Centaur when they
+  apply, then Positions and Settings as a pair**: Five full-width rows
+  (PLAY, Positions, Lichess, Original Centaur, Settings) crowded the
+  128px panel. The root menu is now PLAY, Lichess only when a token is
+  saved, Original Centaur only when it is installed, and Positions next
+  to Settings as half-width icon-only buttons. First-token setup stays on the
+  web Lichess tab. UP/DOWN still visits each half of the pair.
 
 - **Lichess lobby Clock lists only Board API clocks**: Seek New Game
   took the Game clock, so a 5+0 Blitz Game setting posted a seek Lichess

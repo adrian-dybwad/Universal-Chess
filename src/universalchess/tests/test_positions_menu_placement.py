@@ -9,7 +9,7 @@ way to start playing.
 
 Setting up a position is the latter -- it begins a game from a chosen start,
 which is what the row does when selected. It now sits in the board's main menu
-between PLAY and Settings, beside the other ways into a game.
+beside Settings as a half-width pair, after PLAY / Lichess / Original Centaur.
 
 The main menu is rendered from the shared ``main`` container but dispatched by
 row key inside ``main()``, so a row added to the container without a matching
@@ -99,20 +99,21 @@ def test_positions_is_a_main_menu_entry():
     assert POSITIONS_NODE in catalog.child_ids("main")
 
 
-def test_positions_sits_between_play_and_settings():
-    """Positions is ordered after PLAY and before Settings.
+def test_positions_sits_with_settings_after_the_play_paths():
+    """Positions sits next to Settings, after PLAY / Lichess / Original Centaur.
 
-    Why this test exists: it belongs beside PLAY because both start a game, and
-    before Settings because Settings is where the device configuration begins.
-    Matching the placement but not the position still moves the row somewhere the
-    user has to hunt for.
+    Why this test exists: Positions and Settings are the half-width pair at the
+    bottom of the root menu. They belong after the ways into a game (PLAY,
+    Lichess, Original Centaur) so the primary actions stay full width.
 
-    How a regression manifests: an append puts Positions last, below Original
-    Centaur, where it reads as an unrelated afterthought.
+    How a regression manifests: Positions returns between PLAY and Lichess,
+    or Settings is no longer its neighbour.
     """
     children = _catalog().child_ids("main")
-    assert children.index(PLAY_NODE) < children.index(POSITIONS_NODE)
-    assert children.index(POSITIONS_NODE) < children.index(SETTINGS_NODE)
+    assert children.index(PLAY_NODE) < children.index(LICHESS_NODE)
+    assert children.index(LICHESS_NODE) < children.index(CENTAUR_NODE)
+    assert children.index(CENTAUR_NODE) < children.index(POSITIONS_NODE)
+    assert children.index(POSITIONS_NODE) + 1 == children.index(SETTINGS_NODE)
 
 
 def test_positions_is_no_longer_a_settings_entry():
@@ -174,7 +175,7 @@ def test_settings_no_longer_dispatches_positions():
 
 
 def test_lichess_lobby_is_a_main_menu_entry():
-    """The main menu lists Lichess Lobby directly, above Original Centaur.
+    """The main menu lists Lichess directly, after PLAY.
 
     Why this test exists: the lobby is a way into a game, not a Players setting.
     How a regression manifests: the row returns under Players, so starting a
@@ -185,15 +186,15 @@ def test_lichess_lobby_is_a_main_menu_entry():
     assert LICHESS_NODE in catalog.child_ids("main")
 
 
-def test_lichess_lobby_sits_between_positions_and_centaur():
-    """Lichess Lobby is ordered after Positions and before Original Centaur.
+def test_lichess_lobby_sits_between_play_and_centaur():
+    """Lichess is ordered after PLAY and before Original Centaur.
 
-    Why this test exists: the requested placement is the main-menu slot above
-    the Original Centaur button. How a regression manifests: an append puts it
-    last, or it sits above PLAY.
+    Why this test exists: the requested placement is Play, then Lichess when
+    an account exists, then Original Centaur. How a regression manifests: it
+    sits below Settings or above PLAY.
     """
     children = _catalog().child_ids("main")
-    assert children.index(POSITIONS_NODE) < children.index(LICHESS_NODE)
+    assert children.index(PLAY_NODE) < children.index(LICHESS_NODE)
     assert children.index(LICHESS_NODE) < children.index(CENTAUR_NODE)
 
 
@@ -216,19 +217,15 @@ def test_root_dispatch_handles_lichess():
 
 
 def test_the_main_menu_still_fits_on_one_screen():
-    """Five rows draw without scrolling, and PLAY stays the dominant one.
+    """Play, Lichess, Original Centaur, and the Positions/Settings pair fit.
 
-    Why this test exists: the main menu allocates height by weight, so adding a
-    row takes screen from the rows already there. Below the widget's minimum
-    button height the menu silently starts scrolling, which turns a glanceable
-    list into one the user has to page through, and PLAY -- deliberately the
-    largest target on the board -- would shrink toward the others. Positions,
-    Lichess, Original Centaur, and Settings share the same weight so PLAY stays
-    at least twice as tall as every other row.
+    Why this test exists: the main menu allocates height by visual row, so a
+    pair that still consumed two stacked units would shrink PLAY and could
+    start scrolling. PLAY is twice the height of every other row; Positions
+    and Settings share a y and half the width.
 
-    How a regression manifests: a later row or a raised weight pushes the total
-    past the screen, and the bottom entry disappears below the fold with no
-    indication it is there.
+    How a regression manifests: a later row or a raised weight pushes the
+    total past the screen, or the pair stacks full-width again.
     """
     entries = build_menu_entries("main")
     widget = IconMenuWidget(
@@ -237,6 +234,15 @@ def test_the_main_menu_still_fits_on_one_screen():
     )
 
     assert len(widget._buttons) == len(entries), "the main menu scrolls: a row is off screen"
+    by_key = {button.key: button for button in widget._buttons}
+    assert by_key["Positions"].y == by_key["Settings"].y
+    assert by_key["Positions"].x == 0
+    assert by_key["Settings"].x == by_key["Positions"].width
+    assert by_key["Positions"].width + by_key["Settings"].width == DISPLAY_WIDTH
+    assert by_key["Positions"].label == ""
+    assert by_key["Settings"].label == ""
+    assert by_key["Positions"].icon_name == "positions"
+    assert by_key["Settings"].icon_name == "settings"
     heights = {button.key: button.height for button in widget._buttons}
     assert min(heights.values()) >= widget.min_button_height
     play_height = heights["Universal"]

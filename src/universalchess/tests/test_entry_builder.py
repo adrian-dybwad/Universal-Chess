@@ -33,6 +33,49 @@ def test_node_to_entry_maps_fields_and_style():
     assert entry.bold is True
 
 
+def test_node_to_entry_forwards_shared_row():
+    """Positions and Settings must carry the same epaper.row so they sit together.
+
+    How the regression manifests: row is dropped and the pair stacks full-width.
+    """
+    catalog = load_catalog()
+    positions = node_to_entry(catalog.get_node("main.positions"))
+    settings = node_to_entry(catalog.get_node("main.settings"))
+    assert positions.row == "secondary"
+    assert settings.row == "secondary"
+    assert positions.layout == "vertical"
+    assert settings.layout == "vertical"
+
+
+def test_node_to_entry_icon_only_blanks_the_board_label():
+    """epaper.icon_only blanks the board label so the half-width cell is a glyph.
+
+    Why this test exists: Positions and Settings share a 64px-wide cell. The
+    web still names them; the board drops the words so the icon can fill the
+    button. _row_to_entry always forwards the engine's resolved label, so
+    icon_only must win over that override or the names still render.
+
+    How a regression manifests: entry.label is "Positions"/"Settings" and the
+    pair draws cramped text under a 24px icon. The web catalog label must stay.
+    """
+    catalog = load_catalog()
+    positions_node = catalog.get_node("main.positions")
+    settings_node = catalog.get_node("main.settings")
+    assert positions_node["label"] == "Positions"
+    assert settings_node["label"] == "Settings"
+    assert positions_node["epaper"]["icon_only"] is True
+    assert settings_node["epaper"]["icon_only"] is True
+
+    positions = node_to_entry(positions_node, label="Positions")
+    settings = node_to_entry(settings_node, label="Settings")
+    assert positions.label == ""
+    assert settings.label == ""
+    assert positions.icon_name == "positions"
+    assert settings.icon_name == "settings"
+    assert positions.help == positions_node["help"]
+    assert settings.help == settings_node["help"]
+
+
 def test_node_to_entry_overrides_label_and_icon():
     """Overrides must replace the catalog label/icon for dynamic entries.
 
@@ -101,7 +144,7 @@ def test_build_menu_entries_skip_keys_hides_entry():
     """
     entries = build_menu_entries("main", skip_keys={"Centaur"})
     keys = [e.key for e in entries]
-    assert keys == ["Universal", "Positions", "Lichess", "Settings"]
+    assert keys == ["Universal", "Lichess", "Positions", "Settings"]
 
 
 def test_help_for_key_returns_catalog_help():

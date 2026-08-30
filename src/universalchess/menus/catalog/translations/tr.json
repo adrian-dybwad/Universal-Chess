@@ -211,7 +211,7 @@
     },
     "players.lichess": {
       "label": "Lichess lobisi",
-      "boardLabel": "Lichess\nlobisi",
+      "boardLabel": "Lichess",
       "help": "Lichess kimlik bilgileri ve çevrimiçi oyun. Her giriş bir sunucu ve kullanıcıdır (lichess.org veya lichess.dev). Hesap seçiciyi, Reytingli'yi, Saati, Rengi, devam eden oyunları, meydan okumaları ve Yeni oyun ara'yı açar."
     },
     "lichess.account": {
@@ -760,7 +760,7 @@
     "field.lichess.color": {
       "label": "Renk",
       "boardLabel": "Renk",
-      "help": "Bu tahtanın yayınladığı her aramada bu hesabın oynadığı renk, lobiden ve hiç oyuncu Lichess olarak ayarlı değilken bile.\n\nBeyaz, Siyah veya Rastgele. Maç başlayınca insan o tarafa oturur. Oyuncular rengi yerel oyunlar içindir ve gönderilmez."
+        "help": "Bu tahtanın yayınladığı her aramada bu hesabın oynadığı renk, lobiden ve hiç oyuncu Lichess olarak ayarlı değilken bile.\n\nBeyaz, Siyah veya Rastgele. Maç başlayınca insan o tarafa oturur. Oyuncular rengi yerel oyunlar içindir ve gönderilmez."
     },
     "field.lichess.api_token": {
       "label": "API token",

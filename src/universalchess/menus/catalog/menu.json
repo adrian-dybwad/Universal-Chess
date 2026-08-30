@@ -243,7 +243,7 @@
       "type": "menu",
       "label": "Main Menu",
       "platforms": ["board"],
-      "children": ["main.play", "main.positions", "players.lichess", "main.centaur", "main.settings"]
+      "children": ["main.play", "players.lichess", "main.centaur", "main.positions", "main.settings"]
     },
     {
       "id": "main.play",
@@ -265,7 +265,7 @@
       "icon": "positions",
       "help": "Set up a predefined position on the board to practice or analyze.",
       "platforms": ["board", "web"],
-      "epaper": { "height_ratio": 1.0, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
+      "epaper": { "height_ratio": 1.0, "icon_size": 32, "layout": "vertical", "row": "secondary", "icon_only": true }
     },
     {
       "id": "main.centaur",
@@ -287,7 +287,7 @@
       "help": "Configure players, time control, display, connectivity, and system options.",
       "target": "settings",
       "platforms": ["board"],
-      "epaper": { "height_ratio": 1.0, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
+      "epaper": { "height_ratio": 1.0, "icon_size": 32, "layout": "vertical", "row": "secondary", "icon_only": true }
     },
 
     {
@@ -335,11 +335,12 @@
       "key": "Lichess",
       "type": "action",
       "label": "Lichess Lobby",
-      "boardLabel": "Lichess\nLobby",
+      "boardLabel": "Lichess",
       "icon": "lichess",
       "help": "Lichess credentials and online play. Each login is a server and user (lichess.org or lichess.dev). Opens the account picker, Rated, Clock, Color, ongoing games, challenges, and Seek New Game.",
       "section": "players",
       "platforms": ["board", "web"],
+      "visibleWhen": { "store": "main", "key": "lichess_available", "equals": true },
       "epaper": { "height_ratio": 1.0, "icon_size": 28, "layout": "horizontal", "font_size": 14 },
       "children": ["lichess.account", "field.lichess.rated", "field.lichess.clock", "field.lichess.color", "lichess.ongoing", "lichess.challenges", "lichess.new_game"]
     },

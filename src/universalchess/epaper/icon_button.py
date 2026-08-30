@@ -415,6 +415,14 @@ class IconButtonWidget(Widget):
                 if row[x % pattern_size] == 0 and sprite.getpixel((x, y)) == 0:
                     sprite.putpixel((x, y), 255)
     
+    def _has_visible_label(self) -> bool:
+        """True when the button should draw label text.
+
+        A blank or whitespace-only label is icon-only: the glyph is centered
+        and no text slot is reserved.
+        """
+        return bool((self.label or "").strip())
+
     def _render_vertical_layout(self, sprite: Image.Image, draw: ImageDraw.Draw, 
                                  content_left: int, content_top: int,
                                  content_width: int, content_height: int,
@@ -423,8 +431,16 @@ class IconButtonWidget(Widget):
         
         Uses TextWidget for text rendering. Labels that do not fit the
         remaining height wrap or shrink (Overflow.FIT) so Large can use the
-        extra space on a tall button instead of clipping.
+        extra space on a tall button instead of clipping. A blank or
+        whitespace-only label skips the text slot so the icon is centered in
+        the cell (the half-width Positions/Settings pair).
         """
+        if not self._has_visible_label():
+            icon_x = content_left + content_width // 2
+            icon_y = content_top + content_height // 2
+            self._draw_main_icon(draw, icon_x, icon_y, self.icon_size, self.selected)
+            return
+
         icon_text_gap = 4
         text_area_height = max(self.font_size + 2, content_height - self.icon_size - icon_text_gap)
         text_widget = self._get_cached_text_widget(
@@ -462,6 +478,16 @@ class IconButtonWidget(Widget):
             line_height: Height of each text line
             text_color: Color for text (0 or 255)
         """
+        if not self._has_visible_label():
+            content_left = inside_left + self.padding
+            content_width = self.width - 2 * (
+                self.margin + self.border_width + self.padding
+            )
+            icon_x = content_left + content_width // 2
+            icon_y = content_top + content_height // 2
+            self._draw_main_icon(draw, icon_x, icon_y, self.icon_size, self.selected)
+            return
+
         # Draw icon on the left, centered vertically in content area
         icon_left = inside_left + self.icon_margin
         icon_x = icon_left + self.icon_size // 2

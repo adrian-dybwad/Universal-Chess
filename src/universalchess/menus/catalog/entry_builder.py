@@ -44,7 +44,9 @@ def node_to_entry(
 
     Returns:
         An IconMenuEntry with e-paper style taken from the node's ``epaper``
-        block, falling back to the IconMenuEntry defaults.
+        block, falling back to the IconMenuEntry defaults. ``epaper.icon_only``
+        blanks ``label`` so the board draws a glyph; catalog ``label`` and
+        ``help`` are left for the web and the HELP dialog.
     """
     style = node.get("epaper", {})
     # border_width is forwarded only when the node declares it, so entries that
@@ -53,9 +55,16 @@ def node_to_entry(
     extra = {"border_width": style["border_width"]} if "border_width" in style else {}
     if "description_font_size" in style:
         extra["description_font_size"] = style["description_font_size"]
+    # icon_only wins over a resolved/overridden label: _row_to_entry always
+    # forwards the engine's board text, and emptying catalog ``label`` would
+    # hide the name on the web. Help and key stay so HELP and dispatch still work.
+    if style.get("icon_only"):
+        resolved_label = ""
+    else:
+        resolved_label = label if label is not None else node.get("label", "")
     return IconMenuEntry(
         key=node.get("key", node["id"]),
-        label=label if label is not None else node.get("label", ""),
+        label=resolved_label,
         icon_name=icon if icon is not None else node.get("icon", ""),
         enabled=enabled if enabled is not None else node.get("enabled", True),
         selectable=style.get("selectable", True),
@@ -70,6 +79,7 @@ def node_to_entry(
         trailing_icon_name=trailing_icon,
         icon_image=icon_image,
         icon_mask=icon_mask,
+        row=style.get("row"),
         **extra,
     )
 

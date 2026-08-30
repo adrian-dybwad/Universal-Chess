@@ -211,7 +211,7 @@
     },
     "players.lichess": {
       "label": "Lobby Lichess",
-      "boardLabel": "Lichess\nLobby",
+      "boardLabel": "Lichess",
       "help": "Dane Lichess i gra online. Każde logowanie to serwer i użytkownik (lichess.org lub lichess.dev). Otwiera wybór konta, Rankingowa, Zegar, Kolor, trwające partie, wyzwania i Szukaj nowej partii."
     },
     "lichess.account": {
@@ -760,7 +760,7 @@
     "field.lichess.color": {
       "label": "Kolor",
       "boardLabel": "Kolor",
-      "help": "Kolor, którym to konto gra w każdym ogłoszeniu wystawionym przez tę szachownicę, także z lobby, gdy żaden gracz nie jest ustawiony na Lichess.\n\nBiałe, Czarne albo Losowy. Po starcie człowiek siada po tej stronie. Kolor w Graczach jest do gier lokalnych i nie jest wysyłany."
+        "help": "Kolor, którym to konto gra w każdym ogłoszeniu wystawionym przez tę szachownicę, także z lobby, gdy żaden gracz nie jest ustawiony na Lichess.\n\nBiałe, Czarne albo Losowy. Po starcie człowiek siada po tej stronie. Kolor w Graczach jest do gier lokalnych i nie jest wysyłany."
     },
     "field.lichess.api_token": {
       "label": "Token API",

@@ -211,7 +211,7 @@
     },
     "players.lichess": {
       "label": "Lichess-Lobby",
-      "boardLabel": "Lichess\nLobby",
+      "boardLabel": "Lichess",
       "help": "Lichess-Zugangsdaten und Onlinespiel. Jede Anmeldung besteht aus Server und Benutzer (lichess.org oder lichess.dev). Öffnet die Kontoauswahl, Gewertet, Uhr, Farbe, laufende Partien, Herausforderungen und Neue Partie suchen."
     },
     "lichess.account": {
@@ -760,7 +760,7 @@
     "field.lichess.color": {
       "label": "Farbe",
       "boardLabel": "Farbe",
-      "help": "Farbe, die dieses Konto in jeder Partiesuche spielt, die dieses Brett veröffentlicht, auch für eine aus der Lobby ohne einen auf Lichess gesetzten Spieler.\n\nWeiß, Schwarz oder Zufall. Nach dem Start sitzt der Mensch auf dieser Seite. Die Spieler-Farbe gilt für lokale Partien und wird nicht gesendet."
+        "help": "Farbe, die dieses Konto in jeder Partiesuche spielt, die dieses Brett veröffentlicht, auch für eine aus der Lobby ohne einen auf Lichess gesetzten Spieler.\n\nWeiß, Schwarz oder Zufall. Nach dem Start sitzt der Mensch auf dieser Seite. Die Spieler-Farbe gilt für lokale Partien und wird nicht gesendet."
     },
     "field.lichess.api_token": {
       "label": "API-Token",
