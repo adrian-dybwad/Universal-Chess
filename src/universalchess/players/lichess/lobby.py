@@ -133,45 +133,66 @@ def resolve_lichess_identity(token, log=None, host_id: str = ""):
 DEFAULT_ACCOUNT_MENU_KEY = "Default"
 ACCOUNTS_MENU_KEY = "Accounts"
 
-def build_lichess_menu_entries(
-    username: Optional[str], rated: bool = False, clock: str = "", color: str = ""
-):
+def build_lichess_menu_entries(username: Optional[str]):
     """Build Lichess Settings rows (the lobby, not a nested Play page).
 
-    Account is first and selectable: it opens the account picker. Rated follows
-    it, because it decides what the account's rating is exposed to and applies
-    to every seek this board posts -- a player slot could not hold it, since a
-    lobby seek runs from a pairing no saved slot describes. Clock sits under
-    Rated for the same reason: the Board API accepts only Rapid, Classical, and
-    correspondence, so the Game clock (which still offers Blitz) is not sent.
-    Color sits under Clock: White, Black, or Random for the seeking account,
-    which is the side the human plays after remap. The Players colour control
-    still swaps sides for engine games and is not sent. Ongoing Games and
-    Challenges are always listed; selecting either shows how it works, then the
-    live list. Seek New Game is last. Add or delete logins is Accounts on the
-    picker, not a lobby sibling.
+    Account is first and selectable: it opens the account picker. Ongoing Games
+    and Challenges are always listed; selecting either shows how it works, then
+    the live list. Seek New Game opens Rated, Clock, Color, and Seek. Add or
+    delete logins is Accounts on the picker, not a lobby sibling.
 
-    That last row says Seek because it always posts a seek, whatever the Players
-    slots are set to, unlike the New Game elsewhere that starts whichever game
-    those slots describe.
+    That last row says Seek New Game because the submenu always posts a seek,
+    whatever the Players slots are set to, unlike the New Game elsewhere that
+    starts whichever game those slots describe.
 
     Labels and help come from the catalog nodes the web card renders, so the row
     reads the same on both surfaces and in the device's language.
     """
-    from universalchess.menus.catalog.loader import get_catalog
-    from .match import DEFAULT_LICHESS_CLOCK, DEFAULT_LICHESS_COLOR
-
     account = username or t("common.unknown")
-    clock_key = clock or DEFAULT_LICHESS_CLOCK
-    clock_label = get_catalog().option_label("lichess_clock", clock_key)
-    color_key = color or DEFAULT_LICHESS_COLOR
-    color_label = get_catalog().option_label("lichess_color", color_key)
     return [
         IconMenuEntry(
             key="Account",
             label=f"{_row('lichess.account', 'boardLabel')}\n{account}",
             icon_name="lichess",
         ),
+        IconMenuEntry(
+            key="Ongoing",
+            label=_row("lichess.ongoing", "boardLabel"),
+            icon_name="lichess",
+            help=_row("lichess.ongoing", "help"),
+        ),
+        IconMenuEntry(
+            key="Challenges",
+            label=_row("lichess.challenges", "boardLabel"),
+            icon_name="lichess",
+            help=_row("lichess.challenges", "help"),
+        ),
+        IconMenuEntry(
+            key="NewGame",
+            label=_row("lichess.new_game", "boardLabel"),
+            icon_name="play",
+            help=_row("lichess.new_game", "help"),
+        ),
+    ]
+
+
+def build_lichess_seek_menu_entries(
+    rated: bool = False, clock: str = "", color: str = ""
+):
+    """Build the Seek New Game submenu: Rated, Clock, Color, then Seek.
+
+    These three settings used to sit on the lobby itself, so they mixed with
+    join/challenge and a seek could be posted without looking at them. They
+    belong with the action they govern. Seek is last and posts the seek.
+    """
+    from universalchess.menus.catalog.loader import get_catalog
+    from .match import DEFAULT_LICHESS_CLOCK, DEFAULT_LICHESS_COLOR
+
+    clock_key = clock or DEFAULT_LICHESS_CLOCK
+    clock_label = get_catalog().option_label("lichess_clock", clock_key)
+    color_key = color or DEFAULT_LICHESS_COLOR
+    color_label = get_catalog().option_label("lichess_color", color_key)
+    return [
         IconMenuEntry(
             key="Rated",
             label=(
@@ -194,21 +215,10 @@ def build_lichess_menu_entries(
             help=_row("field.lichess.color", "help"),
         ),
         IconMenuEntry(
-            key="Ongoing",
-            label=_row("lichess.ongoing", "boardLabel"),
-            icon_name="lichess",
-            help=_row("lichess.ongoing", "help"),
-        ),
-        IconMenuEntry(
-            key="Challenges",
-            label=_row("lichess.challenges", "boardLabel"),
-            icon_name="lichess",
-            help=_row("lichess.challenges", "help"),
-        ),
-        IconMenuEntry(
-            key="NewGame",
-            label=_row("lichess.new_game", "boardLabel"),
+            key="Seek",
+            label=_row("lichess.seek", "boardLabel"),
             icon_name="play",
+            help=_row("lichess.seek", "help"),
         ),
     ]
 
@@ -774,21 +784,6 @@ def _ongoing_row_label(row: dict) -> str:
     return f"{row['opponent']}\n({row['rating']}) {color}"
 
 
-def _try_ongoing_summaries(client, log) -> list:
-    """nowPlaying rows, or empty when the client cannot list them.
-
-    A missing ``games.get_ongoing`` (tests that stub a bare client) must not
-    block a seek: there is nothing to resume.
-    """
-    try:
-        raw = client.games.get_ongoing(count=10)
-    except Exception as e:
-        if log is not None:
-            log.warning(f"[Lichess] Could not list ongoing games: {e}")
-        return []
-    return ongoing_game_summaries(raw)
-
-
 def _ongoing_board_preview(row: dict, player1_color: str = "white"):
     """128x128 1-bit diagram of ``row['fen']``, or ``(None, None)``.
 
@@ -857,83 +852,6 @@ def confirm_ongoing_game(menu_manager, row: dict, player1_color: str = "white") 
     result = menu_manager.show_menu(entries, initial_index=1)
     key = result.key if hasattr(result, "key") else result
     return key == "Join"
-
-
-def ongoing_or_seek_menu_entries(summaries) -> list:
-    """Prompt, nowPlaying rows, then Seek New Game."""
-    entries = [
-        IconMenuEntry(
-            key="prompt",
-            label=t("lichess.ongoing_or_seek.prompt"),
-            icon_name="lichess",
-            selectable=False,
-            font_size=12,
-        )
-    ]
-    for row in summaries:
-        entries.append(
-            IconMenuEntry(
-                key=row["id"],
-                label=_ongoing_row_label(row),
-                icon_name="lichess",
-                font_size=12,
-            )
-        )
-    entries.append(
-        IconMenuEntry(
-            key="Seek",
-            label=_row("lichess.new_game", "boardLabel"),
-            icon_name="play",
-        )
-    )
-    return entries
-
-
-def choose_ongoing_or_seek(menu_manager, summaries, player1_color: str = "white") -> str:
-    """``seek``, ``cancel``, or a nowPlaying game id after the position confirm.
-
-    PLAY uses this picker. Empty ``summaries`` seeks without a menu: there
-    is nothing to resume. BACK on the picker or on the diagram is ``cancel``.
-    Choosing a game still requires Join on the diagram so the pieces can be
-    set up first.
-    """
-    if not summaries:
-        return "seek"
-    while True:
-        result = menu_manager.show_menu(
-            ongoing_or_seek_menu_entries(summaries), initial_index=1
-        )
-        key = result.key if hasattr(result, "key") else result
-        if getattr(result, "is_break", False) or key in ("BACK", "SHUTDOWN"):
-            return "cancel"
-        if key == "Seek":
-            return "seek"
-        row = next((item for item in summaries if item["id"] == key), None)
-        if row is None:
-            return "cancel"
-        if confirm_ongoing_game(menu_manager, row, player1_color):
-            return row["id"]
-
-
-def _start_seek_or_resume(
-    connection, menu_manager, start_game, log, player1_color: str = "white"
-) -> bool:
-    """PLAY in the lobby: join a chosen nowPlaying game, or seek.
-
-    Ongoing Games and Seek New Game are explicit. PLAY is the mixed
-    choice, so unfinished games are offered (with the position) first.
-    """
-    from .player import LichessPlayerConfig as LichessConfig, LichessGameMode
-
-    summaries = _try_ongoing_summaries(connection.client, log)
-    choice = choose_ongoing_or_seek(menu_manager, summaries, player1_color)
-    if choice == "cancel":
-        return False
-    if choice == "seek":
-        return bool(start_game(LichessConfig(mode=LichessGameMode.NEW)))
-    return bool(
-        start_game(LichessConfig(mode=LichessGameMode.ONGOING, game_id=choice))
-    )
 
 
 def lichess_join_from_web_params(params: dict) -> Optional[dict]:
@@ -1142,7 +1060,7 @@ def handle_lichess_menu(
     set_color_fn: Optional[Callable] = None,
     player1_color_fn: Optional[Callable] = None,
 ):
-    """Handle Lichess Settings: Account, Ongoing, Challenges, New Game.
+    """Handle Lichess Settings: Account, Ongoing, Challenges, Seek New Game.
 
     Owns the connection it is given for as long as the menu is on screen, and
     closes it on the way out -- including the one an account switch replaces. A
@@ -1263,28 +1181,7 @@ def handle_lichess_menu(
             return DEFAULT_LICHESS_COLOR
         return str(color_fn() or "") or DEFAULT_LICHESS_COLOR
 
-    def handle_selection(result: MenuSelection):
-        if result.key == "Account":
-            while True:
-                choices = (
-                    list_account_choices_fn()
-                    if list_account_choices_fn is not None
-                    else []
-                )
-                picked = show_lichess_account_picker(menu_manager, choices)
-                if is_break_result(picked):
-                    return picked
-                if picked is None:
-                    return None
-                if picked == ACCOUNTS_MENU_KEY:
-                    handle_accounts_menu_fn()
-                    refresh_client()
-                    continue
-                if bind_account_fn is None:
-                    return None
-                bind_account_fn(picked)
-                refresh_client()
-                return None
+    def handle_seek_selection(result: MenuSelection):
         if result.key == "Rated":
             # Returning None keeps the loop, which rebuilds the rows through
             # rated_fn, so the checkbox shows the value that was just written.
@@ -1309,8 +1206,42 @@ def handle_lichess_menu(
             if picked is not None:
                 set_color_fn(picked)
             return None
-        if result.key == "NewGame":
+        if result.key == "Seek":
             if start_game(LichessConfig(mode=LichessGameMode.NEW)):
+                return result
+            return None
+        return None
+
+    def handle_selection(result: MenuSelection):
+        if result.key == "Account":
+            while True:
+                choices = (
+                    list_account_choices_fn()
+                    if list_account_choices_fn is not None
+                    else []
+                )
+                picked = show_lichess_account_picker(menu_manager, choices)
+                if is_break_result(picked):
+                    return picked
+                if picked is None:
+                    return None
+                if picked == ACCOUNTS_MENU_KEY:
+                    handle_accounts_menu_fn()
+                    refresh_client()
+                    continue
+                if bind_account_fn is None:
+                    return None
+                bind_account_fn(picked)
+                refresh_client()
+                return None
+        if result.key == "NewGame":
+            seek_result = menu_manager.run_menu_loop(
+                lambda: build_lichess_seek_menu_entries(_rated(), _clock(), _color()),
+                handle_seek_selection,
+            )
+            if is_play_start(seek_result) or is_break_result(seek_result):
+                return seek_result
+            if game_started:
                 return result
             return None
         if result.key == "Ongoing":
@@ -1347,20 +1278,9 @@ def handle_lichess_menu(
 
     try:
         result = menu_manager.run_menu_loop(
-            lambda: build_lichess_menu_entries(
-                username, _rated(), _clock(), _color()
-            ),
+            lambda: build_lichess_menu_entries(username),
             handle_selection,
         )
-        if is_play_start(result):
-            # PLAY is the mixed start: unfinished games first (with the
-            # position), or a new seek. A failed start still returns the
-            # break, because PLAY is also how the user leaves. This must run
-            # before the connection is closed: the picker lists nowPlaying.
-            if _start_seek_or_resume(
-                connection, menu_manager, start_game, log, player1_color=_player1_color()
-            ):
-                return "START_GAME"
     finally:
         # Leaving the menu ends the only thing this connection existed for. What
         # follows -- including a game start -- never asks it anything: the player

@@ -16,6 +16,7 @@ game state, rather than being externally managed by other widgets.
 from PIL import Image, ImageDraw, ImageFont, ImageChops
 from .framework.widget import Widget
 from .text import TextWidget, Justify
+from universalchess.clock_format import format_clock_time
 from universalchess.i18n import t
 from .text import TextWidget, Justify, Overflow
 from .text_scale import DEFAULT_TEXT_SIZE, normalize_text_size, scale_font
@@ -306,22 +307,12 @@ class GameOverWidget(Widget):
         return t(key) if key else term.title()
     
     def _format_time(self, seconds: int) -> str:
+        """Final remainders using the same strings as the running clock.
+
+        Game-over is not FLAG: a flagged side has already ended, and the footer
+        still needs a numeric pair (``W:0:00  B:1:02:03``).
         """
-        Format time in seconds to display string.
-        
-        Args:
-            seconds: Time in seconds
-            
-        Returns:
-            Formatted time string (M:SS or MM:SS)
-        """
-        if seconds <= 0:
-            return "0:00"
-        
-        minutes = seconds // 60
-        secs = seconds % 60
-        
-        return f"{minutes}:{secs:02d}"
+        return format_clock_time(seconds)
     
     def render(self, sprite: Image.Image) -> None:
         """

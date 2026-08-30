@@ -212,7 +212,7 @@
     "players.lichess": {
       "label": "Lobby Lichess",
       "boardLabel": "Lichess",
-      "help": "Dane Lichess i gra online. Każde logowanie to serwer i użytkownik (lichess.org lub lichess.dev). Otwiera wybór konta, Rankingowa, Zegar, Kolor, trwające partie, wyzwania i Szukaj nowej partii."
+      "help": "Dane Lichess i gra online. Każde logowanie to serwer i użytkownik (lichess.org lub lichess.dev). Otwiera wybór konta, trwające partie, wyzwania i Szukaj nowej partii (Rankingowa, Zegar, Kolor i Szukaj)."
     },
     "lichess.account": {
       "label": "Konto",
@@ -232,7 +232,12 @@
     "lichess.new_game": {
       "label": "Szukaj nowej partii",
       "boardLabel": "Szukaj\npartii",
-      "help": "Znajdź na Lichess nowego przeciwnika dla tego konta, niezależnie od tego, co jest ustawione w Graczach. Rankingowa, Zegar i Kolor to wiersze powyżej."
+      "help": "Znajdź na Lichess nowego przeciwnika dla tego konta, niezależnie od tego, co jest ustawione w Graczach. Otwiera Rankingowa, Zegar, Kolor i Szukaj."
+    },
+    "lichess.seek": {
+      "label": "Szukaj",
+      "boardLabel": "Szukaj",
+      "help": "Publikuje publiczne ogłoszenie z Rankingowa, Zegar i Kolor powyżej."
     },
     "players.start": {
       "label": "Rozpocznij\nnową partię",

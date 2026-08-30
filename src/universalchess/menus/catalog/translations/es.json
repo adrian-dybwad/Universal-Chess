@@ -213,7 +213,7 @@
     "players.lichess": {
       "label": "Lobby de Lichess",
       "boardLabel": "Lichess",
-      "help": "Credenciales de Lichess y juego en línea. Cada cuenta es un servidor y usuario (lichess.org o lichess.dev). Abre el selector de cuenta, Clasificada, Reloj, Color, partidas en curso, desafíos y Buscar partida nueva."
+      "help": "Credenciales de Lichess y juego en línea. Cada cuenta es un servidor y usuario (lichess.org o lichess.dev). Abre el selector de cuenta, partidas en curso, desafíos y Buscar partida nueva (Clasificada, Reloj, Color y Buscar)."
     },
     "lichess.account": {
       "label": "Cuenta",
@@ -233,7 +233,12 @@
     "lichess.new_game": {
       "label": "Buscar partida nueva",
       "boardLabel": "Buscar\npartida",
-      "help": "Busca un rival nuevo en Lichess con esta cuenta, sea cual sea la configuración de los jugadores. Clasificada, Reloj y Color son las filas de arriba."
+      "help": "Busca un rival nuevo en Lichess con esta cuenta, sea cual sea la configuración de los jugadores. Abre Clasificada, Reloj, Color y Buscar."
+    },
+    "lichess.seek": {
+      "label": "Buscar",
+      "boardLabel": "Buscar",
+      "help": "Publica una búsqueda pública con Clasificada, Reloj y Color de arriba."
     },
     "players.start": {
       "label": "Nueva\npartida",

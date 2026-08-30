@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 from universalchess.managers.menu import MenuSelection
 from universalchess.players.lichess.lobby import (
     build_lichess_clock_picker_entries,
-    build_lichess_menu_entries,
+    build_lichess_seek_menu_entries,
     handle_lichess_menu,
 )
 from universalchess.players.lichess.match import LICHESS_CLOCKS
@@ -28,13 +28,19 @@ class _FakeConnection:
 
 
 def _run_lobby(selections, picker_key=None, **kwargs):
-    """Drive the lobby, answering Clock with ``picker_key`` when a picker opens."""
+    """Drive the lobby, then the Seek New Game submenu, answering Clock with ``picker_key``."""
     drawn = []
+    remaining = list(selections)
 
     class Menu:
         def run_menu_loop(self, build_entries, handle_selection, **_kwargs):
             drawn.append(build_entries())
-            for key in selections:
+            while remaining:
+                key = remaining[0]
+                visible = {e.key for e in build_entries()}
+                if key not in visible:
+                    break
+                remaining.pop(0)
                 handle_selection(MenuSelection.from_key(key))
                 drawn.append(build_entries())
             return None
@@ -54,23 +60,20 @@ def _run_lobby(selections, picker_key=None, **kwargs):
     return drawn
 
 
-def test_clock_sits_directly_under_rated_in_the_lobby():
-    """Clock is the row under Rated, before Color.
+def test_clock_sits_directly_under_rated_in_the_seek_submenu():
+    """Clock is the row under Rated, before Color, on Seek New Game.
 
     Why: the seek clock was the Game setting, so a Blitz Game clock posted 5+0
     and Lichess never listed a hook. How a regression manifests: Clock is missing,
     or it sits on the Game tab instead of beside Rated.
     """
-    entries = build_lichess_menu_entries("alice", rated=False, clock="rapid_10_0")
+    entries = build_lichess_seek_menu_entries(rated=False, clock="rapid_10_0")
 
     assert [entry.key for entry in entries] == [
-        "Account",
         "Rated",
         "Clock",
         "Color",
-        "Ongoing",
-        "Challenges",
-        "NewGame",
+        "Seek",
     ]
 
 
@@ -82,7 +85,7 @@ def test_the_clock_row_states_the_stored_choice():
     """
     row = next(
         e
-        for e in build_lichess_menu_entries("alice", clock="classical_30_0")
+        for e in build_lichess_seek_menu_entries(clock="classical_30_0")
         if e.key == "Clock"
     )
 
@@ -98,7 +101,7 @@ def test_none_clock_uses_the_untimed_icon():
     real-time seek on the lobby.
     """
     row = next(
-        e for e in build_lichess_menu_entries("alice", clock="none") if e.key == "Clock"
+        e for e in build_lichess_seek_menu_entries(clock="none") if e.key == "Clock"
     )
 
     assert row.label == "Clock\nNone"
@@ -128,7 +131,7 @@ def test_selecting_clock_writes_the_picked_key():
     written = []
 
     _run_lobby(
-        ["Clock"],
+        ["NewGame", "Clock"],
         picker_key="none",
         clock_fn=lambda: "rapid_10_0",
         set_clock_fn=written.append,
@@ -149,13 +152,17 @@ def test_the_lobby_redraws_clock_from_the_stored_value_after_a_pick():
         stored["clock"] = value
 
     drawn = _run_lobby(
-        ["Clock"],
+        ["NewGame", "Clock"],
         picker_key="none",
         clock_fn=lambda: stored["clock"],
         set_clock_fn=set_clock,
     )
 
-    labels = [next(e.label for e in entries if e.key == "Clock") for entries in drawn]
+    labels = [
+        next(e.label for e in entries if e.key == "Clock")
+        for entries in drawn
+        if any(e.key == "Clock" for e in entries)
+    ]
     assert labels == ["Clock\n10|0 Rapid", "Clock\nNone"]
 
 
@@ -165,6 +172,10 @@ def test_a_lobby_with_no_clock_writer_leaves_the_row_inert():
     How a regression manifests: an unwired lobby raises on selection and takes
     the menu thread down with it.
     """
-    drawn = _run_lobby(["Clock"])
+    drawn = _run_lobby(["NewGame", "Clock"])
 
-    assert all(any(e.key == "Clock" for e in entries) for entries in drawn)
+    assert all(
+        any(e.key == "Clock" for e in entries)
+        for entries in drawn
+        if any(e.key == "Seek" for e in entries)
+    )

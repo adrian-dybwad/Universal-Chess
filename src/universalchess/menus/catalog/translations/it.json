@@ -213,7 +213,7 @@
     "players.lichess": {
       "label": "Lobby Lichess",
       "boardLabel": "Lichess",
-      "help": "Credenziali Lichess e gioco online. Ogni accesso è un server e un utente (lichess.org o lichess.dev). Apre il selettore account, Valida, Orologio, Colore, partite in corso, sfide e Cerca nuova partita."
+      "help": "Credenziali Lichess e gioco online. Ogni accesso è un server e un utente (lichess.org o lichess.dev). Apre il selettore account, partite in corso, sfide e Cerca nuova partita (Valida, Orologio, Colore e Cerca)."
     },
     "lichess.account": {
       "label": "Account",
@@ -233,7 +233,12 @@
     "lichess.new_game": {
       "label": "Cerca nuova partita",
       "boardLabel": "Cerca\npartita",
-      "help": "Cerca un nuovo avversario su Lichess con questo account, indipendentemente dalle impostazioni dei giocatori. Valida, Orologio e Colore sono le righe sopra."
+      "help": "Cerca un nuovo avversario su Lichess con questo account, indipendentemente dalle impostazioni dei giocatori. Apre Valida, Orologio, Colore e Cerca."
+    },
+    "lichess.seek": {
+      "label": "Cerca",
+      "boardLabel": "Cerca",
+      "help": "Pubblica una ricerca pubblica con Valida, Orologio e Colore sopra."
     },
     "players.start": {
       "label": "Nuova\npartita",

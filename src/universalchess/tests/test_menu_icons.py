@@ -45,6 +45,19 @@ def test_new_catalog_icons_render_distinctly():
         assert _render(name) != _PLACEHOLDER, f"icon '{name}' renders as placeholder"
 
 
+def test_check_icon_is_not_the_placeholder_or_the_x():
+    """Correspondence confirm uses a tick, not a boxed checkbox or the X.
+
+    Why: the Confirm Move pair is check beside cancel. A missing ``check``
+    branch would draw the placeholder square, or reuse cancel and both
+    buttons would look the same. How a regression manifests: check equals
+    the placeholder or the cancel X.
+    """
+    check = _render("check")
+    assert check != _PLACEHOLDER, "'check' must draw a tick, not the placeholder"
+    assert check != _render("cancel"), "check and cancel must be distinct glyphs"
+
+
 # Every registered id now draws a distinct glyph (no id shares the placeholder
 # square by design): 'timer'/'timer_checked' draw a real stopwatch.
 _SQUARE_BY_DESIGN: set[str] = set()

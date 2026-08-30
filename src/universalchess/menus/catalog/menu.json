@@ -337,12 +337,12 @@
       "label": "Lichess Lobby",
       "boardLabel": "Lichess",
       "icon": "lichess",
-      "help": "Lichess credentials and online play. Each login is a server and user (lichess.org or lichess.dev). Opens the account picker, Rated, Clock, Color, ongoing games, challenges, and Seek New Game.",
+      "help": "Lichess credentials and online play. Each login is a server and user (lichess.org or lichess.dev). Opens the account picker, ongoing games, challenges, and Seek New Game (Rated, Clock, Color, and Seek).",
       "section": "players",
       "platforms": ["board", "web"],
       "visibleWhen": { "store": "main", "key": "lichess_available", "equals": true },
       "epaper": { "height_ratio": 1.0, "icon_size": 28, "layout": "horizontal", "font_size": 14 },
-      "children": ["lichess.account", "field.lichess.rated", "field.lichess.clock", "field.lichess.color", "lichess.ongoing", "lichess.challenges", "lichess.new_game"]
+      "children": ["lichess.account", "lichess.ongoing", "lichess.challenges", "lichess.new_game"]
     },
     {
       "id": "lichess.account",
@@ -378,7 +378,17 @@
       "label": "Seek New Game",
       "boardLabel": "Seek New\nGame",
       "icon": "play",
-      "help": "Seek a new opponent on Lichess with this account, whatever the Players slots are set to. Rated, Clock, and Color are the rows above.",
+      "help": "Seek a new opponent on Lichess with this account, whatever the Players slots are set to. Opens Rated, Clock, Color, and Seek.",
+      "section": "players",
+      "children": ["field.lichess.rated", "field.lichess.clock", "field.lichess.color", "lichess.seek"]
+    },
+    {
+      "id": "lichess.seek",
+      "type": "action",
+      "label": "Seek",
+      "boardLabel": "Seek",
+      "icon": "play",
+      "help": "Post a public seek with the Rated, Clock, and Color settings above.",
       "section": "players"
     },
     {

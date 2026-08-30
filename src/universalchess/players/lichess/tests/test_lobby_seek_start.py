@@ -2,18 +2,18 @@
 
 Why these tests exist
 ---------------------
-The lobby's New Game row and PLAY inside the lobby only stashed a join and left
-``_start_game_mode`` to build players from settings. With no slot set to
-Lichess that produced a local game -- pressing New Game in the Lichess lobby
-started Player 1 against Drawfish, with no seek posted at all. The two pieces
-that fix it are pure and live here: the effective pairing a lobby start runs
-with, and the fact that it is derived rather than saved.
+The lobby's New Game row only stashed a join and left ``_start_game_mode``
+to build players from settings. With no slot set to Lichess that produced a
+local game -- pressing Seek in the Lichess lobby started Player 1 against
+Drawfish, with no seek posted at all. The two pieces that fix it are pure and
+live here: the effective pairing a lobby start runs with, and the fact that
+it is derived rather than saved.
 
 How a regression manifests
 --------------------------
 A lobby start returns a pairing with no Lichess slot (so a local game begins),
-overwrites the user's saved Players settings, drops the human in favour of two
-non-human slots, or PLAY in the lobby leaves without seeking.
+overwrites the user's saved Players settings, or drops the human in favour of
+two non-human slots.
 """
 
 from types import SimpleNamespace
@@ -22,7 +22,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from universalchess.managers.menu import MenuSelection
-from universalchess.players.lichess import LichessGameMode
 from universalchess.players.lichess.lobby import (
     build_lichess_menu_entries,
     effective_lichess_players,
@@ -156,15 +155,29 @@ def test_the_lobby_new_game_row_says_seek_new_game():
     assert entries["NewGame"].label.replace("\n", " ") == "Seek New Game"
 
 
-def test_play_inside_the_lobby_seeks_instead_of_starting_a_local_game():
-    """PLAY is the lobby's New Game, not a plain start.
+def test_the_seek_row_says_seek():
+    """The submenu's last row posts the seek and must say so.
 
-    Why this test exists: PLAY broke out of the lobby without stashing a join,
-    so the game that followed was built from the Players slots -- inside the
-    Lichess lobby, PLAY started an engine game.
+    Why: Seek New Game now opens settings; the action that posts must not
+    still read Seek New Game. How a regression manifests: the label is New
+    Game, so the board offers two rows with the same name.
+    """
+    from universalchess.players.lichess.lobby import build_lichess_seek_menu_entries
 
-    How a regression manifests: no config reaches ``start_lichess_game_fn``, or
-    its mode is not NEW, so the board plays locally after PLAY in the lobby.
+    entries = {entry.key: entry for entry in build_lichess_seek_menu_entries()}
+
+    assert entries["Seek"].label == "Seek"
+
+
+def test_play_inside_the_lobby_leaves_to_the_board():
+    """PLAY leaves the lobby; it does not seek or join.
+
+    Why this test exists: PLAY toggles menu and board. The lobby used to
+    intercept it as a mixed Lichess start, so a press posted a seek or opened
+    a leftover-game picker instead of resuming the suspended game.
+
+    How a regression manifests: start_lichess_game_fn is called, or the result
+    is START_GAME instead of PLAY.
     """
     started = []
 
@@ -180,32 +193,5 @@ def test_play_inside_the_lobby_seeks_instead_of_starting_a_local_game():
         log=MagicMock(),
     )
 
-    assert [config.mode for config in started] == [LichessGameMode.NEW]
-    assert result == "START_GAME"
-
-
-def test_play_in_the_lobby_still_leaves_when_the_seek_cannot_start():
-    """A failed start must not trap the user in the lobby.
-
-    Why this test exists: PLAY is also the key that leaves. If the seek cannot
-    be stashed (no credential, import failure) and the break were swallowed,
-    the press would appear to do nothing at all.
-
-    How a regression manifests: the result is START_GAME or None after a failed
-    start, so the menu stack does not unwind and PLAY looks dead.
-    """
-
-    class Menu:
-        def run_menu_loop(self, build_entries, handle_selection, **kwargs):
-            return MenuSelection.from_key("PLAY")
-
-    result = handle_lichess_menu(
-        get_lichess_connection_fn=lambda: (_FakeConnection(), "alice", None),
-        menu_manager=Menu(),
-        start_lichess_game_fn=lambda config: False,
-        handle_accounts_menu_fn=lambda: None,
-        log=MagicMock(),
-    )
-
-    assert result is not None
+    assert started == []
     assert getattr(result, "key", result) == "PLAY"

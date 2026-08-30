@@ -8,8 +8,9 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * The Lichess Settings tab must follow the board lobby hierarchy: Account
- * (picker + Accounts last), Ongoing Games, Challenges, Seek New Game. Selecting
- * a game or Seek New Game posts /api/lichess/start, not /api/board/new-game.
+ * (picker + Accounts last), Ongoing Games, Challenges, Seek New Game (Rated,
+ * Clock, Color, Seek). Selecting a game or Seek posts /api/lichess/start, not
+ * /api/board/new-game.
  *
  * Why: the web card used to be credentials-only (AccountsCard). A regression
  * drops a lobby section, keeps Accounts as a sibling of Seek New Game, or
@@ -176,7 +177,7 @@ describe('Settings Lichess lobby card', () => {
       'Account',
     ]);
     expect(screen.queryByLabelText('Rated')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Seek New Game' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Seek' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Accounts' })).toBeInTheDocument();
   });
 
@@ -302,13 +303,32 @@ describe('Settings Lichess lobby card', () => {
     });
   });
 
-  it('Seek New Game posts mode new even when unfinished games are listed', async () => {
-    // Ongoing Games is the join list. Seek New Game must not wait for those
+  it('nests Rated, Clock, Color, and Seek under Seek New Game', async () => {
+    // Those three settings used to sit on the lobby beside Ongoing. How a
+    // regression manifests: Rated is a lobby sibling (querySelector heading
+    // list grows), or Seek is missing so the section cannot post.
+    mockLobbyFetch();
+    renderLobby();
+    expect(await screen.findByRole('heading', { name: 'Lichess Lobby' })).toBeInTheDocument();
+    const lobby = document.querySelector('.lichess-lobby');
+    expect(lobby).not.toBeNull();
+    const seekSection = [...lobby!.querySelectorAll('.lichess-lobby-section')].find((el) =>
+      el.querySelector('.lichess-lobby-heading')?.textContent === 'Seek New Game',
+    );
+    expect(seekSection).not.toBeUndefined();
+    expect(seekSection!.contains(await screen.findByLabelText('Rated'))).toBe(true);
+    expect(seekSection!.contains(screen.getByLabelText('Clock'))).toBe(true);
+    expect(seekSection!.contains(screen.getByLabelText('Color'))).toBe(true);
+    expect(seekSection!.contains(screen.getByRole('button', { name: 'Seek' }))).toBe(true);
+  });
+
+  it('Seek posts mode new even when unfinished games are listed', async () => {
+    // Ongoing Games is the join list. Seek must not wait for those
     // rows. How a regression manifests: the first click does not POST, or it
     // posts mode ongoing for g1.
     const { fetchMock } = mockLobbyFetch();
     renderLobby();
-    fireEvent.click(await screen.findByRole('button', { name: 'Seek New Game' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Seek' }));
     await waitFor(() => {
       const start = fetchMock.mock.calls.find(
         (call) => call[0] === '/api/lichess/start' && (call[1] as RequestInit | undefined)?.method === 'POST',

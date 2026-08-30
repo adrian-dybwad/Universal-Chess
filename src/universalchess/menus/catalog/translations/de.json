@@ -212,7 +212,7 @@
     "players.lichess": {
       "label": "Lichess-Lobby",
       "boardLabel": "Lichess",
-      "help": "Lichess-Zugangsdaten und Onlinespiel. Jede Anmeldung besteht aus Server und Benutzer (lichess.org oder lichess.dev). Öffnet die Kontoauswahl, Gewertet, Uhr, Farbe, laufende Partien, Herausforderungen und Neue Partie suchen."
+      "help": "Lichess-Zugangsdaten und Onlinespiel. Jede Anmeldung besteht aus Server und Benutzer (lichess.org oder lichess.dev). Öffnet die Kontoauswahl, laufende Partien, Herausforderungen und Neue Partie suchen (Gewertet, Uhr, Farbe und Suchen)."
     },
     "lichess.account": {
       "label": "Konto",
@@ -232,7 +232,12 @@
     "lichess.new_game": {
       "label": "Neue Partie suchen",
       "boardLabel": "Partie\nsuchen",
-      "help": "Sucht mit diesem Konto einen neuen Gegner auf Lichess, unabhängig von den Spieler-Einstellungen. Gewertet, Uhr und Farbe sind die Zeilen darüber."
+      "help": "Sucht mit diesem Konto einen neuen Gegner auf Lichess, unabhängig von den Spieler-Einstellungen. Öffnet Gewertet, Uhr, Farbe und Suchen."
+    },
+    "lichess.seek": {
+      "label": "Suchen",
+      "boardLabel": "Suchen",
+      "help": "Veröffentlicht eine öffentliche Suche mit Gewertet, Uhr und Farbe oben."
     },
     "players.start": {
       "label": "Neue\nPartie",

@@ -212,7 +212,7 @@
     "players.lichess": {
       "label": "Lichess-lobby",
       "boardLabel": "Lichess",
-      "help": "Lichess-gegevens en online spelen. Elke aanmelding bestaat uit een server en een gebruiker (lichess.org of lichess.dev). Opent de accountkeuze, Gewaardeerd, Klok, Kleur, lopende partijen, uitdagingen en Nieuwe partij zoeken."
+      "help": "Lichess-gegevens en online spelen. Elke aanmelding bestaat uit een server en een gebruiker (lichess.org of lichess.dev). Opent de accountkeuze, lopende partijen, uitdagingen en Nieuwe partij zoeken (Gewaardeerd, Klok, Kleur en Zoeken)."
     },
     "lichess.account": {
       "label": "Account",
@@ -232,7 +232,12 @@
     "lichess.new_game": {
       "label": "Nieuwe partij zoeken",
       "boardLabel": "Partij\nzoeken",
-      "help": "Zoekt met dit account een nieuwe tegenstander op Lichess, wat er ook bij Spelers staat. Gewaardeerd, Klok en Kleur zijn de regels erboven."
+      "help": "Zoekt met dit account een nieuwe tegenstander op Lichess, wat er ook bij Spelers staat. Opent Gewaardeerd, Klok, Kleur en Zoeken."
+    },
+    "lichess.seek": {
+      "label": "Zoeken",
+      "boardLabel": "Zoeken",
+      "help": "Plaatst een openbare zoekopdracht met Gewaardeerd, Klok en Kleur hierboven."
     },
     "players.start": {
       "label": "Nieuwe\npartij",

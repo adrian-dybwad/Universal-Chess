@@ -52,12 +52,13 @@ interface LichessLobbyCardProps {
 
 /**
  * Web twin of the board Lichess lobby. Catalog children of ``players.lichess``
- * are Account (picker + nested Accounts), Rated, Clock, Color, Ongoing Games,
- * Challenges, Seek New Game. Rated, Clock, Color, and the play rows stay hidden until
- * a Lichess account exists: without one they cannot seek, list games, or put a
- * rating at stake, and the empty/no-token copy duplicated the Accounts control
- * already on the card. A failed or unauthorized account list is not treated as
- * empty, so those rows are not buried behind a false "add an account" state.
+ * are Account (picker + nested Accounts), Ongoing Games, Challenges, Seek New
+ * Game. Seek New Game nests Rated, Clock, Color, and Seek. Those play rows stay
+ * hidden until a Lichess account exists: without one they cannot seek, list
+ * games, or put a rating at stake, and the empty/no-token copy duplicated the
+ * Accounts control already on the card. A failed or unauthorized account list
+ * is not treated as empty, so those rows are not buried behind a false "add an
+ * account" state.
  */
 export function LichessLobbyCard({
   catalog,
@@ -88,6 +89,8 @@ export function LichessLobbyCard({
   const lobby = fieldById(catalog, 'players.lichess');
   const sections = childrenOf(catalog, 'players.lichess');
   const byId = Object.fromEntries(sections.map((node) => [node.id, node]));
+  const seekRows = childrenOf(catalog, 'lichess.new_game');
+  const seekById = Object.fromEntries(seekRows.map((node) => [node.id, node]));
 
   // Every saved credential is on offer: one board plays as one account, so
   // there is no second slot whose account has to be held back.
@@ -260,34 +263,10 @@ export function LichessLobbyCard({
         </div>
       </LobbySection>
 
-      {/* Rated has no list behind it, so it renders as the plain catalog
-          control rather than a titled section: the toggle carries its own
-          label and help. Gated with the play rows: a rating cannot be put
-          at stake until an account exists. */}
-      {showPlayFeatures && byId['field.lichess.rated'] && (
-        <CatalogField
-          node={byId['field.lichess.rated']}
-          value={rated}
-          onChange={(value) => onRatedChange(Boolean(value))}
-        />
-      )}
-      {showPlayFeatures && byId['field.lichess.clock'] && (
-        <CatalogField
-          node={byId['field.lichess.clock']}
-          value={clock}
-          options={catalog.optionSets.lichess_clock ?? []}
-          onChange={(value) => onClockChange(String(value))}
-        />
-      )}
-      {showPlayFeatures && byId['field.lichess.color'] && (
-        <CatalogField
-          node={byId['field.lichess.color']}
-          value={color}
-          options={catalog.optionSets.lichess_color ?? []}
-          onChange={(value) => onColorChange(String(value))}
-        />
-      )}
-
+      {/* Rated, Clock, and Color used to sit as lobby siblings. They govern a
+          seek, so they render inside Seek New Game with the Seek control.
+          Gated with the play rows: a rating cannot be put at stake until an
+          account exists. */}
       {showPlayFeatures && (
         <>
           <LobbySection node={byId['lichess.ongoing']}>
@@ -367,8 +346,31 @@ export function LichessLobbyCard({
           </LobbySection>
 
           <LobbySection node={byId['lichess.new_game']}>
+            {seekById['field.lichess.rated'] && (
+              <CatalogField
+                node={seekById['field.lichess.rated']}
+                value={rated}
+                onChange={(value) => onRatedChange(Boolean(value))}
+              />
+            )}
+            {seekById['field.lichess.clock'] && (
+              <CatalogField
+                node={seekById['field.lichess.clock']}
+                value={clock}
+                options={catalog.optionSets.lichess_clock ?? []}
+                onChange={(value) => onClockChange(String(value))}
+              />
+            )}
+            {seekById['field.lichess.color'] && (
+              <CatalogField
+                node={seekById['field.lichess.color']}
+                value={color}
+                options={catalog.optionSets.lichess_color ?? []}
+                onChange={(value) => onColorChange(String(value))}
+              />
+            )}
             <ConfirmableRow
-              label={byId['lichess.new_game']?.label ?? 'Seek New Game'}
+              label={seekById['lichess.seek']?.label ?? 'Seek'}
               busy={busyKey === 'new'}
               confirm={confirmKey === 'new'}
               confirmLabel={t('settingsPage.lichessLobby.confirmAbandon')}

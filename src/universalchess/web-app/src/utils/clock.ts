@@ -41,18 +41,30 @@ export function interpolateClock(
 }
 
 /**
- * Format whole seconds as ``M:SS`` (or ``H:MM:SS`` past an hour) for the clock.
+ * Format whole remaining seconds for the chess clock.
  *
- * Minutes are not zero-padded (a chess clock reads "5:03", not "05:03"); seconds
- * always are. Negative input is clamped to zero.
+ * Under an hour: ``M:SS`` (minutes not zero-padded). From one hour up to but
+ * not including ten hours: ``H:MM:SS``. From ten hours up to a day:
+ * ``N h M m`` — seconds are dropped, and a colon ``10:00`` would collide with
+ * ten minutes. A day or more: ``N day(s) H h``. Negative input is clamped to zero.
  */
 export function formatClockTime(seconds: number): string {
   const clamped = Math.max(0, Math.floor(seconds));
-  const hours = Math.floor(clamped / 3600);
-  const minutes = Math.floor((clamped % 3600) / 60);
-  const secs = clamped % 60;
+  const days = Math.floor(clamped / 86400);
+  const remainder = clamped % 86400;
+  const hours = Math.floor(remainder / 3600);
+  const minutes = Math.floor((remainder % 3600) / 60);
+  const secs = remainder % 60;
+  const totalHours = Math.floor(clamped / 3600);
   const pad = (n: number) => n.toString().padStart(2, '0');
-  if (hours > 0) {
+  if (days >= 1) {
+    const dayWord = days === 1 ? 'day' : 'days';
+    return `${days} ${dayWord} ${hours} h`;
+  }
+  if (totalHours >= 10) {
+    return `${totalHours} h ${minutes} m`;
+  }
+  if (totalHours >= 1) {
     return `${hours}:${pad(minutes)}:${pad(secs)}`;
   }
   return `${minutes}:${pad(secs)}`;

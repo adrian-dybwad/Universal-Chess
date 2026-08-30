@@ -327,6 +327,7 @@ class LichessPlayer(Player):
         self._remote_takeback_callback = None
         self._history_catch_up_callback = None
         self._info_message_callback: Optional[Callable[[str], None]] = None
+        self._confirm_move_callback: Optional[Callable[[chess.Move, int], bool]] = None
     
     @property
     def player_type(self) -> PlayerType:
@@ -423,6 +424,16 @@ class LichessPlayer(Player):
                 Caller should show menu and call accept_fn() or decline_fn().
         """
         self._draw_offer_callback = callback
+
+    def set_confirm_move_callback(self, callback: Callable[[chess.Move, int], bool]) -> None:
+        """Set the correspondence confirm hook.
+
+        Called with ``(move, remaining_plies)`` after a local ply is on the
+        board and before ``make_move``. Return True to post; False after the
+        hook has rewound to ``remaining_plies`` (the stack Lichess still has).
+        Timed games never call this.
+        """
+        self._confirm_move_callback = callback
 
     def set_challenge_offer_callback(self, callback) -> None:
         """Set callback for an incoming challenge while seeking.
@@ -715,8 +726,16 @@ class LichessPlayer(Player):
         # on_move_made is called for ALL moves, so we need to check whose move it was
         # The board.turn is now the NEXT player's turn, so if it's our color, the last move was opponent's
         if board.turn == self._color:
-            # Last move was opponent's (local player's) - they made a move, send it to server
+            # Last move was the local human's — confirm correspondence, then post.
             log.info(f"[LichessPlayer] Sending local player's move to server: {move.uci()}")
+            if (
+                self.is_correspondence
+                and self._confirm_move_callback is not None
+            ):
+                remaining_plies = max(0, len(board.move_stack) - 1)
+                if not self._confirm_move_callback(move, remaining_plies):
+                    log.info("[LichessPlayer] Correspondence move cancelled")
+                    return
             self._send_move_to_server(move)
         else:
             # Last move was ours (remote player's) - came from server, don't echo

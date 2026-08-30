@@ -406,8 +406,10 @@ def test_lichess_menu_new_game_start_failure_does_not_kill_loop():
 
     class Menu:
         def run_menu_loop(self, build_entries, handle_selection, **kwargs):
-            handle_selection(MenuSelection.from_key("NewGame"))
-            return None
+            keys = {e.key for e in build_entries()}
+            if "Seek" in keys:
+                return handle_selection(MenuSelection.from_key("Seek"))
+            return handle_selection(MenuSelection.from_key("NewGame"))
 
         def show_menu(self, entries, **kwargs):
             shown.append(entries)
@@ -449,6 +451,9 @@ def test_lichess_menu_successful_start_returns_start_game_token():
 
     class Menu:
         def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            keys = {e.key for e in build_entries()}
+            if "Seek" in keys:
+                return handle_selection(MenuSelection.from_key("Seek"))
             return handle_selection(MenuSelection.from_key("NewGame"))
 
     result = handle_lichess_menu(
@@ -566,6 +571,9 @@ def test_lichess_menu_closes_its_connection_when_starting_a_game():
 
     class Menu:
         def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            keys = {e.key for e in build_entries()}
+            if "Seek" in keys:
+                return handle_selection(MenuSelection.from_key("Seek"))
             return handle_selection(MenuSelection.from_key("NewGame"))
 
     result = handle_lichess_menu(

@@ -212,7 +212,7 @@
     "players.lichess": {
       "label": "Lichess lobisi",
       "boardLabel": "Lichess",
-      "help": "Lichess kimlik bilgileri ve çevrimiçi oyun. Her giriş bir sunucu ve kullanıcıdır (lichess.org veya lichess.dev). Hesap seçiciyi, Reytingli'yi, Saati, Rengi, devam eden oyunları, meydan okumaları ve Yeni oyun ara'yı açar."
+      "help": "Lichess kimlik bilgileri ve çevrimiçi oyun. Her giriş bir sunucu ve kullanıcıdır (lichess.org veya lichess.dev). Hesap seçiciyi, devam eden oyunları, meydan okumaları ve Yeni oyun ara'yı açar (Reytingli, Saat, Renk ve Ara)."
     },
     "lichess.account": {
       "label": "Hesap",
@@ -232,7 +232,12 @@
     "lichess.new_game": {
       "label": "Yeni oyun ara",
       "boardLabel": "Oyun\nara",
-      "help": "Oyuncu ayarlarından bağımsız olarak bu hesapla Lichess'te yeni rakip arar. Reytingli, Saat ve Renk üst satırlardır."
+      "help": "Oyuncu ayarlarından bağımsız olarak bu hesapla Lichess'te yeni rakip arar. Reytingli, Saat, Renk ve Ara'yı açar."
+    },
+    "lichess.seek": {
+      "label": "Ara",
+      "boardLabel": "Ara",
+      "help": "Yukarıdaki Reytingli, Saat ve Renk ayarlarıyla genel bir arama yayınlar."
     },
     "players.start": {
       "label": "Yeni\noyun",

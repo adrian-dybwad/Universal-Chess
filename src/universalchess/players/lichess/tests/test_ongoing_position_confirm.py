@@ -8,15 +8,14 @@ Human needs the diagram first so the pieces can be placed, then Join.
 
 A NEW seek must not silently attach those rows either: after an opponent
 takes a 5+0 seek the poller used to pull leftover correspondence onto the
-board. PLAY in the lobby is the mixed choice (those games with the same
-position confirm, or Seek New Game). Seek New Game itself always seeks.
+board. Seek New Game itself always seeks. PLAY leaves the lobby for the
+board, the same as in any other menu.
 
 How a regression manifests
 --------------------------
 Accept is never required (the list join starts the stream); BACK on the
-diagram still returns the game id; Seek New Game lists nowPlaying; PLAY
-skips the picker when nowPlaying is present; leftover gameStart attaches
-during a NEW seek.
+diagram still returns the game id; Seek New Game lists nowPlaying; leftover
+gameStart attaches during a NEW seek.
 """
 
 from types import SimpleNamespace
@@ -25,10 +24,8 @@ from unittest.mock import MagicMock
 from universalchess.managers.menu import MenuSelection
 from universalchess.players.lichess import LichessGameMode, LichessPlayer, LichessPlayerConfig
 from universalchess.players.lichess.lobby import (
-    choose_ongoing_or_seek,
     confirm_ongoing_game,
     handle_lichess_menu,
-    ongoing_or_seek_menu_entries,
     ongoing_position_confirm_entries,
     show_lichess_ongoing_games,
 )
@@ -167,62 +164,19 @@ def test_position_confirm_accept_returns_true_and_back_returns_false():
     assert confirm_ongoing_game(back, _row()) is False
 
 
-def test_play_picker_with_no_games_seeks_without_a_menu():
-    """PLAY with an empty nowPlaying list is a seek, not an empty picker.
-
-    How a regression manifests: show_menu is called and the user has to pick
-    Seek New Game even though there is nothing to resume.
-    """
-    menu = _ScriptedMenu([])
-    assert choose_ongoing_or_seek(menu, []) == "seek"
-    assert menu.shown == []
-
-
-def test_play_picker_lists_games_then_seek_new_game():
-    """PLAY's picker is the nowPlaying rows plus Seek New Game.
-
-    How a regression manifests: Seek is missing (the only way out is a leftover
-    game) or the game ids are not the row keys.
-    """
-    entries = ongoing_or_seek_menu_entries([_row(), _row(id="g2", opponent="Cara")])
-    assert [e.key for e in entries] == ["prompt", "g1", "g2", "Seek"]
-    assert entries[0].selectable is False
-
-
-def test_play_picker_seek_row_does_not_join_a_game():
-    """Choosing Seek New Game on PLAY's picker must not return a leftover id.
-
-    How a regression manifests: the Seek key is treated as a game_id, or BACK
-    is treated as seek.
-    """
-    menu = _ScriptedMenu(["Seek"])
-    assert choose_ongoing_or_seek(menu, [_row()]) == "seek"
-    back = _ScriptedMenu(["BACK"])
-    assert choose_ongoing_or_seek(back, [_row()]) == "cancel"
-
-
-def test_play_picker_game_row_still_requires_position_confirm():
-    """Picking a leftover game from PLAY's picker must show the diagram.
-
-    How a regression manifests: the first TICK on a game id starts the stream
-    without Join, so the pieces are never set up first.
-    """
-    menu = _ScriptedMenu(["g1", "Join"])
-    assert choose_ongoing_or_seek(menu, [_row()]) == "g1"
-    assert len(menu.shown) == 2
-    assert [e.key for e in menu.shown[1]] == ["position", "Join"]
-
-
 def test_lobby_new_game_seeks_even_when_now_playing_exists():
     """Seek New Game posts a seek; leftover nowPlaying is not listed here.
 
-    Ongoing Games is the explicit list. PLAY is the mixed picker. How a
-    regression manifests: start is ONGOING, or show_menu lists leftover ids.
+    Ongoing Games is the explicit list. How a regression manifests: start is
+    ONGOING, or show_menu lists leftover ids.
     """
     started = []
 
     class Menu:
         def run_menu_loop(self, build_entries, handle_selection, **kwargs):
+            keys = {e.key for e in build_entries()}
+            if "Seek" in keys:
+                return handle_selection(MenuSelection.from_key("Seek"))
             return handle_selection(MenuSelection.from_key("NewGame"))
 
         def show_menu(self, entries, initial_index=0, **kwargs):
@@ -241,13 +195,13 @@ def test_lobby_new_game_seeks_even_when_now_playing_exists():
     assert started[0].mode is LichessGameMode.NEW
 
 
-def test_play_in_the_lobby_with_now_playing_joins_the_chosen_game():
-    """PLAY with unfinished games must resume the accepted row.
+def test_play_in_the_lobby_does_not_join_or_seek():
+    """PLAY leaves the lobby; unfinished games are Ongoing Games, not PLAY.
 
-    Why: dgt-32 posted a 5+0 seek and immediately attached correspondence
-    arD6VE0v. PLAY is the mixed start. How a regression manifests:
-    start_lichess_game_fn is called with mode NEW, or the chosen id never
-    reaches the join.
+    Why: PLAY toggles menu and board. Intercepting it to join leftover
+    correspondence (arD6VE0v) started a remote game when the user wanted
+    the suspended local board. How a regression manifests: a join or seek
+    is stashed, or the result is START_GAME.
     """
     started = []
 
@@ -256,10 +210,7 @@ def test_play_in_the_lobby_with_now_playing_joins_the_chosen_game():
             return MenuSelection.from_key("PLAY")
 
         def show_menu(self, entries, initial_index=0, **kwargs):
-            keys = [e.key for e in entries]
-            if "Seek" in keys:
-                return MenuSelection.from_key("arD6VE0v")
-            return MenuSelection.from_key("Join")
+            raise AssertionError("PLAY must not open a Lichess picker")
 
     result = handle_lichess_menu(
         get_lichess_connection_fn=lambda: (_Connection([_LEFTOVER]), "adriandyb", None),
@@ -269,10 +220,8 @@ def test_play_in_the_lobby_with_now_playing_joins_the_chosen_game():
         log=MagicMock(),
     )
 
-    assert result == "START_GAME"
-    assert len(started) == 1
-    assert started[0].mode is LichessGameMode.ONGOING
-    assert started[0].game_id == "arD6VE0v"
+    assert started == []
+    assert getattr(result, "key", result) == "PLAY"
 
 
 def test_new_seek_does_not_attach_a_preexisting_ongoing_game():

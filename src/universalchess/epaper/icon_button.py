@@ -766,6 +766,8 @@ class IconButtonWidget(Widget):
             self._draw_update_icon(draw, x, y, size, line_color)
         elif icon_name == "undo":
             self._draw_undo_icon(draw, x, y, size, line_color)
+        elif icon_name == "check":
+            self._draw_check_icon(draw, x, y, size, line_color)
         elif icon_name == "agents":
             self._draw_agents_icon(draw, x, y, size, line_color)
         else:
@@ -1136,6 +1138,23 @@ class IconButtonWidget(Widget):
                   (x + half - margin, y + half - margin)], fill=line_color, width=3)
         draw.line([(x + half - margin, y - half + margin),
                   (x - half + margin, y + half - margin)], fill=line_color, width=3)
+
+    def _draw_check_icon(self, draw: ImageDraw.Draw, x: int, y: int,
+                         size: int, line_color: int):
+        """Draw a large tick, without a checkbox box.
+
+        Correspondence confirm sits next to the X; a boxed checkbox would
+        read as a setting, not submit.
+        """
+        half = size // 2
+        margin = max(4, size // 8)
+        width = max(3, size // 10)
+        start = (x - half + margin, y)
+        valley = (x - half // 5, y + half - margin)
+        end = (x + half - margin, y - half + margin)
+        draw.line([start, valley], fill=line_color, width=width)
+        draw.line([valley, end], fill=line_color, width=width)
+
     
     def _draw_exit_icon(self, draw: ImageDraw.Draw, x: int, y: int,
                         size: int, line_color: int):

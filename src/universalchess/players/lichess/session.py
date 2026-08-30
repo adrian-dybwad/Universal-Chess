@@ -21,6 +21,26 @@ from .match import (
 from .player import LichessGameMode, LichessPlayer
 
 
+def confirm_move_menu_entries():
+    """Confirm then Cancel, same shape as takeback Accept/Decline.
+
+    Both rows are selectable. Check is first so it is focused. BACK is not
+    a third row: the caller treats it as cancel, same as TICK on the X.
+    """
+    return [
+        IconMenuEntry(
+            key="confirm",
+            label=t("lichess.confirm_move.prompt"),
+            icon_name="check",
+        ),
+        IconMenuEntry(
+            key="cancel",
+            label=t("common.cancel"),
+            icon_name="cancel",
+        ),
+    ]
+
+
 def challenge_menu_entries(offer: LichessChallengeOffer):
     """Accept/Decline rows plus a non-selectable summary of the challenger's terms."""
     return [
@@ -134,6 +154,7 @@ class LichessPlaySession:
         self._show_started_splash = show_started_splash
         self._remote.set_on_game_connected(self._on_connected)
         self._remote.set_game_over_callback(self._on_game_over)
+        self._remote.set_confirm_move_callback(self._confirm_correspondence_move)
         self._remote.set_takeback_offer_callback(self._on_takeback_offer)
         self._remote.set_draw_offer_callback(self._on_draw_offer)
         self._remote.set_challenge_offer_callback(self._on_challenge_offer)
@@ -283,6 +304,29 @@ class LichessPlaySession:
         log.info("[Lichess] Remote takeback to %s half-moves", remaining_plies)
         if self._rewind_to_move_count is not None:
             self._rewind_to_move_count(remaining_plies)
+
+    def _confirm_correspondence_move(self, move, remaining_plies: int) -> bool:
+        """Ask before posting a correspondence ply; rewind locally if declined.
+
+        ``remaining_plies`` is the live stack length after the ply is popped
+        (the position Lichess still has). Confirm restores the board widgets
+        and returns True so the player posts. Cancel, BACK, or any other key
+        restores the widgets, rewinds, and returns False.
+        """
+        log.info("[Lichess] Confirm correspondence move %s", move.uci())
+        if self._menu_manager is None:
+            return True
+        if self._beep is not None:
+            self._beep()
+        entries = confirm_move_menu_entries()
+        confirm_index = next(i for i, entry in enumerate(entries) if entry.key == "confirm")
+        result = self._menu_manager.show_menu(entries, initial_index=confirm_index)
+        self._restore_game_widgets()
+        if hasattr(result, "key") and result.key == "confirm":
+            return True
+        if self._rewind_to_move_count is not None:
+            self._rewind_to_move_count(remaining_plies)
+        return False
 
     def _on_takeback_offer(self, accept_fn, decline_fn) -> None:
         log.info("[Lichess] Takeback offer received")

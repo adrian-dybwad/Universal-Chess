@@ -21,6 +21,7 @@ except ImportError:
     import logging
     log = logging.getLogger(__name__)
 
+from universalchess.clock_format import format_clock_time
 from universalchess.state import get_chess_clock as get_clock_state
 from universalchess.state import get_chess_game as get_game_state
 from universalchess.state.players import get_players_state
@@ -428,29 +429,15 @@ class ChessClockWidget(Widget):
     # -------------------------------------------------------------------------
     
     def _format_time(self, seconds: int) -> str:
-        """
-        Format time in seconds to display string.
-        
-        Returns MM:SS for times under an hour, H:MM:SS for longer times.
-        Returns "FLAG" if time is 0.
-        
-        Args:
-            seconds: Time in seconds
-            
-        Returns:
-            Formatted time string
+        """Remaining time for one side, or FLAG at zero.
+
+        Delegates to :func:`format_clock_time` so the panel matches the web
+        clock. Zero is FLAG rather than ``0:00`` because a flagged side on the
+        board is an ended game, not a zero remainder still in play.
         """
         if seconds <= 0:
             return "FLAG"
-        
-        hours = seconds // 3600
-        minutes = (seconds % 3600) // 60
-        secs = seconds % 60
-        
-        if hours > 0:
-            return f"{hours}:{minutes:02d}:{secs:02d}"
-        else:
-            return f"{minutes:02d}:{secs:02d}"
+        return format_clock_time(seconds)
     
     def _annotation_for(self, color: str, active_color: Optional[str]) -> str:
         """Annotation string for one side's clock (increment/delay or live delay).

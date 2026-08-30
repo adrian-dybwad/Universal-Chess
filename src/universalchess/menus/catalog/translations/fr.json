@@ -213,7 +213,7 @@
     "players.lichess": {
       "label": "Lobby Lichess",
       "boardLabel": "Lichess",
-      "help": "Identifiants Lichess et jeu en ligne. Chaque compte est un serveur et un utilisateur (lichess.org ou lichess.dev). Ouvre le sélecteur de compte, Classée, Pendule, Couleur, les parties en cours, les défis et Chercher une partie."
+      "help": "Identifiants Lichess et jeu en ligne. Chaque compte est un serveur et un utilisateur (lichess.org ou lichess.dev). Ouvre le sélecteur de compte, les parties en cours, les défis et Chercher une partie (Classée, Pendule, Couleur et Chercher)."
     },
     "lichess.account": {
       "label": "Compte",
@@ -233,7 +233,12 @@
     "lichess.new_game": {
       "label": "Chercher une partie",
       "boardLabel": "Chercher\nune partie",
-      "help": "Cherche un nouvel adversaire sur Lichess avec ce compte, quels que soient les réglages des joueurs. Classée, Pendule et Couleur sont les lignes au-dessus."
+      "help": "Cherche un nouvel adversaire sur Lichess avec ce compte, quels que soient les réglages des joueurs. Ouvre Classée, Pendule, Couleur et Chercher."
+    },
+    "lichess.seek": {
+      "label": "Chercher",
+      "boardLabel": "Chercher",
+      "help": "Publie une recherche publique avec Classée, Pendule et Couleur ci-dessus."
     },
     "players.start": {
       "label": "Nouvelle\npartie",

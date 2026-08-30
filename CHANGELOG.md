@@ -52,13 +52,27 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   `game.lichess_color`. Player 1 Color is which colour sits at the e-paper
   end and is not posted.
 
+- **Seek New Game opens Rated, Clock, Color, and Seek**: Those three
+  settings sat on the lobby beside Ongoing Games, so posting a seek
+  mixed with join and they could be changed without intending to seek.
+  Seek New Game now opens a submenu with Rated, Clock, Color, and
+  Seek. The lobby is Account, Ongoing Games, Challenges, then Seek New
+  Game. The web card nests the same controls under that heading.
+
 - **Lichess ongoing games show the position before Join**: Selecting a
   nowPlaying row started the stream immediately, so catch-up asked for a
   physical setup after the remote clock was already running. Ongoing Games
   now shows the diagram first; Join starts the game. The web lobby card
   shows a board preview and Join on each row. Seek New Game still seeks
-  immediately. PLAY in the lobby is the mixed start: unfinished games (with
-  the same diagram) or a new seek.
+  immediately.
+
+- **Correspondence plies ask Confirm Move before they go to Lichess**: The
+  website asks on every correspondence move; the board posted as soon as the
+  piece landed, so a misdrop was already on the server. After the ply is on
+  the board, the panel shows Confirm Move (checkmark, selected) and Cancel
+  (X) as normal stacked rows. TICK on the check posts. BACK is the same as
+  the X: it rewinds the ply and enters correction so the pieces can go back.
+  Timed Lichess games still post immediately.
 
 - **System Information shows the OS edition**: the card listed the kernel
   release but not whether the image was Raspberry Pi OS Lite or Desktop,
@@ -1267,6 +1281,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   which handled an empty saved path and one of which would have raised on it
   during startup, before the display exists to report it; they are now one.
 
+### Changed
+
+- **Long remaining times drop seconds, then switch to days**: Ten
+  hours and up still rendered as ``H:MM:SS``, so a correspondence
+  remainder of a day or more read as ``30:00:00`` and the seconds field
+  kept ticking. From ten hours the clock now shows ``10 h 50 m`` (a
+  colon ``10:00`` would be the same string as ten minutes). A day or
+  more is ``1 day 6 h`` / ``2 days 0 h``. Under ten hours the existing
+  ``M:SS`` / ``H:MM:SS`` strings are unchanged. The e-paper clock, the
+  game-over footer, and the web clock share one formatter.
+
 ### Removed
 
 - **Cancel on the Lichess next-game prompt**: After a board-reset or a
@@ -1300,6 +1325,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   was also a stray way to power the board off.
 
 ### Fixed
+
+- **PLAY in the Lichess lobby returns to the board**: The key intercepted
+  PLAY as a mixed Lichess start (unfinished games or a new seek), so it
+  posted a seek or opened leftover correspondence instead of toggling to the
+  suspended game. PLAY now leaves the lobby the same way it leaves Settings.
+  Ongoing Games and Seek New Game remain the lobby's start paths.
 
 - **Lichess uses Player 1 Color for physical setup and e-paper rotation**:
   A Lichess pairing forced White onto player 1 and rotated the panel only

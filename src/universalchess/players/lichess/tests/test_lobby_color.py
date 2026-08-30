@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 from universalchess.managers.menu import MenuSelection
 from universalchess.players.lichess.lobby import (
     build_lichess_color_picker_entries,
-    build_lichess_menu_entries,
+    build_lichess_seek_menu_entries,
     handle_lichess_menu,
 )
 from universalchess.players.lichess.match import LICHESS_COLORS
@@ -29,13 +29,19 @@ class _FakeConnection:
 
 
 def _run_lobby(selections, picker_key=None, **kwargs):
-    """Drive the lobby, answering Color with ``picker_key`` when a picker opens."""
+    """Drive the lobby, then the Seek New Game submenu, answering Color with ``picker_key``."""
     drawn = []
+    remaining = list(selections)
 
     class Menu:
         def run_menu_loop(self, build_entries, handle_selection, **_kwargs):
             drawn.append(build_entries())
-            for key in selections:
+            while remaining:
+                key = remaining[0]
+                visible = {e.key for e in build_entries()}
+                if key not in visible:
+                    break
+                remaining.pop(0)
                 handle_selection(MenuSelection.from_key(key))
                 drawn.append(build_entries())
             return None
@@ -55,26 +61,23 @@ def _run_lobby(selections, picker_key=None, **kwargs):
     return drawn
 
 
-def test_color_sits_directly_under_clock_in_the_lobby():
-    """Color is the row under Clock, before Ongoing.
+def test_color_sits_directly_under_clock_in_the_seek_submenu():
+    """Color is the row under Clock, before Seek, on Seek New Game.
 
     Why: seek color was the Players control, so a lobby seek over two engines
     posted random and White/Black could not be chosen unless a slot was
     Lichess. How a regression manifests: Color is missing, or it sits on a
     player card instead of beside Clock.
     """
-    entries = build_lichess_menu_entries(
-        "alice", rated=False, clock="rapid_10_0", color="random"
+    entries = build_lichess_seek_menu_entries(
+        rated=False, clock="rapid_10_0", color="random"
     )
 
     assert [entry.key for entry in entries] == [
-        "Account",
         "Rated",
         "Clock",
         "Color",
-        "Ongoing",
-        "Challenges",
-        "NewGame",
+        "Seek",
     ]
 
 
@@ -86,7 +89,7 @@ def test_the_color_row_states_the_stored_choice():
     """
     row = next(
         e
-        for e in build_lichess_menu_entries("alice", color="white")
+        for e in build_lichess_seek_menu_entries(color="white")
         if e.key == "Color"
     )
 
@@ -102,11 +105,11 @@ def test_black_and_random_use_their_own_icons():
     cannot be read at a glance.
     """
     black = next(
-        e for e in build_lichess_menu_entries("alice", color="black") if e.key == "Color"
+        e for e in build_lichess_seek_menu_entries(color="black") if e.key == "Color"
     )
     random = next(
         e
-        for e in build_lichess_menu_entries("alice", color="random")
+        for e in build_lichess_seek_menu_entries(color="random")
         if e.key == "Color"
     )
 
@@ -137,7 +140,7 @@ def test_selecting_color_writes_the_picked_key():
     written = []
 
     _run_lobby(
-        ["Color"],
+        ["NewGame", "Color"],
         picker_key="white",
         color_fn=lambda: "random",
         set_color_fn=written.append,
@@ -158,13 +161,17 @@ def test_the_lobby_redraws_color_from_the_stored_value_after_a_pick():
         stored["color"] = value
 
     drawn = _run_lobby(
-        ["Color"],
+        ["NewGame", "Color"],
         picker_key="black",
         color_fn=lambda: stored["color"],
         set_color_fn=set_color,
     )
 
-    labels = [next(e.label for e in entries if e.key == "Color") for entries in drawn]
+    labels = [
+        next(e.label for e in entries if e.key == "Color")
+        for entries in drawn
+        if any(e.key == "Color" for e in entries)
+    ]
     assert labels == ["Color\nRandom", "Color\nBlack"]
 
 
@@ -174,6 +181,10 @@ def test_a_lobby_with_no_color_writer_leaves_the_row_inert():
     How a regression manifests: an unwired lobby raises on selection and takes
     the menu thread down with it.
     """
-    drawn = _run_lobby(["Color"])
+    drawn = _run_lobby(["NewGame", "Color"])
 
-    assert all(any(e.key == "Color" for e in entries) for entries in drawn)
+    assert all(
+        any(e.key == "Color" for e in entries)
+        for entries in drawn
+        if any(e.key == "Seek" for e in entries)
+    )

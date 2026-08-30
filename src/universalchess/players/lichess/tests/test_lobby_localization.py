@@ -22,6 +22,7 @@ from universalchess.menus.catalog import loader
 from universalchess.menus.catalog.loader import get_localized_catalog
 from universalchess.players.lichess.lobby import (
     build_lichess_menu_entries,
+    build_lichess_seek_menu_entries,
     choose_lichess_reset_action,
 )
 from universalchess.players.lichess.match import (
@@ -59,7 +60,7 @@ def _labels(entries) -> list:
 
 
 def test_lobby_rows_read_the_localized_catalog(spanish):
-    """Account, Rated, Ongoing, Challenges and Seek New Game are in Spanish.
+    """Account, Ongoing, Challenges and Seek New Game are in Spanish.
 
     Why: these rows were English literals, so the lobby stayed English on a
     translated board while the web card built from the same catalog nodes was
@@ -68,10 +69,10 @@ def test_lobby_rows_read_the_localized_catalog(spanish):
     """
     catalog = get_localized_catalog(SPANISH)
     english = get_localized_catalog("en")
-    entries = build_lichess_menu_entries("alice", rated=True)
+    entries = build_lichess_menu_entries("alice")
 
     keys = [entry.key for entry in entries]
-    assert keys == ["Account", "Rated", "Clock", "Color", "Ongoing", "Challenges", "NewGame"]
+    assert keys == ["Account", "Ongoing", "Challenges", "NewGame"]
 
     for key, node_id in (
         ("Ongoing", "lichess.ongoing"),
@@ -87,6 +88,18 @@ def test_lobby_rows_read_the_localized_catalog(spanish):
 
     account = next(e for e in entries if e.key == "Account")
     assert account.label == f"{catalog.get_node('lichess.account')['boardLabel']}\nalice"
+
+
+def test_seek_submenu_rows_read_the_localized_catalog(spanish):
+    """Rated, Clock, Color and Seek are in Spanish on the Seek New Game submenu.
+
+    Why: those rows used to sit on the lobby as English literals. How the
+    regression manifests: a row's label is the English board label rather than
+    the Spanish one for its node.
+    """
+    catalog = get_localized_catalog(SPANISH)
+    english = get_localized_catalog("en")
+    entries = build_lichess_seek_menu_entries(rated=True)
 
     rated = next(e for e in entries if e.key == "Rated")
     assert rated.label == (
@@ -107,6 +120,10 @@ def test_lobby_rows_read_the_localized_catalog(spanish):
     )
     assert color_label != english.option_label("lichess_color", "random")
 
+    seek = next(e for e in entries if e.key == "Seek")
+    assert seek.label == catalog.get_node("lichess.seek")["boardLabel"]
+    assert seek.label != english.get_node("lichess.seek")["boardLabel"]
+
 
 def test_lobby_row_help_is_the_catalog_help_for_that_row(spanish):
     """Rated, Ongoing and Challenges explain themselves from the catalog.
@@ -117,17 +134,25 @@ def test_lobby_row_help_is_the_catalog_help_for_that_row(spanish):
     for its node -- either English, or a second wording of the same thing.
     """
     catalog = get_localized_catalog(SPANISH)
-    entries = {entry.key: entry for entry in build_lichess_menu_entries("alice")}
+    lobby = {entry.key: entry for entry in build_lichess_menu_entries("alice")}
+    seek = {entry.key: entry for entry in build_lichess_seek_menu_entries()}
 
     for key, node_id in (
         ("Rated", "field.lichess.rated"),
         ("Clock", "field.lichess.clock"),
         ("Color", "field.lichess.color"),
+        ("Seek", "lichess.seek"),
+    ):
+        assert seek[key].help == catalog.get_node(node_id)["help"]
+        assert seek[key].help != get_localized_catalog("en").get_node(node_id)["help"]
+
+    for key, node_id in (
         ("Ongoing", "lichess.ongoing"),
         ("Challenges", "lichess.challenges"),
+        ("NewGame", "lichess.new_game"),
     ):
-        assert entries[key].help == catalog.get_node(node_id)["help"]
-        assert entries[key].help != get_localized_catalog("en").get_node(node_id)["help"]
+        assert lobby[key].help == catalog.get_node(node_id)["help"]
+        assert lobby[key].help != get_localized_catalog("en").get_node(node_id)["help"]
 
 
 def test_rated_row_says_off_in_the_device_language(spanish):
@@ -137,7 +162,7 @@ def test_rated_row_says_off_in_the_device_language(spanish):
     language once its label was translated. How the regression manifests: the
     label ends in "Off" instead of the bundle's word for it.
     """
-    rated = next(e for e in build_lichess_menu_entries("alice", rated=False) if e.key == "Rated")
+    rated = next(e for e in build_lichess_seek_menu_entries(rated=False) if e.key == "Rated")
     assert rated.label.endswith(i18n.t("common.off"))
     assert i18n.t("common.off") != "Off"
 
@@ -325,15 +350,19 @@ def test_english_still_reads_as_it_did_before(monkeypatch):
     i18n.refresh_active_language()
     loader.refresh_active_language()
 
-    entries = build_lichess_menu_entries("alice", rated=True)
+    entries = build_lichess_menu_entries("alice")
     assert _labels(entries) == [
         "Account\nalice",
-        "Rated\nOn",
-        "Clock\n10|0 Rapid",
-        "Color\nRandom",
         "Ongoing\nGames",
         "Challenges",
         "Seek New\nGame",
+    ]
+    seek = build_lichess_seek_menu_entries(rated=True)
+    assert _labels(seek) == [
+        "Rated\nOn",
+        "Clock\n10|0 Rapid",
+        "Color\nRandom",
+        "Seek",
     ]
     assert build_lichess_menu_entries(None)[0].label == "Account\nUnknown"
     assert lichess_waiting_message(LichessGameMode.NEW, seek=_seek()).startswith(

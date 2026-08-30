@@ -152,10 +152,28 @@ describe('formatClockTime', () => {
     expect(formatClockTime(9)).toBe('0:09');
   });
 
-  it('includes hours only past an hour', () => {
+  it('includes hours only past an hour, with seconds under ten hours', () => {
     // Long classical controls need H:MM:SS; shorter times must not show a 0:.
     expect(formatClockTime(3661)).toBe('1:01:01');
     expect(formatClockTime(600)).toBe('10:00');
+    expect(formatClockTime(9 * 3600 + 59 * 60 + 59)).toBe('9:59:59');
+  });
+
+  it('drops seconds once hours are two digits', () => {
+    // Ten hours as 10:00:00 still ticks seconds nobody can use, and 10:00
+    // would be read as ten minutes. How a regression manifests: 10h still
+    // contains a seconds field, or becomes a colon string that collides with MM:SS.
+    expect(formatClockTime(10 * 3600)).toBe('10 h 0 m');
+    expect(formatClockTime(10 * 3600 + 50 * 60 + 15)).toBe('10 h 50 m');
+  });
+
+  it('shows days and leftover hours past a day', () => {
+    // Correspondence remainders of a day or more as 30:00:00 are unreadable.
+    // Minutes are dropped at this scale. How a regression manifests: 1d6h
+    // still renders as H:MM:SS, or "1 day" is used for 2 days.
+    expect(formatClockTime(86400)).toBe('1 day 0 h');
+    expect(formatClockTime(86400 + 6 * 3600)).toBe('1 day 6 h');
+    expect(formatClockTime(2 * 86400)).toBe('2 days 0 h');
   });
 
   it('clamps negative input to zero', () => {

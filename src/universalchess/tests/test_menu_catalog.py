@@ -558,19 +558,22 @@ def test_packaged_catalog_exposes_lichess_account_type():
 
 
 def test_lichess_lobby_catalog_children_match_board_hierarchy():
-    """players.lichess children: Account, Rated, Clock, Color, Ongoing, Challenges, New Game.
+    """players.lichess children: Account, Ongoing, Challenges, Seek New Game.
 
     Why: the web lobby tab walks this list so it stays in lockstep with the
-    board lobby. Accounts is nested under Account, not a sibling, and Rated sits
-    under the account whose rating the seek puts at stake -- it governs every
-    seek, including one from a pairing no Lichess slot describes, so a player
-    slot could not hold it. Clock is the Board API list (Rapid, Classical, None)
-    rather than the Game clock, which still offers Blitz. Color is White,
+    board lobby. Accounts is nested under Account, not a sibling. Rated,
+    Clock, Color, and Seek sit under Seek New Game -- they govern every seek,
+    including one from a pairing no Lichess slot describes, so a player
+    slot could not hold them. Clock is the Board API list (Rapid, Classical,
+    None) rather than the Game clock, which still offers Blitz. Color is White,
     Black, or Random rather than the Players colour control. Regression: a row
     drops, Play returns as a wrapper, Accounts sits on the lobby itself, or
-    Rated, Clock, or Color goes back to the player card.
+    Rated, Clock, or Color goes back to the player card or the lobby root.
     """
-    from universalchess.players.lichess.lobby import build_lichess_menu_entries
+    from universalchess.players.lichess.lobby import (
+        build_lichess_menu_entries,
+        build_lichess_seek_menu_entries,
+    )
 
     catalog = load_catalog()
     node = catalog.get_node("players.lichess")
@@ -583,14 +586,17 @@ def test_lichess_lobby_catalog_children_match_board_hierarchy():
     }
     assert catalog.child_ids("players.lichess") == [
         "lichess.account",
-        "field.lichess.rated",
-        "field.lichess.clock",
-        "field.lichess.color",
         "lichess.ongoing",
         "lichess.challenges",
         "lichess.new_game",
     ]
     assert catalog.child_ids("lichess.account") == ["players.accounts"]
+    assert catalog.child_ids("lichess.new_game") == [
+        "field.lichess.rated",
+        "field.lichess.clock",
+        "field.lichess.color",
+        "lichess.seek",
+    ]
     rated = catalog.get_node("field.lichess.rated")
     assert rated["type"] == "toggle"
     assert rated["bind"] == {"store": "game", "key": "lichess_rated"}
@@ -623,6 +629,8 @@ def test_lichess_lobby_catalog_children_match_board_hierarchy():
         assert rows[key].label == catalog.get_node(node_id)["boardLabel"]
     assert rows["Ongoing"].help == catalog.get_node("lichess.ongoing")["help"]
     assert rows["Challenges"].help == catalog.get_node("lichess.challenges")["help"]
+    seek_rows = {entry.key: entry for entry in build_lichess_seek_menu_entries()}
+    assert seek_rows["Seek"].label == catalog.get_node("lichess.seek")["boardLabel"]
     assert catalog.get_node("lichess.account")["label"] == "Account"
     assert catalog.get_node("players.accounts")["label"] == "Accounts"
     assert "web" in catalog.get_node("players.accounts").get("platforms", ["board", "web"])
