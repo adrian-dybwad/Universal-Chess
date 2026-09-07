@@ -64,10 +64,12 @@ export function GameOverPanel() {
       })
     : '';
 
-  // Move count is the ply count: positions carries the start plus one entry per
-  // ply, so length - 1 matches the e-paper's len(move_stack).
+  // positions is the start plus one entry per ply. The panel labels the
+  // number as chess full moves (White's ply plus Black's reply), matching
+  // the e-paper GameOverWidget: 67 plies is "34 moves", not "67 moves".
   const positions = gameState.positions;
-  const moveCount = Array.isArray(positions) && positions.length > 0 ? positions.length - 1 : null;
+  const plyCount = Array.isArray(positions) && positions.length > 0 ? positions.length - 1 : null;
+  const moveCount = plyCount != null ? Math.floor((plyCount + 1) / 2) : null;
 
   // Final times come from the last clock snapshot (the clock is stopped at game
   // over, so the stored whole-second values are the finals). Only for a timed

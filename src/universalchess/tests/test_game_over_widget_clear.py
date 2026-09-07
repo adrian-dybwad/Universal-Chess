@@ -151,6 +151,8 @@ class TestGameOverWidgetObserver(unittest.TestCase):
         self.assertEqual(widget.result, '0-1')
         self.assertEqual(widget.winner, 'Black wins')
         self.assertIn('Checkmate', widget.termination)
+        # Fool's mate is 4 plies / 2 full moves (1. f3 e5 2. g4 Qh4#).
+        self.assertEqual(widget.move_count, 2)
         
         widget.cleanup()
 

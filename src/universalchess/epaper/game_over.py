@@ -28,6 +28,19 @@ from typing import Optional, Tuple
 log = logging.getLogger(__name__)
 
 
+def fullmove_count_from_plies(ply_count: int) -> int:
+    """Chess full-move count for a game of ``ply_count`` half-moves.
+
+    A full move is White's ply plus Black's reply. A game that ends on White's
+    turn still counts that move: 67 plies (White mates on move 34) is 34, not
+    67. Zero and negative counts are 0 so an unplayed game does not show a
+    move line.
+    """
+    if ply_count <= 0:
+        return 0
+    return (ply_count + 1) // 2
+
+
 class GameOverWidget(Widget):
     """
     Widget displaying game over information.
@@ -82,7 +95,7 @@ class GameOverWidget(Widget):
         self.result = ""           # "1-0", "0-1", "1/2-1/2"
         self.winner = ""           # "White wins", "Black wins", "Draw"
         self.termination = ""      # "Checkmate", "Stalemate", "Resignation", etc.
-        self.move_count = 0        # Number of moves played
+        self.move_count = 0        # Full moves played (not plies)
         self.white_time: Optional[int] = None  # Final white time in seconds
         self.black_time: Optional[int] = None  # Final black time in seconds
         
@@ -149,8 +162,8 @@ class GameOverWidget(Widget):
         """
         log.info(f"[GameOverWidget] Game over: {result} by {termination}")
         
-        # Get move count from game state
-        move_count = len(self._game_state.move_stack)
+        # move_stack is half-moves; the panel labels the number as "moves".
+        move_count = fullmove_count_from_plies(len(self._game_state.move_stack))
         
         # Set result (this also triggers display update)
         self.set_result(result, termination, move_count)
@@ -198,7 +211,7 @@ class GameOverWidget(Widget):
         Args:
             result: Game result string ("1-0", "0-1", "1/2-1/2")
             termination: Termination type (e.g., "CHECKMATE", "STALEMATE", "RESIGN")
-            move_count: Number of moves played in the game
+            move_count: Full moves played (ceil of half-moves / 2), not plies
             final_times: Optional tuple of (white_seconds, black_seconds) for timed games
         """
         changed = False

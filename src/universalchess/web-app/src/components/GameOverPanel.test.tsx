@@ -92,7 +92,8 @@ describe('GameOverPanel', () => {
     // The exact reported case: a claimed draw whose termination is delivered as
     // the python-chess enum repr. The panel must localize the result to "Draw"
     // and map the enum ("Termination.THREEFOLD_REPETITION") to "3x repetition" --
-    // not render the raw enum. positions has start + 4 plies -> "4 moves".
+    // not render the raw enum. positions has start + 4 plies -> "2 moves"
+    // (1. e4 e5 2. Nf3 Nc6), the chess full-move count, not the ply count.
     setStore(
       makeGameState({
         game_over: true,
@@ -111,7 +112,7 @@ describe('GameOverPanel', () => {
     expect(screen.getByText('Draw')).toBeInTheDocument();
     expect(screen.getByText('3x repetition')).toBeInTheDocument();
     expect(screen.getByText('1/2-1/2')).toBeInTheDocument();
-    expect(screen.getByText('4 moves')).toBeInTheDocument();
+    expect(screen.getByText('2 moves')).toBeInTheDocument();
     // The raw enum must never leak to the UI.
     expect(screen.queryByText(/Termination\./)).not.toBeInTheDocument();
   });
@@ -167,5 +168,30 @@ describe('GameOverPanel', () => {
     setStore(makeGameState({ game_over: true, result: null, termination: null }));
     render(<GameOverPanel />);
     expect(screen.getByText('Game over')).toBeInTheDocument();
+  });
+
+  it('shows the chess full-move count, not the ply count', () => {
+    // Why: the panel used positions.length - 1 (plies) labeled as "moves", so a
+    // Bishop+Knight mate on White's 34th move (67 plies) read "67 moves".
+    // How a regression manifests: 68 position entries (start + 67 plies) render
+    // "67 moves" instead of "34 moves".
+    const positions = Array.from({ length: 68 }, (_, i) => ({
+      fen: String(i),
+      san: i === 0 ? null : 'a3',
+      uci: i === 0 ? null : 'a2a3',
+      eval: null,
+      best_move: null,
+    }));
+    setStore(
+      makeGameState({
+        game_over: true,
+        result: '1-0',
+        termination: 'checkmate',
+        positions,
+      }),
+    );
+    render(<GameOverPanel />);
+    expect(screen.getByText('34 moves')).toBeInTheDocument();
+    expect(screen.queryByText('67 moves')).not.toBeInTheDocument();
   });
 });

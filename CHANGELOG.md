@@ -1326,6 +1326,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Game-over move count was the ply count**: The result strip showed
+  ``len(move_stack)`` labeled as "moves", so a Bishop+Knight mate delivered
+  on White's 34th move read "67 moves". The count is now the chess full-move
+  number (ceil of half-moves / 2) on the e-paper and the matching LiveBoard
+  panel.
+
 - **PLAY in the Lichess lobby returns to the board**: The key intercepted
   PLAY as a mixed Lichess start (unfinished games or a new seek), so it
   posted a seek or opened leftover correspondence instead of toggling to the
