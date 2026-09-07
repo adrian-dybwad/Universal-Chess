@@ -120,6 +120,25 @@ def test_configure_start_preserves_board_identity():
     assert state.board is original_board
 
 
+def test_physical_start_keeps_the_same_960_array():
+    """Home-rank confirm must not generate a new 960 position.
+
+    Occupancy cannot tell a 960 array from standard start. A new random
+    position on confirm would make setting up that array look like another
+    confirm and seed yet another position.
+
+    How the regression manifests: fen becomes STARTING_FEN or a different 960.
+    """
+    state = ChessGameState()
+    fen = chess960_fen(NON_STANDARD_SCHARNAGL)
+    state.configure_start(fen, chess960=True)
+    first_move = next(iter(state.board.legal_moves))
+    state.board.push(first_move)
+    state.reset_after_physical_start()
+    assert state.fen == fen
+    assert state.chess960 is True
+
+
 def test_reset_keeps_960_position_and_flag():
     """reset() returns to the generated 960 start, not the standard start.
 

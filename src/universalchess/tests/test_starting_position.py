@@ -73,3 +73,21 @@ def test_non_start_is_not_a_start_gesture():
         )
         is None
     )
+
+
+def test_physical_start_abandon_clears_a_leftover_custom_start():
+    """Confirming the standard start must open a standard local game.
+
+    Why: a correspondence catch-up persisted its live FEN as start_fen. After
+    reboot that game resumed as Human vs Engine, and reset() restored the
+    leftover position so the pieces at home ranks never started a new game.
+
+    How the regression manifests: fen stays the correspondence position.
+    """
+    leftover = "rnbqkbnr/pp1p2pp/2p2p2/4p3/4P3/3P1PP1/PPP4P/RNBQKBNR b KQkq - 0 4"
+    state = ChessGameState()
+    state.configure_start(leftover)
+    state.reset_after_physical_start()
+    assert state.fen == chess.STARTING_FEN
+    assert state.start_fen == chess.STARTING_FEN
+    assert state.chess960 is False

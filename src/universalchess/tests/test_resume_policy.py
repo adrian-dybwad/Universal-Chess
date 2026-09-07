@@ -14,12 +14,63 @@ game started in place on the board left the finished game's id in the snapshot.
 
 import pytest
 
-from universalchess.managers.game.resume_policy import choose_resume_target
+from universalchess.managers.game.resume_policy import (
+    choose_resume_target,
+    should_persist_game,
+)
 
 
 def _game(game_id: int, result):
     """Minimal resume payload carrying the keys the policy reads."""
     return {"id": game_id, "result": result}
+
+
+def test_abandoned_recorded_game_is_not_resumed():
+    """An abandoned game (result *) must not come back after a restart.
+
+    Why: home-rank confirm marks the leftover correspondence row abandoned,
+    but the session snapshot still pointed at that id. * is not 1-0/0-1/draw,
+    so startup restored it as Human vs Engine.
+
+    How the regression manifests: recorded * wins and the leftover FEN loads.
+    """
+    recorded = _game(93, "*")
+    assert choose_resume_target(recorded, None) is None
+
+
+def test_abandoned_recorded_does_not_block_a_newer_local_game():
+    """A later local in-progress game must load after an abandoned leftover.
+
+    How the regression manifests: recorded * is honoured and the local game
+    is skipped.
+    """
+    recorded = _game(93, "*")
+    incomplete = _game(94, None)
+    assert choose_resume_target(recorded, incomplete) is incomplete
+
+
+def test_lichess_incomplete_is_not_auto_resumed():
+    """Correspondence continues from the Lichess menu, not as a local engine game.
+
+    Why: catch-up persisted the live FEN as start_fen; boot resumed it as
+    Human vs Koivisto. Ongoing Games on the lobby is how that game continues.
+
+    How the regression manifests: a site=Lichess incomplete row is returned.
+    """
+    leftover = _game(93, None)
+    leftover["site"] = "Lichess"
+    assert choose_resume_target(None, leftover) is None
+    assert choose_resume_target(leftover, leftover) is None
+
+
+def test_lichess_source_incomplete_is_not_auto_resumed():
+    """source=lichess is the same leftover, even when site is empty.
+
+    How the regression manifests: source is ignored and the row resumes locally.
+    """
+    leftover = _game(93, None)
+    leftover["source"] = "lichess"
+    assert choose_resume_target(None, leftover) is None
 
 
 def test_none_when_nothing_resumable():
@@ -71,3 +122,17 @@ def test_recorded_in_progress_is_honoured_over_newer_incomplete():
     recorded = _game(60, None)
     incomplete = _game(61, None)
     assert choose_resume_target(recorded, incomplete) is recorded
+
+
+def test_local_games_are_persisted_and_lichess_games_are_not():
+    """Lichess games continue from the lobby; local games still save.
+
+    Why: the first move after correspondence catch-up created a local row with
+    the live FEN as start_fen, which boot then resumed as Human vs Engine.
+
+    How the regression manifests: is_remote True still returns persist True.
+    """
+    assert should_persist_game(is_position_game=False, is_remote=False) is True
+    assert should_persist_game(is_position_game=False, is_remote=True) is False
+    assert should_persist_game(is_position_game=True, is_remote=False) is False
+    assert should_persist_game(is_position_game=True, is_remote=True) is False

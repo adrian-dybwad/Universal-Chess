@@ -658,11 +658,13 @@ class GameManager:
         self.correction_mode.enter(expected_state)
         log.warning(f"[GameManager._enter_correction_mode] Entered correction mode - physical board must match logical board (FEN: {self.chess_board.fen()})")
     
-    def _exit_correction_mode(self):
-        """Exit correction mode and resume normal game flow.
-        
+    def _exit_correction_mode(self, *, resume_play: bool = True):
+        """Exit correction mode and optionally resume normal game flow.
+
         If a pending hint move was set (from position loading), it is shown
-        on the LEDs after correction mode exits.
+        on the LEDs after correction mode exits. ``resume_play`` is False when
+        the board is about to reset: firing a turn event here asked the engine
+        to move in the leftover position.
         """
         self.correction_mode.exit()
         log.warning("[GameManager._exit_correction_mode] Exited correction mode")
@@ -703,7 +705,7 @@ class GameManager:
             log.info(f"[GameManager._exit_correction_mode] Showing hint LEDs: {chess.square_name(from_sq)} -> {chess.square_name(to_sq)}")
             # Clear the hint after showing it once
             self._pending_hint_squares = None
-        else:
+        elif resume_play:
             # No forced move or pending hint - trigger turn event so engine can move
             # if it's the engine's turn. This handles resuming games where the engine
             # needs to make a move after the board is corrected.
@@ -1567,7 +1569,7 @@ class GameManager:
             # Step 1: Exit correction mode if active (clean up any correction state)
             if self.correction_mode.is_active:
                 log.info("[GameManager._reset_game] Exiting correction mode before reset")
-                self._exit_correction_mode()
+                self._exit_correction_mode(resume_play=False)
             
             # Step 2: Clean up any pending database transactions from previous game
             if self.database_session is not None:
@@ -1585,11 +1587,10 @@ class GameManager:
             
             # Step 4: Reset all game state
             self.move_state.reset()  # Clear move state (source square, legal moves, forced moves, etc.)
-            # Variant-aware: returns to this game's start position (standard, or
-            # the generated Chess960 start). For a 960 game the physical home-rank
-            # gesture must re-affirm the SAME random position, never regenerate
-            # one, so reset() restores the stored 960 start (notifies observers).
-            self._game_state.reset()
+            # Home-rank confirm starts a new local opening, except Chess960
+            # which must keep the generated array (occupancy cannot tell them
+            # apart). reset() would restore a leftover correspondence start_fen.
+            self._game_state.reset_after_physical_start()
             self.cached_result = None  # Clear cached game result
 
             # Step 5: Reset UI state
@@ -1628,11 +1629,11 @@ class GameManager:
             # Try to ensure at least basic cleanup happens even on error
             try:
                 self.move_state.reset()
-                self._game_state.reset()  # Reset via game state
+                self._game_state.reset_after_physical_start()
                 self.game_db_id = -1
                 self.led.off()
                 if self.correction_mode.is_active:
-                    self._exit_correction_mode()
+                    self._exit_correction_mode(resume_play=False)
             except Exception:  # noqa: S110  # nosec - best-effort cleanup on teardown; a secondary failure must not mask the original error
                 pass
     

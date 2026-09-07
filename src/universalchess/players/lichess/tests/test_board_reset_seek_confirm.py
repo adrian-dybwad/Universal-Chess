@@ -136,6 +136,42 @@ def test_board_reset_rebuild_uses_the_reason_for_its_header():
     assert manager.shown[0][0].label == t("lichess.unfinished.aborted")
 
 
+def test_physical_start_during_lichess_starts_a_local_game():
+    """Home-rank confirm during a remote game starts a local game, not a seek.
+
+    Why: the gesture means a new local game. Correspondence must stay on
+    Lichess (leave, do not abort) and be continued from the lobby. Asking
+    Seek/Lobby here posted a seek or dropped the user in the menu.
+
+    How the regression manifests: show_menu is called, or the action is seek.
+    """
+    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Seek")])
+    assert (
+        board_reset_rebuild_action(
+            manager, is_lichess=True, start_local=True
+        )
+        == "local"
+    )
+    assert manager.shown == []
+    assert board_reset_rebuild_action(None, is_lichess=True, start_local=True) == "local"
+
+
+def test_opponent_ended_lichess_game_still_asks_before_seeking():
+    """A remote abort still offers Lobby/Seek; only the home-rank gesture is local.
+
+    How the regression manifests: start_local is implied for every Lichess
+    rebuild and the abort prompt never shows.
+    """
+    manager = _ScriptedMenuManager(show_results=[MenuSelection.from_key("Seek")])
+    assert (
+        board_reset_rebuild_action(
+            manager, is_lichess=True, reason="ABORTED", start_local=False
+        )
+        == "seek"
+    )
+    assert manager.shown
+
+
 def test_board_reset_rebuild_skips_confirm_when_not_lichess():
     """Engine/human board-reset rebuilds without a seek prompt.
 

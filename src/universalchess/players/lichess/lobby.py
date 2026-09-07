@@ -554,7 +554,7 @@ def choose_lichess_reset_action(menu_manager, *, reason: Optional[str] = None) -
 
 
 def board_reset_rebuild_action(
-    menu_manager, *, is_lichess: bool, reason: Optional[str] = None
+    menu_manager, *, is_lichess: bool, reason: Optional[str] = None, start_local: bool = False
 ) -> str:
     """Decide what a Lichess next-game prompt does.
 
@@ -566,9 +566,15 @@ def board_reset_rebuild_action(
     explicit NEW join. Engine/human rebuilds return ``rebuild`` without a prompt.
     ``reason`` is the remote termination (``RESIGN``, ``ABORTED``, ...) when
     the opponent ended the game.
+
+    ``start_local`` is the home-rank confirm during a live remote game: that
+    gesture starts a local game from the Players slots. Correspondence is left
+    intact on Lichess and continued from the lobby; a new seek is not posted.
     """
     if not is_lichess:
         return "rebuild"
+    if start_local:
+        return "local"
     if menu_manager is None:
         return "menu"
     choice = choose_lichess_reset_action(menu_manager, reason=reason)

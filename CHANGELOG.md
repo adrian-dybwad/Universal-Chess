@@ -1349,6 +1349,22 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   suspended game. PLAY now leaves the lobby the same way it leaves Settings.
   Ongoing Games and Seek New Game remain the lobby's start paths.
 
+- **Home-rank confirm starts a new local game, not a leftover
+  correspondence position**: After a correspondence game, power-up resumed
+  the locally saved row as Human vs Engine. Catch-up had stored the live
+  FEN as the game start, so setting the pieces to the opening and
+  confirming by lifting and replacing a piece restored that leftover
+  instead of a new local game, and the engine was asked to move in the old
+  position. Confirming the standard start now opens the standard opening
+  (Chess960 still keeps the same generated array, because occupancy cannot
+  tell it from standard start). A confirm during a live Lichess game
+  leaves correspondence intact on the server and starts a local game from
+  the Players slots; Ongoing Games on the Lichess menu is how that game
+  continues. Lichess games are no longer written to the local games
+  database, abandoned rows are not restored after a restart, and exiting
+  correction to reset no longer fires a turn in the leftover position.
+  Positions still load their configured start, including the opening.
+
 - **Confirm Move UP/DOWN paint the highlight**: The overlay used
   ``show_menu`` during a game, which tears the clock widget down while a
   counting clock stays in clock-driven refresh. Selection redraws then

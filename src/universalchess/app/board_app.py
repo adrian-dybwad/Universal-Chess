@@ -1109,6 +1109,7 @@ def _build_resume_data(models, session, game) -> Optional[dict]:
         'termination': termination,
         'chess960': chess960,
         'start_fen': start_fen,
+        'site': getattr(game, 'site', None),
     }
 
 
@@ -1869,9 +1870,13 @@ def _start_game_mode(
     if not is_position_game:
         _record_session_view(VIEW_GAME, game_db_id=0, analysis_selection=0)
     
-    # Determine if we should save to database
-    # Position games are practice and should not be saved
-    save_to_database = not is_position_game
+    from universalchess.managers.game.resume_policy import should_persist_game
+
+    # Position games are practice and should not be saved. Lichess games are
+    # continued from the lobby, not as a local Human vs Engine row.
+    save_to_database = should_persist_game(
+        is_position_game=is_position_game, is_remote=is_lichess
+    )
     
     # Get player settings. The lobby pairing is derived again from the settings
     # read here, so a reload during teardown cannot leave the game built from
@@ -3141,15 +3146,25 @@ def _rebuild_players_for_new_game(lichess_reason: Optional[str]) -> None:
     # The live players decide, not the saved slots: a game started from the lobby
     # runs with a Lichess pairing the slots do not name, and rebuilding it without
     # asking would drop a game in progress for a local one.
+    is_remote = _lichess_is_a_player() or _live_game_is_remote()
+    # Home-rank confirm (no remote termination) starts a local game. Correspondence
+    # is left intact and continued from the lobby; a seek is not posted.
     action = board_reset_rebuild_action(
         _menu_manager,
-        is_lichess=_lichess_is_a_player() or _live_game_is_remote(),
+        is_lichess=is_remote,
         reason=lichess_reason,
+        start_local=is_remote and lichess_reason is None,
     )
 
     if action == "menu":
         log.info(f"[App] Lichess next-game prompt declined (reason={lichess_reason})")
         _return_to_menu("Lichess seek declined")
+        return
+
+    if action == "local":
+        log.info("[App] Home-rank confirm during remote play - starting local game")
+        _cleanup_game()
+        _start_game_mode()
         return
 
     if action == "lobby":

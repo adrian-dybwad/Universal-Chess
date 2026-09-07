@@ -698,6 +698,22 @@ class ChessGameState:
         # Clear alerts - starting position has no check or threats
         self._notify_check_and_threats()
 
+    def reset_after_physical_start(self) -> None:
+        """Apply a confirmed home-rank new-game gesture.
+
+        Standard (and leftover custom-start) games become the standard opening:
+        correspondence catch-up used to store the live FEN as ``start_fen``, and
+        ``reset()`` restored that leftover instead of a new local game.
+
+        Chess960 keeps the generated array. Occupancy cannot tell that array
+        from standard start, so regenerating here would make setting the pieces
+        up look like another confirm and seed a different position.
+        """
+        if self._chess960:
+            self.reset()
+            return
+        self.reset_to_standard()
+
     def reset_to_standard(self) -> None:
         """Reset to the standard starting position and clear the variant.
 
