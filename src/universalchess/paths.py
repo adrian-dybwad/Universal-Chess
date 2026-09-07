@@ -59,8 +59,9 @@ SCRIPTS_DIR = f"{BASE_DIR}/scripts"
 BT_ADMIN = f"{SCRIPTS_DIR}/bt-admin"
 
 # uc-wifi-admin: scans (iwlist), manages connection profiles (nmcli) and toggles
-# the radio (rfkill). Without its grant the network list is always empty, connect
-# and forget do nothing and the radio switch has no effect.
+# the radio (rfkill + NetworkManager radio, persisted so Off survives reboot).
+# Without its grant the network list is always empty, connect and forget do
+# nothing and the radio switch has no effect.
 WIFI_ADMIN = f"{SCRIPTS_DIR}/uc-wifi-admin"
 
 # uc-os-upgrade: apt-get update + apt-get upgrade for Raspberry Pi OS packages.

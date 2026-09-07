@@ -2,7 +2,8 @@
 # Root helper for the Wi-Fi operations the service needs but cannot perform
 # unprivileged: scanning for networks (iwlist, or iw on Armbian),
 # creating/activating/deleting connection profiles (nmcli on Raspberry Pi OS,
-# netplan on Armbian) and toggling the radio (rfkill).
+# netplan on Armbian) and toggling the radio (rfkill + NetworkManager's radio
+# switch, persisted so Off survives a reboot).
 #
 # Invoked by the board UI and the web app through a single pinned, passwordless
 # sudo grant installed by the package postinst:
@@ -48,8 +49,40 @@ cleanup() {
 trap cleanup EXIT HUP INT TERM
 
 usage() {
-	echo "usage: uc-wifi-admin {scan|enable|disable|forget <uuid>|forget-ssid <ssid>|saved|connect <ssid>|connect-wpa2 <ssid>}" >&2
+	echo "usage: uc-wifi-admin {scan|enable|disable|restore|forget <uuid>|forget-ssid <ssid>|saved|connect <ssid>|connect-wpa2 <ssid>}" >&2
 	exit 2
+}
+
+# Off must survive reboot. `rfkill block wifi` is a kernel soft-block held
+# only in RAM; NetworkManager separately persists WirelessEnabled and
+# unblocks the radio when that flag is still true. systemd-rfkill can restore
+# the soft-block, but on these boards the Wi-Fi driver often registers after
+# that service has already run, so the device comes up unblocked. The state
+# file is what `restore` (the boot unit) reapplies after wlan0 and
+# NetworkManager; `nmcli radio wifi off` is the persistent NM switch when
+# nmcli exists. UC_WIFI_RADIO_STATE is the test override -- sudo strips the
+# environment, so the unprivileged service cannot redirect this path.
+WIFI_RADIO_STATE="${UC_WIFI_RADIO_STATE:-/var/lib/universalchess/wifi-radio}"
+
+persist_radio() {
+	dir="${WIFI_RADIO_STATE%/*}"
+	# Skip mkdir when the directory already exists so a restricted PATH (the
+	# Armbian helper tests, which put only rfkill on PATH) can still persist.
+	# Fresh boards get /var/lib/universalchess from postinst; mkdir is the
+	# fallback if that directory was removed.
+	if [ ! -d "$dir" ]; then
+		mkdir -p "$dir" || reject "cannot create radio-state directory"
+	fi
+	printf '%s\n' "$1" > "$WIFI_RADIO_STATE" || reject "cannot persist radio state"
+}
+
+# $1 = on|off. Best-effort: Armbian has no nmcli, and a NetworkManager that
+# has not started yet must not abort the rfkill that still takes the radio
+# down for this boot.
+nmcli_radio() {
+	if command -v nmcli >/dev/null 2>&1; then
+		nmcli radio wifi "$1" || true
+	fi
 }
 
 # Armbian has no NetworkManager. Persist Wi-Fi through netplan (networkd +
@@ -137,11 +170,29 @@ case "$1" in
 		;;
 	enable)
 		[ "$#" -eq 1 ] || usage
+		persist_radio enabled
+		nmcli_radio on
 		exec rfkill unblock wifi
 		;;
 	disable)
 		[ "$#" -eq 1 ] || usage
+		persist_radio disabled
+		nmcli_radio off
 		exec rfkill block wifi
+		;;
+	restore)
+		# Boot oneshot. Only Off is reapplied: the OS default is Wi-Fi on,
+		# and re-unblocking would fight a later admin rfkill or hardware
+		# switch. Missing or unknown state is a no-op so a fresh board
+		# (or an upgrade that first ships this verb) is not taken offline.
+		# rfkill is best-effort so a missing binary cannot fail the boot.
+		[ "$#" -eq 1 ] || usage
+		[ -f "$WIFI_RADIO_STATE" ] || exit 0
+		IFS= read -r state < "$WIFI_RADIO_STATE" || true
+		[ "$state" = "disabled" ] || exit 0
+		nmcli_radio off
+		rfkill block wifi || true
+		exit 0
 		;;
 	forget)
 		[ "$#" -eq 2 ] || usage

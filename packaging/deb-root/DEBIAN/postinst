@@ -497,6 +497,12 @@ echo -e "::: Setup services"
     echo -e "::: Enabling BlueZ self-heal boot safety net"
     systemctl enable universal-chess-bluez-selfheal-boot.service 2>/dev/null || true
 
+    # Re-apply a disabled Wi-Fi radio after reboot. rfkill block is RAM-only;
+    # NetworkManager otherwise starts with WirelessEnabled=true and unblocks
+    # the radio. The unit is a no-op until the user has used the switch.
+    echo -e "::: Enabling Wi-Fi radio preference restore"
+    systemctl enable universal-chess-wifi-radio.service 2>/dev/null || true
+
     # Clear any pending-update marker BEFORE starting services. This install
     # is that pending update, so the freshly started web/board services must
     # not load a stale "update pending" from update-state.json. Doing it here

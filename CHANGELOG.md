@@ -1506,6 +1506,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   disabled: neither of those says the radio is switched off, and whether the
   board has a radio is answered separately by the wireless-capability probe.
 
+- **Turning Wi-Fi off did not survive a reboot**: the Connectivity switch
+  ran `rfkill block wifi`, a kernel soft-block held only in RAM. On
+  Raspberry Pi OS, NetworkManager keeps its own `WirelessEnabled=true` and
+  unblocks the radio when it starts; on Armbian the Wi-Fi driver often
+  registers after systemd-rfkill has already run, so the block is never
+  restored. Disable now records the preference, turns NetworkManager's
+  radio off when `nmcli` is present, and a boot unit reapplies the block
+  after wlan0 and NetworkManager have started. Enable clears that
+  preference. A board that has never used the switch is left on.
+
 - **Orange Pi Wi-Fi Connect used NetworkManager on an image that has
   none**: Scan and status work via `iw`, but Connect still called `nmcli`.
   This Armbian image uses systemd-networkd plus wpa_supplicant, configured

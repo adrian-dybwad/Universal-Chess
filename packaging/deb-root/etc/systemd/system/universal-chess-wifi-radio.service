@@ -1,0 +1,27 @@
+[Unit]
+# Re-apply a user Disable after reboot. `rfkill block wifi` does not survive
+# a restart: it is a kernel soft-block held only in RAM. NetworkManager
+# persists its own WirelessEnabled flag, which stays true unless `nmcli radio
+# wifi off` ran, and then unblocks the radio when it starts. systemd-rfkill
+# tries to restore the soft-block at sysinit, but the Wi-Fi driver on these
+# boards (SDIO) often registers afterwards, so the device comes up unblocked.
+# This unit runs last: after wlan0 exists (so there is an rfkill node to
+# block) and after NetworkManager (so a WirelessEnabled=true cannot win a
+# race against the re-block). On Armbian, NetworkManager.service is absent
+# and After= on a missing unit is ignored. An absent preference file makes
+# restore a no-op, so a board that never used the switch is left on.
+Description=Restore Universal Chess Wi-Fi radio preference
+After=sys-subsystem-net-devices-wlan0.device
+Wants=sys-subsystem-net-devices-wlan0.device
+After=NetworkManager.service
+After=systemd-rfkill.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/universalchess/scripts/uc-wifi-admin restore
+RemainAfterExit=yes
+# A missing rfkill binary or missing wlan device must not fail the boot.
+SuccessExitStatus=0
+
+[Install]
+WantedBy=multi-user.target

@@ -22,6 +22,9 @@ iwlist/nmcli/rfkill on PATH, recording their argv, to pin:
    readable by any local user through ``ps``.
 4. That a tool's exit status reaches the caller, so the app can report a real
    failure instead of assuming the command worked.
+5. That disable persists the Off preference (NetworkManager radio + a state
+   file) and that ``restore`` reapplies it at boot, because ``rfkill block``
+   alone does not survive a restart.
 """
 
 import os
@@ -94,6 +97,12 @@ def _write_recording_python(bindir):
     python.chmod(0o755)
 
 
+def _radio_state(fake_bin):
+    """Path the helper persists enable/disable into for this test run."""
+    _, log = fake_bin
+    return log.parent / "wifi-radio"
+
+
 def _run(fake_bin, *argv, stdin="", failing=None, stdout="", path_only=False):
     """Run the helper with the fakes on PATH; return (proc, recorded call lines).
 
@@ -101,12 +110,16 @@ def _run(fake_bin, *argv, stdin="", failing=None, stdout="", path_only=False):
     tests. ``stdout`` is echoed by every fake, for the scan passthrough test.
     ``path_only`` restricts PATH to the fake bindir so a host ``iwlist`` cannot
     steal the Armbian (iw-only) scan case.
+
+    ``UC_WIFI_RADIO_STATE`` is pointed at the test tmp dir so enable/disable never
+    write ``/var/lib/universalchess/wifi-radio`` on the machine running the suite.
     """
     bindir, log = fake_bin
     env = dict(os.environ)
     env["PATH"] = str(bindir) if path_only else f"{bindir}:{env['PATH']}"
     env["UC_WIFI_TEST_LOG"] = str(log)
     env["UC_WIFI_TEST_STDOUT"] = stdout
+    env["UC_WIFI_RADIO_STATE"] = str(_radio_state(fake_bin))
     if failing:
         env[f"UC_WIFI_TEST_RC_{failing.upper()}"] = "3"
     proc = subprocess.run(  # noqa: S603  # nosec B603 - absolute sh, repo-owned script
@@ -169,22 +182,131 @@ def test_scan_uses_iw_when_iwlist_is_not_installed(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("verb", "expected"),
-    [("enable", "rfkill unblock wifi"), ("disable", "rfkill block wifi")],
+    ("verb", "nmcli_radio", "rfkill_argv", "state"),
+    [
+        ("enable", "nmcli radio wifi on", "rfkill unblock wifi", "enabled"),
+        ("disable", "nmcli radio wifi off", "rfkill block wifi", "disabled"),
+    ],
 )
-def test_radio_verbs_toggle_only_the_wifi_radio(fake_bin, verb, expected):
-    """enable/disable run rfkill against the wifi radio and nothing else.
+def test_radio_verbs_toggle_only_the_wifi_radio(
+    fake_bin, verb, nmcli_radio, rfkill_argv, state
+):
+    """enable/disable persist the preference, tell NetworkManager, and rfkill wifi.
 
-    Why this test exists: these two verbs are the whole radio switch. They must
-    also stay scoped to ``wifi`` -- ``rfkill block all`` would take Bluetooth down
-    with it, and the grant is what makes that reachable.
+    Why this test exists: ``rfkill block wifi`` is a kernel soft-block held only
+    in RAM. NetworkManager keeps its own ``WirelessEnabled=true`` and unblocks
+    the radio on boot, which is why a disabled switch came back enabled after
+    restart. ``nmcli radio wifi off`` is the persistent NM switch; the state
+    file is what the boot unit reapplies on Armbian (no NM) and as a backup
+    when systemd-rfkill loses the race with a late-loading SDIO driver. Both
+    commands must stay scoped to ``wifi`` -- ``rfkill block all`` / ``nmcli radio
+    all`` would take Bluetooth down with it, and the grant is what makes that
+    reachable.
 
-    Failure: the radio argument widens, or the verbs are swapped, so the switch
-    turns off more than the user asked for or turns the wrong way.
+    Failure: the radio argument widens, the verbs are swapped, NM is not told,
+    or the preference is not written, so the switch turns off more than asked
+    or the radio comes back on after reboot.
     """
     proc, calls = _run(fake_bin, verb)
     assert proc.returncode == 0, proc.stderr
-    assert calls == [expected]
+    assert calls == [nmcli_radio, rfkill_argv]
+    assert _radio_state(fake_bin).read_text() == f"{state}\n"
+
+
+def _rfkill_only_bin(tmp_path):
+    """Armbian has no NetworkManager; PATH has rfkill and nothing that looks like nmcli."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "calls.log"
+    path = bindir / "rfkill"
+    path.write_text(_FAKE_TOOL.format(name="rfkill", upper="RFKILL"))
+    path.chmod(0o755)
+    return bindir, log
+
+
+def test_disable_without_nmcli_still_persists_and_blocks(tmp_path):
+    """Armbian has no nmcli; disable must still persist and rfkill.
+
+    Why this test exists: Orange Pi images have no NetworkManager, so
+    ``nmcli radio wifi off`` cannot be the persistence path. If disable required
+    nmcli, the switch would fail and the radio would stay on; if it rfkilled
+    without writing the state file, a reboot would bring Wi-Fi back because
+    systemd-rfkill often runs before the SDIO driver registers.
+
+    Failure: disable exits non-zero without nmcli, or writes nothing, so the
+    radio stays on or comes back on after reboot.
+    """
+    fake = _rfkill_only_bin(tmp_path)
+    proc, calls = _run(fake, "disable", path_only=True)
+    assert proc.returncode == 0, proc.stderr
+    assert calls == ["rfkill block wifi"]
+    assert _radio_state(fake).read_text() == "disabled\n"
+
+
+def test_restore_reapplies_a_disabled_radio(fake_bin):
+    """Boot restore re-blocks Wi-Fi when the persisted preference is disabled.
+
+    Why this test exists: even after ``nmcli radio wifi off``, a late-loading
+    wlan device and systemd-rfkill's sysinit race leave the radio unblocked.
+    The boot unit runs this verb after wlan0 and NetworkManager so the user's
+    Off choice is the last write. Manifests as Wi-Fi showing enabled after a
+    reboot that followed an explicit disable.
+
+    Failure: restore is a no-op, or unblocks instead of blocking, so the radio
+    is on after restart.
+    """
+    _radio_state(fake_bin).write_text("disabled\n")
+    proc, calls = _run(fake_bin, "restore")
+    assert proc.returncode == 0, proc.stderr
+    assert calls == ["nmcli radio wifi off", "rfkill block wifi"]
+
+
+def test_restore_without_nmcli_still_blocks_when_disabled(tmp_path):
+    """Armbian restore must rfkill even though nmcli is absent.
+
+    Why this test exists: the boot unit runs the same verb on both images. If
+    restore required nmcli, Armbian boots would leave a disabled radio on.
+
+    Failure: restore exits non-zero or issues no rfkill, and Wi-Fi comes back.
+    """
+    fake = _rfkill_only_bin(tmp_path)
+    _radio_state(fake).write_text("disabled\n")
+    proc, calls = _run(fake, "restore", path_only=True)
+    assert proc.returncode == 0, proc.stderr
+    assert calls == ["rfkill block wifi"]
+
+
+def test_restore_is_a_noop_when_wifi_was_never_toggled(fake_bin):
+    """A board that has never used the switch must not have its radio blocked.
+
+    Why this test exists: the boot unit runs on every start. An absent state
+    file means the user never chose Off; blocking then would take a working
+    board off the network after an upgrade that first shipped the unit.
+
+    Failure: restore runs rfkill/nmcli with no file, and a fresh board loses
+    Wi-Fi on the next reboot.
+    """
+    assert not _radio_state(fake_bin).exists()
+    proc, calls = _run(fake_bin, "restore")
+    assert proc.returncode == 0, proc.stderr
+    assert calls == []
+
+
+def test_restore_does_not_force_enable(fake_bin):
+    """An Enabled preference is not re-applied at boot.
+
+    Why this test exists: the OS default is Wi-Fi on. Re-unblocking at boot
+    would fight a later admin rfkill, a hardware switch, or NetworkManager's
+    own state. Only Off has to be restored, because that is the choice the
+    kernel and NM otherwise forget.
+
+    Failure: restore unblocks an enabled preference, overriding a block the
+    user or OS applied after the last toggle.
+    """
+    _radio_state(fake_bin).write_text("enabled\n")
+    proc, calls = _run(fake_bin, "restore")
+    assert proc.returncode == 0, proc.stderr
+    assert calls == []
 
 
 def test_forget_deletes_the_named_profile_by_uuid(fake_bin):
@@ -462,6 +584,7 @@ def test_connect_verbs_refuse_an_ssid_nmcli_would_misread(fake_bin, verb, bad_ss
         ("saved", "extra"),
         ("forget-ssid",),
         ("forget-ssid", UUID, "extra"),
+        ("restore", "extra"),
         ("--help",),
         ("scan; rm -rf /",),
     ],
@@ -600,3 +723,51 @@ def test_the_netplan_writer_ships_beside_the_helper():
     writer = _HELPER.parent / "uc-wifi-netplan.py"
     assert writer.exists(), f"netplan writer missing from the package: {writer}"
     assert writer.read_text().startswith("#!/usr/bin/env python3")
+
+
+WIFI_RADIO_UNIT_NAME = "universal-chess-wifi-radio.service"
+WIFI_RADIO_UNIT = (
+    Path(__file__).resolve().parents[3]
+    / "packaging"
+    / "deb-root"
+    / "etc"
+    / "systemd"
+    / "system"
+    / WIFI_RADIO_UNIT_NAME
+)
+
+
+def test_boot_unit_runs_restore_after_wlan_and_networkmanager():
+    """The packaged unit must re-apply a disabled radio after the stack is up.
+
+    Why this test exists: ``rfkill block`` at disable time is gone by the next
+    kernel, and NetworkManager starts with ``WirelessEnabled=true`` unless this
+    job runs after it. Starting before wlan0 exists is the systemd-rfkill race
+    (the SDIO driver registers later, unblocked). Manifests as the Connectivity
+    switch showing Enabled after a reboot that followed Disable.
+
+    Failure: the unit is missing, calls a different verb, or is not ordered
+    after wlan0 / NetworkManager, so the restored block is overwritten.
+    """
+    assert WIFI_RADIO_UNIT.exists(), f"unit missing: {WIFI_RADIO_UNIT}"
+    text = WIFI_RADIO_UNIT.read_text()
+    assert "Type=oneshot" in text
+    assert "ExecStart=/opt/universalchess/scripts/uc-wifi-admin restore" in text
+    assert "After=sys-subsystem-net-devices-wlan0.device" in text
+    assert "Wants=sys-subsystem-net-devices-wlan0.device" in text
+    assert "After=NetworkManager.service" in text
+    assert "WantedBy=multi-user.target" in text
+
+
+def test_postinst_enables_the_wifi_radio_restore_unit():
+    """An installed package must enable the restore unit or it never runs.
+
+    Why this test exists: shipping the unit file without ``systemctl enable``
+    leaves it dormant; upgraded boards would keep bringing Wi-Fi back on after
+    disable. The enable line is what makes restore part of every boot.
+
+    Failure: postinst never enables the unit, so only a manual enable would
+    persist Off across restarts.
+    """
+    text = POSTINST.read_text()
+    assert f"systemctl enable {WIFI_RADIO_UNIT_NAME}" in text
