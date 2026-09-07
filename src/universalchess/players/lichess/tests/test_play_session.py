@@ -81,14 +81,14 @@ def test_awaiting_opponent_only_for_a_challenge_the_board_sent():
 
 
 def test_connect_remaps_slots_when_account_sits_black(monkeypatch):
-    """After the stream names Black, Human is player 2.
+    """After the stream names Black, Human is player 2 and the panel turns.
 
     Why: pieces stay on their physical sides; the stream only remaps who
-    plays them. Player 1 Color (default White) is the e-paper end, so the
-    panel does not rotate just because the account was handed Black.
+    plays them. Default Player 1 Color is White, so Black is the far side
+    and the panel must face that seat.
 
-    Failure: reassign_slots is not called with (remote, human), or the board
-    is flipped from the assigned colour alone.
+    Failure: reassign_slots is not called with (remote, human), or the panel
+    stays facing player 1.
     """
     monkeypatch.setattr(
         "universalchess.players.lichess.session.threading.Timer",
@@ -118,7 +118,9 @@ def test_connect_remaps_slots_when_account_sits_black(monkeypatch):
     assert manager.black_player is human
     assert remote.color is chess.WHITE
     assert human.color is chess.BLACK
-    display.set_flip_board.assert_called_once_with(False)
+    display.set_orientation.assert_called_once_with(
+        board_from_black=True, face_far_end=True
+    )
     assert shown == [False]
     assert session.game_connected is True
 
@@ -153,7 +155,9 @@ def test_connect_keeps_human_white_when_account_sits_white(monkeypatch):
 
     assert manager.white_player is human
     assert manager.black_player is remote
-    display.set_flip_board.assert_called_once_with(False)
+    display.set_orientation.assert_called_once_with(
+        board_from_black=False, face_far_end=False
+    )
 
 
 def test_connect_moves_human_to_white_when_started_as_black(monkeypatch):
@@ -161,11 +165,11 @@ def test_connect_moves_human_to_white_when_started_as_black(monkeypatch):
 
     Why: Lichess in slot 1 / Human in slot 2 starts Human as Black. A random
     seek can still assign White. Without remap the Human would stay Black on
-    the clock while playing White. Player 1 Color (default White) keeps the
-    panel unrotated.
+    the clock while playing White. Default Player 1 Color is White, so the
+    human now sits at the e-paper and the panel stays put.
 
-    How a regression manifests: white_player stays the remote, or the board
-    is flipped from the assigned colour.
+    How a regression manifests: white_player stays the remote, or the panel
+    turns as if the human were still on the far side.
     """
     monkeypatch.setattr(
         "universalchess.players.lichess.session.threading.Timer",
@@ -194,31 +198,32 @@ def test_connect_moves_human_to_white_when_started_as_black(monkeypatch):
     assert manager.black_player is remote
     assert human.color is chess.WHITE
     assert remote.color is chess.BLACK
-    display.set_flip_board.assert_called_once_with(False)
+    display.set_orientation.assert_called_once_with(
+        board_from_black=False, face_far_end=False
+    )
 
 
 @pytest.mark.parametrize(
-    "player1_color,human_is_white,expect_flip",
+    "player1_color,human_is_white,board_from_black,face_far_end",
     [
-        ("white", True, False),
-        ("white", False, False),
-        ("black", False, True),
-        ("black", True, True),
+        ("white", True, False, False),
+        ("white", False, True, True),
+        ("black", False, True, False),
+        ("black", True, False, True),
     ],
 )
-def test_the_epaper_follows_player1_color_not_the_assigned_side(
-    monkeypatch, player1_color, human_is_white, expect_flip
+def test_the_epaper_honors_player1_color_and_turns_for_the_far_side(
+    monkeypatch, player1_color, human_is_white, board_from_black, face_far_end
 ):
-    """Flip is Player 1 Color: Black at the e-paper end turns the panel.
+    """Diagram follows the seated colour; the panel turns only for the far side.
 
-    The pieces are set up from the Players color control before Lichess names
-    a colour. Being handed White or Black remaps who plays which pieces; it
-    does not restack them or turn the display.
+    Player 1 Color is the physical setup. Lichess assigning a colour remaps
+    who occupies those pieces. The panel turns when that colour is not
+    Player 1 Color.
 
-    How a regression manifests: flip is read from the assigned colour
-    ("Black always flips") or from disagreement with the assigned colour, so
-    a board set up as Black stays unrotated when assigned Black, and a board
-    set up as White rotates when assigned Black.
+    How a regression manifests: Black on player 1 rotates the panel while
+    the human sits there, or White on player 1 leaves it facing the e-paper
+    when the human was assigned Black.
     """
     monkeypatch.setattr(
         "universalchess.players.lichess.session.threading.Timer",
@@ -243,7 +248,9 @@ def test_the_epaper_follows_player1_color_not_the_assigned_side(
     )
     session._on_connected()
 
-    display.set_flip_board.assert_called_once_with(expect_flip)
+    display.set_orientation.assert_called_once_with(
+        board_from_black=board_from_black, face_far_end=face_far_end
+    )
 
 
 def test_back_during_seek_stops_players():

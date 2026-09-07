@@ -307,6 +307,7 @@ def test_in_game_offers_are_in_the_device_language(spanish):
     session = LichessPlaySession.__new__(LichessPlaySession)
     session._beep = None
     session._started_splash_held = True
+    session._game_display = None
     shown = []
 
     class Menu:

@@ -1326,6 +1326,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **E-paper panel turn follows the far-side human, not Player 1 Color**:
+  Player 1 Color is which colour sits at the e-paper, and the diagram
+  matches those pieces. The panel used to rotate whenever that colour was
+  Black, so a human sitting there saw the menu upside down, and a local
+  Human on player 2 (White on player 1) never got the panel turned.
+  The panel now turns 180 only when a solo human plays the other colour
+  -- assigned colour on Lichess after the stream names it, slot colour
+  locally, including Hand+Brain. Two humans or no human leave it facing
+  player 1. Waiting splash stays facing player 1 until the stream seats
+  the account.
+
 - **Game-over move count was the ply count**: The result strip showed
   ``len(move_stack)`` labeled as "moves", so a Bishop+Knight mate delivered
   on White's 34th move read "67 moves". The count is now the chess full-move

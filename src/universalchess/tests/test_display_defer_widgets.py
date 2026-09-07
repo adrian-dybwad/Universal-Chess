@@ -44,10 +44,11 @@ def display_manager_factory():
     ]
     started = [p.start() for p in patches]
     try:
-        def factory(defer_widgets: bool = False):
+        def factory(defer_widgets: bool = False, **kwargs):
             dm = DisplayManager(
                 time_control_spec=TimeControl.sudden_death_minutes(5),
                 defer_widgets=defer_widgets,
+                **kwargs,
             )
             return dm, started[0]
 
@@ -87,13 +88,15 @@ def test_defer_widgets_skips_init_until_show_game_widgets(display_manager_factor
     init.assert_called_once()
 
 
-def test_flip_board_rotates_the_whole_panel_180(display_manager_factory, monkeypatch):
+def test_face_far_end_rotates_the_whole_panel_180(display_manager_factory, monkeypatch):
     """When the seated player is at the far end, menus must turn with the board.
 
-    Why: set_flip_board only remapped chess squares and clock rows. Abort,
-    takeback, and next-game menus still painted for the original seat.
-    How the regression manifests: set_flip_board(True) never asks the panel
-    for content rotation 180, or leaving the game leaves it at 180.
+    Why: square remapping only turned the chess diagram. Abort, takeback, and
+    next-game menus still painted for the original seat. Diagram-from-black
+    (Black on player 1) must not rotate the panel; a human on player 2 must.
+
+    How the regression manifests: face_far_end never asks for content rotation
+    180, board_from_black rotates it, or leaving the game leaves it at 180.
     """
     import universalchess.managers.display as display_module
 
@@ -101,7 +104,31 @@ def test_flip_board_rotates_the_whole_panel_180(display_manager_factory, monkeyp
     monkeypatch.setattr(display_module.board, "display_manager", panel)
     dm, _ = display_manager_factory(defer_widgets=True)
     panel.set_content_rotation.assert_called_with(0)
-    dm.set_flip_board(True)
+    dm.set_orientation(board_from_black=True, face_far_end=False)
+    panel.set_content_rotation.assert_called_with(0)
+    dm.set_orientation(board_from_black=False, face_far_end=True)
     panel.set_content_rotation.assert_called_with(180)
-    dm.set_flip_board(False)
+    dm.set_orientation(board_from_black=False, face_far_end=False)
+    panel.set_content_rotation.assert_called_with(0)
+
+
+def test_constructor_face_far_end_rotates_without_diagram_from_black(
+    display_manager_factory, monkeypatch
+):
+    """A far-side human at game start must turn the panel before the first paint.
+
+    Why: local Human on player 2 sets orientation in DisplayManager.__init__,
+    not later via set_orientation. If only the setter rotated, that game would
+    stay facing player 1.
+
+    How the regression manifests: face_far_end=True at construction asks for
+    rotation 0, or flip_board=True asks for 180.
+    """
+    import universalchess.managers.display as display_module
+
+    panel = MagicMock()
+    monkeypatch.setattr(display_module.board, "display_manager", panel)
+    display_manager_factory(defer_widgets=True, face_far_end=True)
+    panel.set_content_rotation.assert_called_with(180)
+    display_manager_factory(defer_widgets=True, flip_board=True)
     panel.set_content_rotation.assert_called_with(0)

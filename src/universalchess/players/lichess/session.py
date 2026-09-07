@@ -11,11 +11,11 @@ from typing import Callable, Optional
 
 from universalchess.board.logging import log
 from universalchess.epaper.icon_menu import IconMenuEntry
+from universalchess.epaper.orientation import epaper_orientation
 from universalchess.i18n import t
 
 from .match import (
     LichessChallengeOffer,
-    epaper_is_flipped,
     lichess_challenge_terms_label,
 )
 from .player import LichessGameMode, LichessPlayer
@@ -127,9 +127,9 @@ class LichessPlaySession:
         """Wire stream callbacks onto the remote player.
 
         ``player1_color`` is the side the Players color control names: which
-        colour is set up at the e-paper end, and whether the display turns
-        around (:func:`epaper_is_flipped`). Lichess assigning a colour remaps
-        who plays which pieces; it does not restack them or turn the panel.
+        colour is set up at the e-paper end. Lichess assigning a colour remaps
+        who plays which pieces; the diagram follows the seated colour and the
+        panel turns when that colour is not Player 1 Color.
         ``on_unfinished_game`` is called with the termination when the remote
         game ends (abort, resign, mate, timeout, draw), so the main loop can
         offer Lobby / Seek with that reason in the header (BACK refuses).
@@ -215,9 +215,9 @@ class LichessPlaySession:
             return
         self.game_connected = True
         # Player 1 Color is the physical setup at the e-paper end. The stream
-        # remaps which of those slots the Human occupies. Flip is display-only
-        # so the pieces do not have to be rotated: the chess diagram is remapped
-        # and the whole panel turns 180 (menus included) when that end is Black.
+        # remaps which of those slots the Human occupies. The diagram follows
+        # the seated colour; the panel turns 180 when that colour is the far
+        # side so menus face the human.
         human_is_white = (
             True if self._remote.player_is_white is None else self._remote.player_is_white
         )
@@ -240,7 +240,12 @@ class LichessPlaySession:
         if self._menu_manager is not None:
             self._menu_manager.cancel_selection("BACK")
         if self._game_display is not None:
-            self._game_display.set_flip_board(epaper_is_flipped(self._player1_color))
+            seated = "white" if human_is_white else "black"
+            orientation = epaper_orientation(self._player1_color, seated)
+            self._game_display.set_orientation(
+                board_from_black=orientation.board_from_black,
+                face_far_end=orientation.face_far_end,
+            )
         if self._show_started_splash is not None:
             self._show_started_splash(self._panel, human_is_white)
         timer = threading.Timer(self._splash_seconds, self.dismiss_started_splash)

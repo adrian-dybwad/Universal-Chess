@@ -36,7 +36,6 @@ from universalchess.players.lichess.match import (
     lichess_started_message,
     lichess_waiting_message,
     player1_is_white,
-    epaper_is_flipped,
 )
 
 
@@ -153,28 +152,25 @@ def test_empty_lichess_color_defaults_to_random():
 
 
 @pytest.mark.parametrize(
-    "color,expect_white,expect_flip",
+    "color,expect_white",
     [
-        ("white", True, False),
-        ("black", False, True),
-        ("", True, False),
-        ("BLACK", False, True),
+        ("white", True),
+        ("black", False),
+        ("", True),
+        ("BLACK", False),
     ],
 )
-def test_player1_color_is_physical_setup_and_epaper_rotation(
-    color, expect_white, expect_flip
-):
+def test_player1_color_is_physical_setup(color, expect_white):
     """Players → Player 1 Color names which side is set up at the e-paper.
 
-    Why: Lichess forced White onto player 1 and rotated the panel only when
-    the assigned colour disagreed, so a board set up as Black still treated
-    the near edge as White and left the display facing the other end.
+    Why: Lichess forced White onto player 1, so a board set up as Black still
+    treated the near edge as White. Diagram and panel turn are tested in
+    test_epaper_orientation; this is the slot-assignment predicate.
 
-    How a regression manifests: player1_is_white is True for black, or
-    epaper_is_flipped follows the Lichess-assigned colour instead of this one.
+    How a regression manifests: player1_is_white is True for black, so Black
+    pieces are built on player 2.
     """
     assert player1_is_white(color) is expect_white
-    assert epaper_is_flipped(color) is expect_flip
 
 
 def test_a_lobby_seek_posts_the_lobby_color_when_no_slot_is_lichess():

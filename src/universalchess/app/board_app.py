@@ -1808,7 +1808,6 @@ def _start_game_mode(
         LichessSeekError,
         lichess_seek_from_settings,
         START_PLAYING_SPLASH_SECONDS,
-        epaper_is_flipped,
         player1_is_white,
     )
     from universalchess.players.lichess.lobby import (
@@ -2004,8 +2003,21 @@ def _start_game_mode(
             awaiting_opponent=lichess_session.awaiting_opponent,
         )
 
+    from universalchess.epaper.orientation import epaper_orientation, seated_human_color
+
+    # Lichess: the stream names the seated colour later, so the waiting splash
+    # stays facing player 1. Local: a solo human on the far side turns the
+    # panel now; two humans or no human leave it facing player 1.
+    if lichess_session is not None:
+        orientation = epaper_orientation(p1.color)
+    else:
+        orientation = epaper_orientation(
+            p1.color, seated_human_color(p1.type, p1.color, p2.type)
+        )
+
     _game.display = DisplayManager(
-        flip_board=epaper_is_flipped(p1.color) if lichess_session is not None else False,
+        flip_board=orientation.board_from_black,
+        face_far_end=orientation.face_far_end,
         show_analysis=game.show_analysis,
         analysis_engine_path=analysis_engine_path,
         on_exit=lambda: _return_to_menu("Menu exit"),

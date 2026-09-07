@@ -8,7 +8,7 @@ from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.i18n import t
 from universalchess.managers.menu import is_break_result, is_play_start
 
-from .match import epaper_is_flipped, has_lichess_slot, lichess_account_id
+from .match import has_lichess_slot, lichess_account_id
 
 _MISSING_SCOPE = re.compile(r"Missing scope:\s*([a-z0-9:_-]+)", re.IGNORECASE)
 
@@ -789,9 +789,8 @@ def _ongoing_board_preview(row: dict, player1_color: str = "white"):
 
     A throwaway ``ChessGameState`` is used so the live game's FEN is not
     rewritten while the lobby is on screen. The diagram is drawn from the
-    e-paper end named by Player 1 Color, not the colour this account plays
-    in the game: that is who sits where, and flipping from the game colour
-    inverted a board already set up as Black.
+    e-paper end named by Player 1 Color: the lobby faces player 1, and the
+    stream has not yet seated the human.
     """
     fen = str((row or {}).get("fen") or "").strip()
     placement = fen.split()[0] if fen else ""
@@ -803,11 +802,12 @@ def _ongoing_board_preview(row: dict, player1_color: str = "white"):
         from PIL import Image
 
         from universalchess.epaper.chess_board import ChessBoardWidget
+        from universalchess.epaper.orientation import epaper_orientation
         from universalchess.state.chess_game import ChessGameState
 
         state = ChessGameState()
         state.set_position(fen)
-        flip = epaper_is_flipped(player1_color)
+        flip = epaper_orientation(player1_color).board_from_black
         widget = ChessBoardWidget(0, 0, lambda *_a, **_k: None, state, flip)
         try:
             image = Image.new("1", (128, 128), 1)

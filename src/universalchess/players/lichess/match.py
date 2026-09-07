@@ -3,15 +3,15 @@
 Seek parameters are derived from Players settings and the lobby's Rated,
 Clock, and Color so PLAY, lobby New Game, and a board-reset to the start
 position cannot drift. The Game clock is for local games and is not posted.
-Player 1 Color is the physical setup at the e-paper end (and whether the
-panel is rotated); it is not the seek colour. The bound
-credential's host (``org:alice`` / ``dev:bob``) selects the API server;
-lichess.dev is never chosen by a game-level toggle.
+Player 1 Color is the physical setup at the e-paper end; it is not the
+seek colour. The bound credential's host (``org:alice`` / ``dev:bob``)
+selects the API server; lichess.dev is never chosen by a game-level toggle.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from universalchess.epaper.orientation import color_is_black
 from universalchess.i18n import t
 from .hosts import (
     ACCOUNT_TYPE_LICHESS,
@@ -343,18 +343,7 @@ def player1_is_white(player1_color: str) -> bool:
     force White here and only rotate the panel later, which left the pieces
     on the wrong side of the board.
     """
-    return (player1_color or "white").strip().lower() != "black"
-
-
-def epaper_is_flipped(player1_color: str) -> bool:
-    """Whether the e-paper draws the board from Black's side.
-
-    Player 1 Color is which colour sits at the e-paper end. Black there turns
-    the panel around so the seated player can read it. Lichess assigning a
-    colour remaps who plays which pieces; it does not restack them or turn
-    the display.
-    """
-    return not player1_is_white(player1_color)
+    return not color_is_black(player1_color)
 
 
 def board_seek_form(seek: LichessSeek) -> dict:

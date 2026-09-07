@@ -76,11 +76,10 @@ class Manager:
     def set_content_rotation(self, degrees: int) -> None:
         """Rotate drawn content on top of the panel's mounting rotation.
 
-        180 turns the whole screen around when the seated player is at the far
-        end of the board (Lichess handed them the other color). Menus, game-over,
-        and the status bar use this path; square remapping alone left them facing
-        the original seat. 0 restores the mounting-only orientation after the
-        game ends so the main menu is not left upside down.
+        180 turns the whole screen around when the seated player is at the
+        far end of the board. Square remapping alone left abort/takeback/next-game
+        upright for the original seat. 0 restores the mounting-only orientation after
+        the game ends so the main menu is not left upside down.
         """
         self._content_rotation = int(degrees) % 360
 

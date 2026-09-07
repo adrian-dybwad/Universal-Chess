@@ -130,11 +130,16 @@ class DisplayManager:
                  led_off_callback: callable = None,
                  time_control_spec: TimeControl = None,
                  engine_move_clock_delay_seconds: int = 1,
-                 defer_widgets: bool = False):
+                 defer_widgets: bool = False,
+                 face_far_end: bool = False):
         """Initialize the display controller.
         
         Args:
             flip_board: If True, display board from black's perspective
+            face_far_end: If True, rotate the whole framebuffer 180 so menus
+                face a solo human sitting at player 2. Independent of
+                ``flip_board``: Black on player 1 remaps squares without
+                turning the panel.
             show_analysis: If True, show analysis widget (default visible)
             analysis_engine_path: Path to UCI engine for analysis (e.g., ct800)
             on_exit: Callback function() when user requests exit via back menu
@@ -164,7 +169,8 @@ class DisplayManager:
         self._led_from_to_hint = led_from_to_hint_callback
         self._led_off = led_off_callback
         
-        self._flip_board = flip_board
+        self._flip_board = bool(flip_board)
+        self._face_far_end = bool(face_far_end)
         self._sync_panel_content_rotation()
         self._show_analysis = show_analysis
         self._analysis_mode = analysis_mode  # Whether to create analysis engine/widget at all
@@ -283,16 +289,18 @@ class DisplayManager:
         """
         self._init_widgets()
 
-    def set_flip_board(self, flip: bool) -> None:
-        """Turn the e-paper around when the seated player is at the far end.
+    def set_orientation(self, *, board_from_black: bool, face_far_end: bool) -> None:
+        """Set diagram perspective and whether the panel faces player 2.
 
-        Square remapping (Black at the bottom of the diagram) is not enough:
-        abort, takeback, and next-game menus paint through the panel snapshot,
-        so the whole framebuffer rotates 180 as well. Must be set before
+        Square remapping (Black at the bottom of the diagram) is not enough
+        when the seated player is at the far end: abort, takeback, and
+        next-game menus paint through the panel snapshot, so the whole
+        framebuffer rotates 180 as well. Must be set before
         :meth:`show_game_widgets` so the first board paint matches. Does not
         rebuild chess widgets by itself.
         """
-        self._flip_board = bool(flip)
+        self._flip_board = bool(board_from_black)
+        self._face_far_end = bool(face_far_end)
         self._sync_panel_content_rotation()
 
     def _sync_panel_content_rotation(self) -> None:
@@ -305,7 +313,7 @@ class DisplayManager:
         panel = getattr(board, "display_manager", None)
         if panel is None or not hasattr(panel, "set_content_rotation"):
             return
-        panel.set_content_rotation(180 if self._flip_board else 0)
+        panel.set_content_rotation(180 if self._face_far_end else 0)
     
     def _init_analysis_engine_async(self, engine_path: str):
         """Initialize the UCI analysis engine asynchronously via registry.
@@ -1786,6 +1794,7 @@ class DisplayManager:
         """
         log.info(f"[DisplayManager] Starting cleanup (for_shutdown={for_shutdown})...")
         self._flip_board = False
+        self._face_far_end = False
         self._sync_panel_content_rotation()
         
         # Wait for engine init thread if still running (brief wait)
