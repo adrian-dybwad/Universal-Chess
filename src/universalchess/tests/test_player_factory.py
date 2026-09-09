@@ -1,10 +1,11 @@
 """Tests for turning a player slot's settings into a player.
 
 This mapping was a closure inside the 750-line game builder, so nothing could
-check it: not that an unnamed engine carries its strength label into the PGN, not
-that a derived novelty engine runs its policy on the shared Stockfish instead of
-starting a second one, and not that an unreadable player type falls back to a
-human rather than leaving the game with a side that can never move.
+check it: not that an unnamed engine carries its strength label into the PGN,
+not that a leftover human name on an engine slot is ignored, not that a derived
+novelty engine runs its policy on the shared Stockfish instead of starting a
+second one, and not that an unreadable player type falls back to a human rather
+than leaving the game with a side that can never move.
 """
 
 import chess
@@ -128,16 +129,26 @@ class TestEnginePlayers:
 
         assert player.name == "Stockfish (Unlimited)"
 
-    def test_a_named_engine_keeps_the_operator_name(self):
-        # An operator who renamed the slot wants that name in the PGN, not the
-        # generated one.
-        player = build_player(
+    def test_an_engine_ignores_a_leftover_human_name(self):
+        # The Name field is only shown for humans, so a stored name is leftover
+        # from when this slot was human. Using it would put "Adrian" in the PGN
+        # and on the clock instead of the engine's strength label. How a
+        # regression manifests: a named human switched to Engine keeps the
+        # human name, and this player disagrees with an otherwise identical
+        # nameless engine slot.
+        leftover = build_player(
             _slot(type="engine", engine="stockfish", name="The Opponent"),
             chess.WHITE,
             ponder=False,
         )
+        nameless = build_player(
+            _slot(type="engine", engine="stockfish"),
+            chess.WHITE,
+            ponder=False,
+        )
 
-        assert player.name == "The Opponent"
+        assert leftover.name == nameless.name
+        assert leftover.name != "The Opponent"
 
     def test_the_strength_and_timing_reach_the_engine(self, recorded_configs):
         # think_time is stored as whole seconds and must arrive as the float the
@@ -203,15 +214,25 @@ class TestHandBrainPlayers:
         assert config.name == f"H+B {label} (Stockfish)"
         assert config.engine_name == "stockfish"
 
-    def test_a_named_hand_brain_pair_keeps_the_operator_name(self):
-        player = build_player(
+    def test_hand_brain_ignores_a_leftover_human_name(self):
+        # Hand+Brain has no Name field either. A leftover human name would hide
+        # the mode letter that is the only PGN record of which way round the
+        # pair was. How a regression manifests: a named human switched to
+        # Hand+Brain keeps the human name, and this player disagrees with an
+        # otherwise identical nameless Hand+Brain slot.
+        leftover = build_player(
             _slot(type="hand_brain", engine="stockfish", name="Team Human"),
             chess.WHITE,
         )
+        nameless = build_player(
+            _slot(type="hand_brain", engine="stockfish"),
+            chess.WHITE,
+        )
 
-        assert isinstance(player, HandBrainPlayer)
-        assert player.name == "Team Human"
-        assert player.mode is HandBrainMode.NORMAL
+        assert isinstance(leftover, HandBrainPlayer)
+        assert leftover.name == nameless.name
+        assert leftover.name != "Team Human"
+        assert leftover.mode is HandBrainMode.NORMAL
 
 
 class TestLichessPlayers:

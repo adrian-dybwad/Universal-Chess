@@ -1326,6 +1326,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **A leftover player name no longer replaces the engine in the PGN**:
+  The Name field is only shown for Human, but a name set there stayed on
+  the slot after Type switched to Engine or Hand+Brain and overrode the
+  generated label. Clock, game card, and PGN then showed the human name
+  instead of the engine (or Hand+Brain mode). Those types now always use
+  the generated label. Switching back to Human still restores the stored
+  name.
+
 - **E-paper panel turn follows the far-side human, not Player 1 Color**:
   Player 1 Color is which colour sits at the e-paper, and the diagram
   matches those pieces. The panel used to rotate whenever that colour was

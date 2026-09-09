@@ -2,6 +2,7 @@
 
 This mapping was a closure inside the game builder, so the decisions it makes
 could not be checked anywhere: the label an unnamed engine is given, that a
+leftover human name on an engine or Hand+Brain slot is ignored, that a
 derived novelty engine runs its policy on the shared Stockfish rather than
 starting a second process, and that an unreadable player type still yields a
 player rather than a side that can never move.
@@ -72,9 +73,11 @@ def build_player(
 
         # The strength label rather than the raw section, so an uncapped "Default"
         # reads as "Unlimited" and the game card never shows a bare "(Default)".
+        # Name is collected only for humans; a leftover name from when this slot
+        # was human must not replace the engine label in the PGN or on the clock.
         strength = uci_schema.strength_display_for_engine(slot.engine, slot.elo)
         config = EnginePlayerConfig(
-            name=slot.name or f"{engine_display_name(slot.engine)} ({strength})",
+            name=f"{engine_display_name(slot.engine)} ({strength})",
             color=color,
             engine_name=slot.engine,
             elo_section=slot.elo,
@@ -105,9 +108,12 @@ def build_player(
         )
         mode_label = "N" if mode == HandBrainMode.NORMAL else "R"
         engine_display = engine_display_name(slot.engine)
+        # Name is collected only for humans; a leftover name from when this slot
+        # was human would hide the mode letter that is the PGN record of which
+        # way round the pair was.
         return HandBrainPlayer(
             HandBrainConfig(
-                name=slot.name or f"H+B {mode_label} ({engine_display})",
+                name=f"H+B {mode_label} ({engine_display})",
                 color=color,
                 mode=mode,
                 engine_name=slot.engine,
