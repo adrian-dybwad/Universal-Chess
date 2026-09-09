@@ -1334,6 +1334,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   the generated label. Switching back to Human still restores the stored
   name.
 
+- **Root-menu PLAY has room around the logo**: The knight and PLAY/RESUME
+  are sized to fill the top row, so they crossed the 2px stroke when
+  Lichess, Original Centaur, and the Positions/Settings pair each took a
+  full-height unit (112px for PLAY). PLAY is now 2.4 weight and the
+  others are 0.8, so the artwork sits inside the same 2px frame as the
+  other rows. The board label is Centaur (one line) so the shorter row
+  still fits; the web tab still says Original Centaur.
+
 - **E-paper panel turn follows the far-side human, not Player 1 Color**:
   Player 1 Color is which colour sits at the e-paper, and the diagram
   matches those pieces. The panel used to rotate whenever that colour was

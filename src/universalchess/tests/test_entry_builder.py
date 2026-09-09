@@ -26,11 +26,55 @@ def test_node_to_entry_maps_fields_and_style():
     assert entry.key == "Universal"
     assert entry.label == "PLAY"
     assert entry.icon_name == "universal_logo"
-    assert entry.height_ratio == 2.0
+    assert entry.height_ratio == 2.4
     assert entry.icon_size == 80
     assert entry.layout == "vertical"
     assert entry.font_size == 32
     assert entry.bold is True
+    # Default IconMenuEntry.border_width is 2. PLAY declares none so it uses
+    # the same frame as the other root-menu rows; the extra height is what
+    # keeps the 80px logo and 32px label inside that stroke.
+    assert entry.border_width == 2
+
+
+def test_node_to_entry_main_menu_secondary_rows_are_shorter():
+    """Lichess, Centaur, and the Positions/Settings pair use 0.8 height.
+
+    Why this test exists: PLAY's 80px logo and 32px label need the extra
+    band those rows give up. If a secondary row returns to 1.0, PLAY shrinks
+    back to 112px and the artwork sits on the cell edges again.
+
+    How a regression manifests: any of these entries has height_ratio 1.0
+    (or PLAY is no longer 2.4), so the four-row root menu no longer leaves
+    inset around the knight.
+    """
+    catalog = load_catalog()
+    play = node_to_entry(catalog.get_node("main.play"))
+    lichess = node_to_entry(catalog.get_node("players.lichess"))
+    centaur = node_to_entry(catalog.get_node("main.centaur"))
+    positions = node_to_entry(catalog.get_node("main.positions"))
+    settings = node_to_entry(catalog.get_node("main.settings"))
+    assert play.height_ratio == 2.4
+    assert lichess.height_ratio == 0.8
+    assert centaur.height_ratio == 0.8
+    assert positions.height_ratio == 0.8
+    assert settings.height_ratio == 0.8
+
+
+def test_centaur_board_label_is_one_line():
+    """The e-paper Centaur row is the product name, not 'Original Centaur'.
+
+    Why this test exists: two lines of 'Original\\nCentaur' needed a taller
+    cell. Shortening the board label to Centaur is what lets that row share
+    the 0.8 height with Lichess. The web label stays Original Centaur.
+
+    How a regression manifests: boardLabel is missing so the board renders
+    the two-line web string, which clips in the shorter cell.
+    """
+    node = load_catalog().get_node("main.centaur")
+    assert node["label"] == "Original Centaur"
+    assert node["boardLabel"] == "Centaur"
+    assert "\n" not in node["boardLabel"]
 
 
 def test_node_to_entry_forwards_shared_row():

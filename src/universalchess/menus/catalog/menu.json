@@ -255,7 +255,7 @@
       "icon": "universal_logo",
       "help": "Start a new game. When a game is suspended this reads RESUME and continues it.",
       "platforms": ["board"],
-      "epaper": { "height_ratio": 2.0, "icon_size": 80, "layout": "vertical", "font_size": 32, "bold": true }
+      "epaper": { "height_ratio": 2.4, "icon_size": 80, "layout": "vertical", "font_size": 32, "bold": true }
     },
     {
       "id": "main.positions",
@@ -265,18 +265,19 @@
       "icon": "positions",
       "help": "Set up a predefined position on the board to practice or analyze.",
       "platforms": ["board", "web"],
-      "epaper": { "height_ratio": 1.0, "icon_size": 32, "layout": "vertical", "row": "secondary", "icon_only": true }
+      "epaper": { "height_ratio": 0.8, "icon_size": 28, "layout": "vertical", "row": "secondary", "icon_only": true }
     },
     {
       "id": "main.centaur",
       "key": "Centaur",
       "type": "action",
-      "label": "Original\nCentaur",
+      "label": "Original Centaur",
+      "boardLabel": "Centaur",
       "icon": "centaur",
       "help": "Switch back to the original DGT Centaur software.",
       "visibleWhen": { "store": "main", "key": "centaur_available", "equals": true },
       "platforms": ["board", "web"],
-      "epaper": { "height_ratio": 1.0, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
+      "epaper": { "height_ratio": 0.8, "icon_size": 28, "layout": "horizontal", "font_size": 14 }
     },
     {
       "id": "main.settings",
@@ -287,7 +288,7 @@
       "help": "Configure players, time control, display, connectivity, and system options.",
       "target": "settings",
       "platforms": ["board"],
-      "epaper": { "height_ratio": 1.0, "icon_size": 32, "layout": "vertical", "row": "secondary", "icon_only": true }
+      "epaper": { "height_ratio": 0.8, "icon_size": 28, "layout": "vertical", "row": "secondary", "icon_only": true }
     },
 
     {
@@ -341,7 +342,7 @@
       "section": "players",
       "platforms": ["board", "web"],
       "visibleWhen": { "store": "main", "key": "lichess_available", "equals": true },
-      "epaper": { "height_ratio": 1.0, "icon_size": 28, "layout": "horizontal", "font_size": 14 },
+      "epaper": { "height_ratio": 0.8, "icon_size": 28, "layout": "horizontal", "font_size": 14 },
       "children": ["lichess.account", "lichess.ongoing", "lichess.challenges", "lichess.new_game"]
     },
     {

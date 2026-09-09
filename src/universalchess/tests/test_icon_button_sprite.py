@@ -1,4 +1,4 @@
-"""Tests for IconButtonWidget sprite-preview icon image and radio indicator.
+"""Tests for IconButtonWidget sprite-preview icons, radio markers, and frames.
 
 Background / why these tests exist
 ----------------------------------
@@ -178,3 +178,93 @@ def test_empty_vertical_label_skips_text_and_centers_the_icon():
     mock_icon.assert_called()
     icon_y = mock_icon.call_args[0][2]
     assert icon_y == content_top + content_height // 2
+
+
+# PIL mode "1" stores bits; Image.new(..., 1) and load() yield 0/1, while
+# ImageDraw/getpixel often yield 0/255. Treat either non-zero as white.
+_WHITE = {1, 255}
+
+
+def _frame_corners(sprite, margin):
+    """Pixels at the four corners of the margin-inset rectangle.
+
+    A stroked border paints all four black. Content (logo, label) is centered
+    and does not reach those corners on a PLAY-sized cell.
+    """
+    right = sprite.width - 1 - margin
+    bottom = sprite.height - 1 - margin
+    return (
+        sprite.getpixel((margin, margin)),
+        sprite.getpixel((right, margin)),
+        sprite.getpixel((margin, bottom)),
+        sprite.getpixel((right, bottom)),
+    )
+
+
+def _play_sized_button(IconButtonWidget, *, border_width, selected=False):
+    """The root-menu PLAY cell: 128x140, 80px logo, 32px label, 4px margin.
+
+    140 is the height IconMenuWidget assigns when PLAY (ratio 2.4) shares the
+    280px menu with Lichess, Centaur, and the Positions/Settings pair at 0.8.
+    """
+    return IconButtonWidget(
+        0, 0, 128, 140,
+        update_callback=lambda *a, **k: None,
+        key="Universal",
+        label="PLAY",
+        icon_name="universal_logo",
+        selected=selected,
+        icon_size=80,
+        layout="vertical",
+        font_size=32,
+        bold=True,
+        border_width=border_width,
+    )
+
+
+def test_zero_border_width_does_not_stroke_the_frame():
+    """border_width 0 must not draw the rectangle other rows use as a button.
+
+    Why this test exists: the renderer used to stroke anyway (selected always
+    outlined). A catalog entry that sets width 0 must actually be frameless.
+
+    How a regression manifests: the four corners of the margin-inset
+    rectangle are black, so a width-0 button is boxed again.
+    """
+    IconButtonWidget = _import_icon_button_widget()
+    bordered = _play_sized_button(IconButtonWidget, border_width=2)
+    bordered_sprite = Image.new("1", (128, 140), 1)
+    bordered.render(bordered_sprite)
+    assert _frame_corners(bordered_sprite, bordered.margin) == (0, 0, 0, 0)
+
+    borderless = _play_sized_button(IconButtonWidget, border_width=0)
+    borderless_sprite = Image.new("1", (128, 140), 1)
+    borderless.render(borderless_sprite)
+    assert all(
+        pixel in _WHITE for pixel in _frame_corners(borderless_sprite, borderless.margin)
+    ), "a width-0 button grew a frame at the margin"
+
+
+def test_zero_border_width_selected_does_not_stroke_the_frame():
+    """A selected borderless button must not grow a 1px outline.
+
+    Why this test exists: the selected path always stroked `outline=0` after
+    the dither fill, independent of border_width. A width-0 row that is
+    selected by default would still show a box.
+
+    How a regression manifests: the left edge at x=margin is solid black
+    (the outline) instead of the Bayer dither, which has white pixels in
+    that column at shade 12.
+    """
+    IconButtonWidget = _import_icon_button_widget()
+    widget = _play_sized_button(IconButtonWidget, border_width=0, selected=True)
+    sprite = Image.new("1", (128, 140), 1)
+    widget.render(sprite)
+    x = widget.margin
+    left_edge = [
+        sprite.getpixel((x, y))
+        for y in range(widget.margin, widget.height - widget.margin)
+    ]
+    assert any(pixel in _WHITE for pixel in left_edge), (
+        "selected outline reintroduced a solid left stroke"
+    )

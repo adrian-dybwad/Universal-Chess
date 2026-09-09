@@ -74,13 +74,18 @@ class TestMainMenuPlayResumeLabel:
 class TestMainMenuCentaurVisibility:
 
     def test_centaur_shown_when_available(self):
-        """Original Centaur appears when the Centaur software is present.
+        """Centaur appears when the Centaur software is present.
 
-        Regression manifestation: a broken visibleWhen would hide a working
-        fallback path the user relies on to return to the original software.
+        The board label is the one-line product name so the row can share
+        the shorter 0.8 height with Lichess. How a regression manifests: a
+        broken visibleWhen hides a working fallback, or the label is still
+        two-line Original Centaur and clips in the shorter cell.
         """
-        keys = [r.key for r in _rows(centaur_available=True)]
+        rows = _rows(centaur_available=True)
+        keys = [r.key for r in rows]
         assert keys == ["Universal", "Lichess", "Centaur", "Positions", "Settings"]
+        centaur = next(row for row in rows if row.key == "Centaur")
+        assert centaur.label == "Centaur"
 
     def test_centaur_hidden_when_unavailable(self):
         """Original Centaur is hidden when the Centaur software is absent.

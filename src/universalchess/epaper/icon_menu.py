@@ -56,7 +56,8 @@ class IconMenuEntry:
         layout: Button layout - 'horizontal' (icon left) or 'vertical' (icon top centered)
         font_size: Font size in pixels (default 16)
         bold: Whether to render text in bold (default False)
-        border_width: Width of button border in pixels (default 2)
+        border_width: Width of button border in pixels (default 2). 0 skips
+                   the stroke.
         description: Optional long description text rendered below the icon+label area.
                     Displayed as smaller, word-wrapped text spanning the full button width.
         description_font_size: Font size for description text (default 11)

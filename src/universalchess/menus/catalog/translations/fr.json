@@ -185,7 +185,7 @@
       "help": "Place une position prédéfinie sur le plateau pour s'entraîner ou analyser."
     },
     "main.centaur": {
-      "label": "Centaur\noriginal",
+      "label": "Centaur original",
       "help": "Revient au logiciel original DGT Centaur."
     },
     "main.settings": {

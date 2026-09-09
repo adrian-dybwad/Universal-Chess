@@ -57,6 +57,7 @@ SAME_IN_EVERY_SHIPPED_LOCALE = {
     "field.display.pegasus_override_brightness.boardLabel": (
         "DGT Pegasus is a product name and LED is the same initialism in es/fr/de/nl/pl/it/ru/tr"
     ),
+    "main.centaur.boardLabel": "Centaur is the product name in every language",
     "accountType:lichess.label": "Lichess is the service's name in every language",
     # An example value shown in an empty input, not prose.
     "accountType:lichess.api_token.placeholder": "a token's shape, not words",

@@ -94,7 +94,8 @@ class IconButtonWidget(Widget):
             margin: Space outside the button border (default 4)
             padding: Space inside the button border (default 2)
             icon_margin: Space around the icon on all sides (default 2)
-            border_width: Width of the button border in pixels (default 2)
+            border_width: Width of the button border in pixels (default 2).
+                    0 skips the stroke.
             selected_shade: Dithered shade for selected state 0-16 (default 12 = ~75% black)
             background_shade: Dithered background shade 0-16 (default 0 = white)
             layout: Layout mode - 'horizontal' (icon left, text right) or 
@@ -284,7 +285,7 @@ class IconButtonWidget(Widget):
         
         Layout:
             - margin: transparent space outside the border
-            - border: 2px black line
+            - border: black stroke of border_width (omitted when 0)
             - padding: space inside the border (between border and content)
         """
         draw = ImageDraw.Draw(sprite)
@@ -309,7 +310,9 @@ class IconButtonWidget(Widget):
         content_width = content_right - content_left
         content_height = content_bottom - content_top
         
-        # Draw button background (only inside border area, not margin)
+        # Draw button background (only inside border area, not margin).
+        # border_width 0 is a frameless cell: no stroke, so content can use the
+        # inner area. Selected still dithers so focus is visible without a box.
         if self.selected:
             # Selected: dark grey dithered background inside border only
             pattern = DITHER_PATTERNS.get(self.selected_shade, DITHER_PATTERNS[0])
@@ -320,11 +323,17 @@ class IconButtonWidget(Widget):
                         sprite.putpixel((x, y), 0)
                     else:
                         sprite.putpixel((x, y), 255)
-            # Draw border outline
-            draw.rectangle([border_left, border_top, border_right, border_bottom], fill=None, outline=0)
-        else:
+            if self.border_width > 0:
+                draw.rectangle(
+                    [border_left, border_top, border_right, border_bottom],
+                    fill=None, outline=0,
+                )
+        elif self.border_width > 0:
             # Unselected: white fill with black border
-            draw.rectangle([border_left, border_top, border_right, border_bottom], fill=255, outline=0, width=self.border_width)
+            draw.rectangle(
+                [border_left, border_top, border_right, border_bottom],
+                fill=255, outline=0, width=self.border_width,
+            )
         
         text_color = 255 if self.selected else 0
         lines = self.label.split('\n')

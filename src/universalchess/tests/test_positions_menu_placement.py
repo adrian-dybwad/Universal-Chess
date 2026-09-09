@@ -221,8 +221,8 @@ def test_the_main_menu_still_fits_on_one_screen():
 
     Why this test exists: the main menu allocates height by visual row, so a
     pair that still consumed two stacked units would shrink PLAY and could
-    start scrolling. PLAY is twice the height of every other row; Positions
-    and Settings share a y and half the width.
+    start scrolling. PLAY is more than twice the height of every other row;
+    Positions and Settings share a y and half the width.
 
     How a regression manifests: a later row or a raised weight pushes the
     total past the screen, or the pair stacks full-width again.
@@ -250,7 +250,36 @@ def test_the_main_menu_still_fits_on_one_screen():
         play_height >= 2 * height
         for key, height in heights.items()
         if key != "Universal"
-    ), f"PLAY is no longer twice the height of every other row: {heights}"
+    ), f"PLAY is no longer more than twice the height of every other row: {heights}"
+
+
+def test_play_row_keeps_inset_around_the_logo_and_label():
+    """The 80px knight and 32px PLAY label must sit inside the button frame.
+
+    Why this test exists: when Lichess, Centaur, and the pair each took a
+    full-height unit, the top cell was 112px and the 80+4+32 stack overflowed
+    the 2px stroke. Those rows are 0.8 so PLAY is 2.4; the stack has spare
+    pixels inside the same frame the other rows use.
+
+    How a regression manifests: content_height minus the logo+gap+label is
+    under 8px, or border_width is 0, so the artwork kisses the edges or
+    the row looks unlike every other button.
+    """
+    entries = build_menu_entries("main")
+    widget = IconMenuWidget(
+        0, STATUS_BAR_HEIGHT, DISPLAY_WIDTH, DISPLAY_HEIGHT - STATUS_BAR_HEIGHT,
+        lambda *a, **k: None, entries=entries,
+    )
+    play = next(button for button in widget._buttons if button.key == "Universal")
+    assert play.border_width == 2
+    chrome = 2 * (play.margin + play.border_width + play.padding)
+    content_height = play.height - chrome
+    stack = play.icon_size + 4 + play.font_size
+    inset = content_height - stack
+    assert inset >= 8, (
+        f"PLAY only has {inset}px spare around the logo+label "
+        f"(height={play.height}, content={content_height}, stack={stack})"
+    )
 
 
 def test_every_main_menu_row_can_actually_be_selected():

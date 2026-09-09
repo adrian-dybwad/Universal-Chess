@@ -183,7 +183,7 @@
       "help": "Stellt eine vorgegebene Stellung auf dem Brett auf, zum Üben oder Analysieren."
     },
     "main.centaur": {
-      "label": "Original\nCentaur",
+      "label": "Original Centaur",
       "help": "Wechselt zurück zur originalen DGT-Centaur-Software."
     },
     "main.settings": {
