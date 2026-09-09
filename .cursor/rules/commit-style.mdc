@@ -1,0 +1,32 @@
+---
+description: Commit message voice for this repo; do not look up git log for style
+alwaysApply: true
+---
+
+# Commit messages
+
+This file is the style. Do not run `git log` to rediscover it.
+
+Subject is an imperative sentence that states the outcome, ending with a
+period. No `feat:` / `fix:` prefix, no "Updated X", no file list. A second
+paragraph is optional and is one sentence of mechanism, used when the
+subject is not enough.
+
+```
+Give PLAY enough height that the knight and label sit inside the button frame.
+
+The other root-menu rows take 0.8 of a unit so PLAY is 2.4; the board row is Centaur so that shorter cell still fits.
+```
+
+```
+Keep the selected PLAY knight black, with white face, neck, and a 1px halo.
+```
+
+```
+Ignore a leftover human name when a slot is Engine or Hand+Brain.
+```
+
+Bad: `Fix PLAY button layout`, `Updated menu.json and tests`, `feat: add halo`.
+
+Changelog entries still follow `changelog.mdc`. Unobservable commits still
+need a `Changelog: none -- …` trailer in the last paragraph.
