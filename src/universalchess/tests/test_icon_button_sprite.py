@@ -268,3 +268,106 @@ def test_zero_border_width_selected_does_not_stroke_the_frame():
     assert any(pixel in _WHITE for pixel in left_edge), (
         "selected outline reintroduced a solid left stroke"
     )
+
+
+def _square_knight_logo(size: int, ink_origin: int, ink_size: int):
+    """Black filled square on a white field, with an opaque mask over the ink."""
+    logo = Image.new("1", (size, size), 1)
+    mask = Image.new("1", (size, size), 0)
+    for y in range(ink_origin, ink_origin + ink_size):
+        for x in range(ink_origin, ink_origin + ink_size):
+            logo.putpixel((x, y), 0)
+            mask.putpixel((x, y), 255)
+    return logo, mask
+
+
+def test_selected_universal_logo_keeps_black_ink_and_white_halo():
+    """Selected PLAY must not invert the knight; a 1px white ring holds the dither off.
+
+    Why this test exists: inverting the bitmap on the dithered fill turned the
+    horse into a white blob, and without a halo black dither meets the black
+    silhouette so the profile disappears.
+
+    How a regression manifests: the interior of a known-black square logo is
+    white (inverted), or a pixel on the 1px ring around it is black (dither
+    touching the body).
+    """
+    IconButtonWidget = _import_icon_button_widget()
+    from universalchess.epaper.icon_button import set_knight_logo
+
+    size, ink_origin, ink_size = 32, 12, 8
+    set_knight_logo(size, *_square_knight_logo(size, ink_origin, ink_size))
+
+    width = height = 80
+    widget = IconButtonWidget(
+        0, 0, width, height,
+        update_callback=lambda *a, **k: None,
+        key="Universal",
+        label="",
+        icon_name="universal_logo",
+        selected=True,
+        icon_size=size,
+        layout="vertical",
+    )
+    sprite = Image.new("1", (width, height), 1)
+    widget.render(sprite)
+
+    paste = (
+        widget.margin + widget.border_width + widget.padding
+        + (width - 2 * (widget.margin + widget.border_width + widget.padding)) // 2
+        - size // 2
+    )
+    interior = (paste + ink_origin, paste + ink_origin)
+    assert sprite.getpixel(interior) == 0, "selected knight was inverted to white"
+
+    ring = (paste + ink_origin - 1, paste + ink_origin)
+    assert sprite.getpixel(ring) in _WHITE, "dither meets the silhouette; white halo missing"
+
+
+def test_selected_universal_logo_mattes_enclosed_face_and_neck():
+    """Enclosed white of the horse (face, neck) must stay white on a selected row.
+
+    Why this test exists: the stored mask is black ink only. Dilating that
+    ink for a halo left the face and neck as holes, so the dithered fill
+    showed through them.
+
+    How a regression manifests: the centre of a black ring (paper inside
+    the profile, not in the ink mask) is black from the Bayer dither.
+    """
+    IconButtonWidget = _import_icon_button_widget()
+    from universalchess.epaper.icon_button import set_knight_logo
+
+    size = 32
+    logo = Image.new("1", (size, size), 1)
+    mask = Image.new("1", (size, size), 0)
+    # 12x12 black frame at (10,10)..(21,21) with a 6x6 white hole at (13,13)..(18,18).
+    for y in range(10, 22):
+        for x in range(10, 22):
+            if x < 13 or x > 18 or y < 13 or y > 18:
+                logo.putpixel((x, y), 0)
+                mask.putpixel((x, y), 255)
+    set_knight_logo(size, logo, mask)
+
+    width = height = 80
+    widget = IconButtonWidget(
+        0, 0, width, height,
+        update_callback=lambda *a, **k: None,
+        key="Universal",
+        label="",
+        icon_name="universal_logo",
+        selected=True,
+        icon_size=size,
+        layout="vertical",
+    )
+    sprite = Image.new("1", (width, height), 1)
+    widget.render(sprite)
+
+    paste = (
+        widget.margin + widget.border_width + widget.padding
+        + (width - 2 * (widget.margin + widget.border_width + widget.padding)) // 2
+        - size // 2
+    )
+    hole = (paste + 15, paste + 15)
+    frame = (paste + 10, paste + 10)
+    assert sprite.getpixel(frame) == 0, "ink frame was not black"
+    assert sprite.getpixel(hole) in _WHITE, "dither filled the enclosed face/neck"

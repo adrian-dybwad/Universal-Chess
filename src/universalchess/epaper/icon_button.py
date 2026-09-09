@@ -5,7 +5,7 @@ A single button with an icon and label, designed for large touch-friendly
 button menus on the small e-paper display.
 """
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageFilter
 from .framework.widget import Widget, DITHER_PATTERNS
 from .text import TextWidget, Justify, Overflow
 from typing import Optional, Tuple, Dict
@@ -20,6 +20,24 @@ except ImportError:
 
 # Module-level knight logo cache by size, set by application at startup
 _knight_logos: Dict[int, Tuple[Image.Image, Image.Image]] = {}
+
+
+def _filled_silhouette(mask: Image.Image) -> Image.Image:
+    """Ink mask plus enclosed paper (face and neck inside the horse).
+
+    The stored mask is black ink only, so the face and neck are holes.
+    Flooding the true background from the image edge leaves those interior
+    pixels; they must be matted white when selected so dither cannot fill
+    them.
+    """
+    # 255 = not ink (outside or hole), 0 = ink wall.
+    field = Image.eval(mask.convert("L"), lambda p: 0 if p else 255)
+    width, height = field.size
+    for seed in ((0, 0), (width - 1, 0), (0, height - 1), (width - 1, height - 1)):
+        if field.getpixel(seed) == 255:
+            ImageDraw.floodfill(field, seed, 64)
+    # 64 = outside, 0 = ink, 255 = enclosed paper.
+    return field.point(lambda p: 0 if p == 64 else 255).convert("1")
 
 
 def set_knight_logo(size: int, logo: Image.Image, mask: Image.Image) -> None:
@@ -959,17 +977,21 @@ class IconButtonWidget(Widget):
     def _draw_universal_logo(self, draw: ImageDraw.Draw, x: int, y: int,
                              size: int, line_color: int, selected: bool):
         """Draw the Universal/PLAY logo using pre-rendered knight bitmap.
-        
+
         Uses a high-quality bitmap rendered from the python-chess knight SVG
-        for crisp rendering at any size.
-        
+        for crisp rendering at any size. Selected does not invert the horse:
+        the bitmap stays black, enclosed face and neck stay white, and a 1px
+        white ring around the silhouette keeps the dithered fill from
+        touching the profile.
+
         Args:
             draw: ImageDraw object
             x: Center X position
             y: Center Y position
             size: Icon size (width/height)
-            line_color: Stroke/fill color (0=black, 255=white)
-            selected: Whether button is selected (inverts colors)
+            line_color: Stroke/fill color (unused for the bitmap; kept so
+                the icon dispatcher can call every drawer with the same args)
+            selected: Whether the button is selected
         """
         # Check module-level logo cache
         if size not in _knight_logos:
@@ -977,19 +999,21 @@ class IconButtonWidget(Widget):
             log.debug(f"Knight logo size {size} not in cache, using fallback")
             self._draw_knight_icon(draw, x, y, size, line_color, selected)
             return
-        
+
         logo, mask = _knight_logos[size]
-        
-        # If selected, invert the logo (but keep mask the same)
-        if selected:
-            logo = Image.eval(logo, lambda p: 255 - p)
-        
-        # Calculate position (centered)
         paste_x = x - size // 2
         paste_y = y - size // 2
-        
-        # Get the underlying image from the draw object and paste with mask
         target_img = draw._image
+
+        if selected:
+            # Matte white under the filled silhouette (ink plus enclosed
+            # face/neck) dilated 1px so the dither cannot fill the horse or
+            # meet its profile. Inverting the bitmap made a white blob.
+            halo = _filled_silhouette(mask).convert("L").filter(
+                ImageFilter.MaxFilter(3)
+            ).convert("1")
+            target_img.paste(255, (paste_x, paste_y), halo)
+
         target_img.paste(logo, (paste_x, paste_y), mask)
     
     def _draw_gear_icon(self, draw: ImageDraw.Draw, x: int, y: int,

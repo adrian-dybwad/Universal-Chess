@@ -1342,6 +1342,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   other rows. The board label is Centaur (one line) so the shorter row
   still fits; the web tab still says Original Centaur.
 
+- **Selected PLAY keeps the black knight**: Selecting the top row
+  inverted the horse to white on the dithered fill, so it read as a
+  blob. The bitmap now stays black, the enclosed white of the face and
+  neck is matted so dither cannot fill them, and a 1px white ring around
+  the silhouette keeps the dither from touching the profile.
+
 - **E-paper panel turn follows the far-side human, not Player 1 Color**:
   Player 1 Color is which colour sits at the e-paper, and the diagram
   matches those pieces. The panel used to rotate whenever that colour was
