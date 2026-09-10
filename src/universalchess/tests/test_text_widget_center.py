@@ -12,8 +12,9 @@ did not.
 
 How a regression manifests
 --------------------------
-The shorter line's ink midpoint sits well left of the widget center, and its
-left edge lines up with the longer line instead of sitting inward of it.
+The shorter line's left ink lines up with the longer line instead of sitting
+inward of it, and its ink midpoint sits many pixels left of the widget
+center (block alignment, not a 1-bit threshold wobble).
 """
 
 import pathlib
@@ -36,6 +37,11 @@ LOADING_CHALLENGE = "Loading\nChallenge..."
 WIDGET_WIDTH = 120
 FONT_SIZE = 18
 LINE_HEIGHT = FONT_SIZE + 2
+
+# 1-bit raster of an 18px TrueType line can sit 2.5px off the geometric
+# midline depending on freetype (CI Python 3.11/3.13 vs 3.9). Block-aligned
+# newlines are tens of pixels off; 3px still distinguishes those.
+CENTER_INK_SLACK_PX = 3
 
 
 @pytest.fixture
@@ -90,9 +96,9 @@ def test_centered_explicit_newlines_center_each_line():
     """A short line above a longer one must each sit on the widget midline.
 
     Why: "Loading\\nChallenge..." is FIT with wrap=False. Painting the block as
-    one string left-aligns "Loading" to "Challenge...". Failure: line 0's ink
-    midpoint is more than 2px off center, or its left edge matches the longer
-    line (block alignment) instead of sitting inward of it.
+    one string left-aligns "Loading" to "Challenge...". Failure: line 0's left
+    ink matches the longer line (block alignment), or a midpoint sits more
+    than CENTER_INK_SLACK_PX off center.
     """
     widget = _widget(LOADING_CHALLENGE)
     assert widget.fitted_wrap is False
@@ -106,7 +112,7 @@ def test_centered_explicit_newlines_center_each_line():
     center = WIDGET_WIDTH / 2
     for left, right in (first, second):
         midpoint = (left + right) / 2
-        assert abs(midpoint - center) <= 2
+        assert abs(midpoint - center) <= CENTER_INK_SLACK_PX
 
     # "Loading" is the shorter line: its left ink must sit inward of the longer
     # line, not share an edge with it.
@@ -118,8 +124,8 @@ def test_centered_word_wrapped_lines_stay_on_the_midline():
     """Word-wrapped FIT already painted per line; that path must stay centered.
 
     Why: a paint-path unification that only fixed explicit newlines could still
-    break WRAP. Failure: a wrapped line's ink midpoint drifts more than 2px
-    off the widget center.
+    break WRAP. Failure: a wrapped line's ink midpoint drifts more than
+    CENTER_INK_SLACK_PX off the widget center.
     """
     widget = TextWidget(
         0, 0, 128, 36, lambda **_: None,
@@ -135,7 +141,7 @@ def test_centered_word_wrapped_lines_stay_on_the_midline():
         band = _line_ink(sprite, index, winner_line_height)
         assert band is not None
         midpoint = (band[0] + band[1]) / 2
-        assert abs(midpoint - center) <= 2
+        assert abs(midpoint - center) <= CENTER_INK_SLACK_PX
 
 
 @pytest.mark.usefixtures("bundled_fonts")
