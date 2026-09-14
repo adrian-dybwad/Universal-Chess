@@ -23,8 +23,8 @@ berserk==0.14.0 \
     --hash=sha256:d4f4fe51f13e6b57ac017160af7b62483408006fa5dcf455cd2bccf6432948e0
 cairocffi==1.7.1 \
     --hash=sha256:9803a0e11f6c962f3b0ae2ec8ba6ae45e957a146a004697a1ac1bbf16b073b3f
-cairosvg==2.9.0 \
-    --hash=sha256:4b82d07d145377dffdfc19d9791bd5fb65539bb4da0adecf0bdbd9cd4ffd7c68
+cairosvg==2.9.1 \
+    --hash=sha256:f91c5628e834be024a0ed4544d76261cd84016a4c73bcdf26c386495825c05a1
 chess==1.11.2 \
     --hash=sha256:a8b43e5678fdb3000695bdaa573117ad683761e5ca38e591c4826eba6d25bb39
 cssselect2==0.10.1 \
