@@ -15,6 +15,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Display Sprites gains 3D, Fritz, and Modern**: The piece selector
+  only shipped Default, Onebit, and Original Mods. Three COLORWAY
+  sheets (`chesssprites_3D.png`, `chesssprites_fritz.png`,
+  `chesssprites_modern.png`) contributed by Stefc07 on Discord now
+  appear in Display > Board > Sprites on the board and the web;
+  discovery already lists every `chesssprites_<id>` file in resources.
+
 - **Lichess Lobby is a main-menu row, not a Players setting**: The lobby
   sat under Settings → Players, so starting an online game was behind
   the same list as local slot types, and Type still offered Lichess as
