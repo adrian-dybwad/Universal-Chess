@@ -33,7 +33,7 @@ Node behavior schema (fields read here; all optional unless noted):
 - ``optionSet``: name of the option set backing ``select``/``cycle``.
 - ``provider``: name of the dynamic-list provider. Used by ``dynamic`` nodes and
   by provider-backed ``select`` nodes whose choices are a runtime list (installed
-  engines, per-engine ELO levels) rather than a static option set; a ``select``
+  engines, per-engine profiles) rather than a static option set; a ``select``
   carries either ``optionSet`` or ``provider``.
 - ``visibleWhen``: ``{"store", "key", "in": [...] | "equals": <v> | "notEquals": <v>}``
   gating the row, or ``{"allOf": [<condition>, ...]}`` to require every subcondition (AND).
@@ -167,10 +167,10 @@ def _display_value(node: dict, ctx: MenuContext) -> str:
 
     Uses the node's option set label when present (so a stored value like ``5``
     shows as ``"5 min (Blitz)"``). For a provider-backed ``select`` (which has a
-    ``provider`` instead of an ``optionSet``, e.g. ELO/Engine), the label is
+    ``provider`` instead of an ``optionSet``, e.g. Profile/Engine), the label is
     resolved from the provider's rows -- the same source the submenu renders --
     so the parent ``{value}`` button cannot drift from the submenu (an uncapped
-    ELO "Default" section shows as "Default (Unlimited)" in both). Falls back to the raw
+    "Default" profile shows as "Default (Unlimited)" in both). Falls back to the raw
     value as text when no label is found. Returns an empty string when the node
     has no binding, so a stray placeholder collapses rather than raising.
 
@@ -446,7 +446,7 @@ def dispatch(node: dict, ctx: MenuContext) -> DispatchOutcome:
 
     if node_type == "select":
         # A select sources its choices from either a static ``optionSet`` or a
-        # runtime ``provider`` (e.g. installed engines / per-engine ELO levels).
+        # runtime ``provider`` (e.g. installed engines / per-engine profiles).
         # Both are carried on the outcome so the adapter knows where to read the
         # list from; exactly one is set for a given node.
         bind = node["bind"]

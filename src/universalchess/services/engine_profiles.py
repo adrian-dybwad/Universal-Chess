@@ -919,7 +919,7 @@ def resolve_section(
 ) -> Optional[str]:
     """Return the section a stored ``reference`` names, or None when unresolved.
 
-    A player's strength and the Original Centaur level are stored as a reference
+    A player's profile and the Original Centaur profile are stored as a reference
     into an engine's ``.uci``. Sections are identified by generated ids, so the
     first and normal case is an exact match. The rest is the legacy path, kept
     because a reference outlives the config it points into: configs predating ids

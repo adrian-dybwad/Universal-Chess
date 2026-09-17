@@ -22,6 +22,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   appear in Display > Board > Sprites on the board and the web;
   discovery already lists every `chesssprites_<id>` file in resources.
 
+- **Edit profiles from Players and Original Centaur**: Engine profiles
+  were edited only from Chess Engines, so choosing a profile on Players
+  or Original Centaur had no path into that engine's editor except
+  finding the engine card. Each Profile picker now has an Edit profiles
+  link that opens the editor for that engine on the selected profile
+  (`/settings/engines?engine=…&profile=…&from=players|centaur`). Back
+  returns to Players or Original Centaur when that is where the visit
+  started. Bookmarked editor URLs still work without `from`.
+
 - **Lichess Lobby is a main-menu row, not a Players setting**: The lobby
   sat under Settings → Players, so starting an online game was behind
   the same list as local slot types, and Type still offered Lichess as
@@ -1289,6 +1298,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   during startup, before the display exists to report it; they are now one.
 
 ### Changed
+
+- **Player engine choice is Profile, not ELO / Style**: The Players
+  picker (and Original Centaur's matching control) listed engine
+  profiles as "ELO / Style" or "Strength", so a Rodent personality and
+  a Stockfish Elo rung looked like two different settings, and the word
+  profile was spent on the Display waveform instead. Both pickers are
+  now Profile, whose shown name is the Elo, style, or both that the
+  profile sets. Display tuning calls the recipe Waveform.
 
 - **Long remaining times drop seconds, then switch to days**: Ten
   hours and up still rendered as ``H:MM:SS``, so a correspondence

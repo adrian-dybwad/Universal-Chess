@@ -692,9 +692,9 @@
       "help": "Hoe lang de motor per zet mag nadenken"
     },
     "field.player.elo": {
-      "label": "ELO / stijl",
-      "boardLabel": "ELO\n{value}",
-      "help": "Sterkte of persoonlijkheid van de motor"
+      "label": "Profiel",
+      "boardLabel": "Profiel\n{value}",
+      "help": "Het motorprofiel dat gespeeld wordt. Genoemd naar de Elo, de stijl, of beide die het instelt."
     },
     "field.display.show_board": {
       "label": "Bord tonen",

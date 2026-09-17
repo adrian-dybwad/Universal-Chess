@@ -148,7 +148,7 @@ TRANSLATABLE_ACCOUNT_FIELD_KEYS = ("label", "help", "placeholder")
 
 # Web control types a node's optional ``webType`` may name. ``webType`` overrides
 # the board ``type`` for the web renderer only -- used where the same node is an
-# imperative ``action`` on the board (e.g. the chained engine -> ELO picker) but a
+# imperative ``action`` on the board (e.g. the chained engine -> Profile picker) but a
 # plain control on the web. Restricting the set turns a typo into a load-time
 # error instead of a silently blank web row.
 _WEB_CONTROL_TYPES = frozenset({"toggle", "select", "cycle", "range", "text"})

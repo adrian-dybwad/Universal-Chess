@@ -413,7 +413,8 @@
       "defaultAccount": "Varsayılan hesap",
       "accountSignIn": "Kayıtlı hesapları görmek için giriş yap.",
       "accountLoadFailed": "Hesaplar yüklenemedi. Bağlantını kontrol et ve yeniden dene.",
-      "hintsWillUse": "İpuçları <1>{{engine}}</1> kullanacak (Oyun ayarları → Analiz motoru içinde yapılandırılır)"
+      "hintsWillUse": "İpuçları <1>{{engine}}</1> kullanacak (Oyun ayarları → Analiz motoru içinde yapılandırılır)",
+      "editProfiles": "Profilleri düzenle"
     },
     "lichessLobby": {
       "unknownUser": "Bilinmiyor",
@@ -791,24 +792,24 @@
     },
     "displayTuning": {
       "titleUc8151d": "Ekran ayarı (UC8151D)",
-      "descriptionUc8151d": "Yedek bir panel hayalet bırakıyor, lekeliyor veya kısmi güncellemelerde (örn. saat) soluk görünüyorsa başka bir waveform profili dene. Tam yenileme her zaman panelin kendi waveform'unu kullanır; yalnızca kısmi yenileme waveform'u değişir. Her seçim hemen tam yenilemeyle uygulanır -- yeniden başlatma yok.",
+      "descriptionUc8151d": "Yedek bir panel hayalet bırakıyor, lekeliyor veya kısmi güncellemelerde (örn. saat) soluk görünüyorsa başka bir waveform dene. Tam yenileme her zaman panelin kendi waveform'unu kullanır; yalnızca kısmi yenileme waveform'u değişir. Her seçim hemen tam yenilemeyle uygulanır -- yeniden başlatma yok.",
       "titleSsd16xx": "Ekran ayarı (SSD1680)",
-      "descriptionSsd16xx": "Panel boş, soluk veya hayaletliyse başka bir waveform profili dene. Her seçim hemen tam yenilemeyle uygulanır -- yeniden başlatma yok -- böylece karşılaştırıp temiz görüntü verenini tutabilirsin.",
+      "descriptionSsd16xx": "Panel boş, soluk veya hayaletliyse başka bir waveform dene. Her seçim hemen tam yenilemeyle uygulanır -- yeniden başlatma yok -- böylece karşılaştırıp temiz görüntü verenini tutabilirsin.",
       "titleUnknown": "Ekran ayarı",
-      "descriptionUnknown": "Panel algılanmadı. Elindeki panel için bir waveform profili seç. Seçim kaydedilir ve sonraki açılışta uygulanır; tahta çalışıyorsa hemen. UC8151D profilleri V2 paneller içindir; SSD1680 profilleri V1 yedek paneller içindir.",
-      "waveformLabel": "Waveform profili",
+      "descriptionUnknown": "Panel algılanmadı. Elindeki panel için bir waveform seç. Seçim kaydedilir ve sonraki açılışta uygulanır; tahta çalışıyorsa hemen. UC8151D waveform'ları V2 paneller içindir; SSD1680 waveform'ları V1 yedek paneller içindir.",
+      "waveformLabel": "Waveform",
       "waveformHelp": "Paneli süren reçete. Built-In panelin kendi fabrika waveform'unu kullanır; diğerleri bilinen bir üretici tablosu yükler.",
       "waveformSource": "Waveform kaynağı:",
       "batchLabel": "Hızlı güncellemeleri birleştir",
       "batchHelp": "Hızlı bir ekran güncellemesi serisini son karenin tek bir yenilemesinde birleştirir. Güncellemeler e-paper'ın çizebileceğinden hızlı geldiğinde ara kareler atlanır, böylece ekran geride kalmak yerine en son durumu gösterir. Her ara kareyi çizmek için kapat (güncellemeler hızlı gelince daha yavaştır ama her adımı gösterir). Açık önerilir.",
       "highContrastLabel": "Yüksek karşıtlık (deneysel)",
-      "highContrastHelp": "Soluk bir görüntüyü koyulaştırmak için VCOM/kaynak gerilimlerini profil varsayılanlarından daha sert sürer. Görüntü çiziliyor ama yalnızca zayıfsa dene. Veri sayfasına dayalı bir ayar değildir; ekran zaten iyiyse kapalı bırak.",
+      "highContrastHelp": "Soluk bir görüntüyü koyulaştırmak için VCOM/kaynak gerilimlerini waveform varsayılanlarından daha sert sürer. Görüntü çiziliyor ama yalnızca zayıfsa dene. Veri sayfasına dayalı bir ayar değildir; ekran zaten iyiyse kapalı bırak.",
       "threeColorLabel": "Üç renk (kırmızı) modu",
       "threeColorHelp": "Yalnızca kırmızı/beyaz/siyah paneller için. Şahları, tehdit altındaki vezirleri, oyun sonucunu ve kaybeden değerlendirme çubuklarını kırmızıyla vurgular. Kırmızı mürekkep yalnızca tam yenilemeyle değişebilir, bu yüzden o kırmızı güncellemeler ~12-15 saniye sürer; olağan hamleler hızlı kalır.",
       "savedOffline": "Kaydedildi. Tahta çalışırken uygulanır.",
       "threeColorOn": "Üç renk modu açık. Kırmızı vurgular ~12-15 s'de yenilenir; normal hamleler hızlı kalır.",
       "applied": "Uygulandı. Panel yeni ayarla yenilendi.",
-      "updateFailed": "Ekran profili güncellenemedi.",
+      "updateFailed": "Ekran waveform'u güncellenemedi.",
       "networkError": "Ağ hatası"
     },
     "centaur": {
@@ -853,8 +854,8 @@
       "engineTitle": "Motor",
       "engineIntro": "Çeviri modunda Centaur, Universal Chess'in motor vekili üzerinden oynar, böylece kurulu herhangi bir motoru kullanabilirsin ve oyunları veritabanına kaydedilir. Değişiklikler Centaur bir sonraki açılışında geçerli olur.",
       "engineLabel": "Motor",
-      "strengthLabel": "Güç",
-      "strengthHelp": "Centaur'un sürdüğü motorun oyun gücü. Düzeyler motorun kendi profillerinden gelir.",
+      "profileLabel": "Profil",
+      "profileHelp": "Centaur'un oynadığı motor profili. Ayarladığı Elo, üslup veya ikisiyle adlandırılır.",
       "engineSaveFailed": "Centaur motor ayarları kaydedilemedi.",
       "hideReimport": "Yeniden içe aktarmayı gizle",
       "reimport": "SD'den yeniden içe aktar",
@@ -967,9 +968,9 @@
       "vite": "Derleme aracı ve geliştirme sunucusu. Vite geliştirmede hızlı sıcak modül değişimi ve eniyilenmiş üretim derlemeleri sağlar.",
       "chartjs": "Zaman içinde konum avantajını gösteren değerlendirme grafiğini çizer. Oyun incelemesi sırasında motor değerlendirme geçmişini etkileşimli bir grafik olarak gösterir.",
       "zustand": "Küresel uygulama durumunu yönetir. Zustand tüm bileşenlerde oyun durumu eşzamanlamasını, bağlantı durumunu ve ayarları işler.",
-      "waveshareEpaper": "SSD1680 (GDEM029T94) waveform tablolarının ve V1 panel sürücüsü ile \"Waveshare 2.9″ V2\" profilinin init'inin, ayrıca varsayılan \"Waveshare 2.9″ V2 — UC8151D\" profilinin kullandığı UC8151D kısmi LUT/analog baytlarının (epd2in9d.py) kaynağı.",
-      "gxepd2": "Jean-Marc Zingg'in Arduino e-paper kitaplığı. IL3820/GDEH029A1 LUT'larının (GxEPD2_290 sınıfı), DEPG0290BS kayıt kısmi LUT'unun (GxEPD2_290_BS) ve ayar profillerinin kullandığı UC8151D varyant kısmi LUT/analog baytlarının — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) ve deneysel GDEW029M06 (GxEPD2_290_M06) — harfi harfine kaynağı; ayrıca GDEM029T94 tablosunu ve panel-OTP yaklaşımını doğrular.",
-      "goodDisplay": "IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 ve T5D ayar profillerinin arkasındaki orijinal satıcı demo kodu (GxEPD2 üzerinden harfi harfine aktarılmış)."
+      "waveshareEpaper": "SSD1680 (GDEM029T94) waveform tablolarının ve V1 panel sürücüsü ile \"Waveshare 2.9″ V2\" waveform'unun init'inin, ayrıca varsayılan \"Waveshare 2.9″ V2 — UC8151D\" waveform'unun kullandığı UC8151D kısmi LUT/analog baytlarının (epd2in9d.py) kaynağı.",
+      "gxepd2": "Jean-Marc Zingg'in Arduino e-paper kitaplığı. IL3820/GDEH029A1 LUT'larının (GxEPD2_290 sınıfı), DEPG0290BS kayıt kısmi LUT'unun (GxEPD2_290_BS) ve ayar waveform'larının kullandığı UC8151D varyant kısmi LUT/analog baytlarının — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) ve deneysel GDEW029M06 (GxEPD2_290_M06) — harfi harfine kaynağı; ayrıca GDEM029T94 tablosunu ve panel-OTP yaklaşımını doğrular.",
+      "goodDisplay": "IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 ve T5D ayar waveform'larının arkasındaki orijinal satıcı demo kodu (GxEPD2 üzerinden harfi harfine aktarılmış)."
     }
   },
   "engineProfile": {
@@ -987,6 +988,8 @@
     "deleteFailed": "Silme başarısız: {{error}}",
     "unknownError": "bilinmeyen hata",
     "back": "← Motorlara dön",
+    "backToPlayers": "← Oyunculara dön",
+    "backToCentaur": "← Orijinal Centaur'a dön",
     "title": "{{name}} ayarları",
     "loading": "Motor seçenekleri yükleniyor...",
     "retry": "Yeniden dene",
@@ -1010,9 +1013,9 @@
     "caseCollisionFailed": "Yinelenenler çözülemedi: {{error}}",
     "caseCollisionDone": "\"{{name}}\" tutuldu; {{removed}} kaldırıldı.",
     "referencesMoved": "Artık \"{{to}}\" kullanılıyor: {{settings}}.",
-    "referencePlayerOne": "Oyuncu 1 gücü",
-    "referencePlayerTwo": "Oyuncu 2 gücü",
-    "referenceCentaur": "Orijinal Centaur düzeyi",
+    "referencePlayerOne": "Oyuncu 1 profili",
+    "referencePlayerTwo": "Oyuncu 2 profili",
+    "referenceCentaur": "Orijinal Centaur profili",
     "startFailed": "Bu motor kurulu ama başlamadı, bu yüzden seçenekleri okunamadı. Motorlar sekmesinden kaldırıp yeniden kurmayı dene; ayrıntılar Sistem altındaki Olay günlüğünde."
   },
   "connectivity": {

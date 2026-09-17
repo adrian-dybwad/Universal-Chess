@@ -413,7 +413,8 @@
       "defaultAccount": "Standardkonto",
       "accountSignIn": "Melden Sie sich an, um gespeicherte Konten zu sehen.",
       "accountLoadFailed": "Konten konnten nicht geladen werden. Prüfen Sie die Verbindung und versuchen Sie es erneut.",
-      "hintsWillUse": "Hinweise verwenden <1>{{engine}}</1> (eingestellt unter Partie-Einstellungen → Analyse-Engine)"
+      "hintsWillUse": "Hinweise verwenden <1>{{engine}}</1> (eingestellt unter Partie-Einstellungen → Analyse-Engine)",
+      "editProfiles": "Profile bearbeiten"
     },
     "lichessLobby": {
       "unknownUser": "Unbekannt",
@@ -791,24 +792,24 @@
     },
     "displayTuning": {
       "titleUc8151d": "Anzeige-Feinabstimmung (UC8151D)",
-      "descriptionUc8151d": "Wenn ein Ersatzpanel bei Teilaktualisierungen (z. B. der Uhr) Schatten zeigt, schmiert oder blass aussieht, probieren Sie ein anderes Waveform-Profil. Die vollständige Aktualisierung verwendet immer die eingebaute Waveform des Panels; nur die Waveform der Teilaktualisierung ändert sich. Jede Auswahl wird sofort mit einer vollständigen Aktualisierung angewendet -- ohne Neustart.",
+      "descriptionUc8151d": "Wenn ein Ersatzpanel bei Teilaktualisierungen (z. B. der Uhr) Schatten zeigt, schmiert oder blass aussieht, probieren Sie eine andere Waveform. Die vollständige Aktualisierung verwendet immer die eingebaute Waveform des Panels; nur die Waveform der Teilaktualisierung ändert sich. Jede Auswahl wird sofort mit einer vollständigen Aktualisierung angewendet -- ohne Neustart.",
       "titleSsd16xx": "Anzeige-Feinabstimmung (SSD1680)",
-      "descriptionSsd16xx": "Wenn das Panel leer, blass oder mit Schatten dargestellt wird, probieren Sie ein anderes Waveform-Profil. Jede Auswahl wird sofort mit einer vollständigen Aktualisierung angewendet -- ohne Neustart -- sodass Sie sie vergleichen und diejenige behalten können, die ein klares Bild liefert.",
+      "descriptionSsd16xx": "Wenn das Panel leer, blass oder mit Schatten dargestellt wird, probieren Sie eine andere Waveform. Jede Auswahl wird sofort mit einer vollständigen Aktualisierung angewendet -- ohne Neustart -- sodass Sie sie vergleichen und diejenige behalten können, die ein klares Bild liefert.",
       "titleUnknown": "Anzeige-Feinabstimmung",
-      "descriptionUnknown": "Es wurde kein Panel erkannt. Wählen Sie ein Waveform-Profil für das Panel, das Sie haben. Die Auswahl wird gespeichert und beim nächsten Start angewendet, und sofort, wenn das Brett läuft. UC8151D-Profile gelten für V2-Panels; SSD1680-Profile für V1-Ersatzpanels.",
-      "waveformLabel": "Waveform-Profil",
+      "descriptionUnknown": "Es wurde kein Panel erkannt. Wählen Sie eine Waveform für das Panel, das Sie haben. Die Auswahl wird gespeichert und beim nächsten Start angewendet, und sofort, wenn das Brett läuft. UC8151D-Waveforms gelten für V2-Panels; SSD1680-Waveforms für V1-Ersatzpanels.",
+      "waveformLabel": "Waveform",
       "waveformHelp": "Das Rezept, mit dem das Panel angesteuert wird. Eingebaut verwendet die werkseigene Waveform des Panels; die anderen laden eine bekannte Herstellertabelle.",
       "waveformSource": "Waveform-Quelle:",
       "batchLabel": "Schnelle Aktualisierungen bündeln",
       "batchHelp": "Bündelt eine schnelle Folge von Bildschirmaktualisierungen zu einer einzigen Aktualisierung des letzten Bildes. Wenn Aktualisierungen schneller eintreffen, als das E-Paper zeichnen kann, werden die Zwischenbilder übersprungen, sodass die Anzeige den neuesten Stand zeigt statt hinterherzulaufen. Ausschalten, um jedes Zwischenbild zu zeichnen (langsamer bei schnell eintreffenden Aktualisierungen, zeigt aber jeden Schritt). Empfohlen: ein.",
       "highContrastLabel": "Hoher Kontrast (experimentell)",
-      "highContrastHelp": "Steuert die VCOM-/Source-Spannungen stärker an als die Standardwerte des Profils, um ein blasses Bild dunkler zu machen. Probieren Sie das, wenn das Bild zwar gezeichnet wird, aber nur schwach. Keine im Datenblatt belegte Einstellung; ausgeschaltet lassen, wenn die Anzeige schon gut aussieht.",
+      "highContrastHelp": "Steuert die VCOM-/Source-Spannungen stärker an als die Standardwerte der Waveform, um ein blasses Bild dunkler zu machen. Probieren Sie das, wenn das Bild zwar gezeichnet wird, aber nur schwach. Keine im Datenblatt belegte Einstellung; ausgeschaltet lassen, wenn die Anzeige schon gut aussieht.",
       "threeColorLabel": "Dreifarbmodus (Rot)",
       "threeColorHelp": "Nur für rot/weiß/schwarze Panels. Hebt Schachgebote, bedrohte Damen, das Ergebnis der Partie und ungünstige Bewertungsbalken in Rot hervor. Rote Tinte kann sich nur mit einer vollständigen Aktualisierung ändern, daher dauern diese roten Aktualisierungen ~12-15 Sekunden; gewöhnliche Züge bleiben schnell.",
       "savedOffline": "Gespeichert. Es wird angewendet, wenn das Brett läuft.",
       "threeColorOn": "Dreifarbmodus ein. Rote Hervorhebungen werden in ~12-15 s aktualisiert; normale Züge bleiben schnell.",
       "applied": "Angewendet. Das Panel wurde mit der neuen Einstellung aktualisiert.",
-      "updateFailed": "Das Anzeigeprofil konnte nicht geändert werden.",
+      "updateFailed": "Die Waveform der Anzeige konnte nicht geändert werden.",
       "networkError": "Netzwerkfehler"
     },
     "centaur": {
@@ -853,8 +854,8 @@
       "engineTitle": "Engine",
       "engineIntro": "Im Übersetzungsmodus spielt Centaur über den Engine-Proxy von Universal Chess, sodass Sie jede installierte Engine verwenden können und die Partien in Ihrer Datenbank gespeichert werden. Änderungen werden beim nächsten Start von Centaur wirksam.",
       "engineLabel": "Engine",
-      "strengthLabel": "Spielstärke",
-      "strengthHelp": "Spielstärke der Engine, die Centaur steuert. Die Stufen stammen aus den Profilen der Engine selbst.",
+      "profileLabel": "Profil",
+      "profileHelp": "Das Engine-Profil, das Centaur spielt. Benannt nach der Elo-Zahl, dem Stil oder beidem, das es setzt.",
       "engineSaveFailed": "Die Centaur-Engine-Einstellungen konnten nicht gespeichert werden.",
       "hideReimport": "Neuimport ausblenden",
       "reimport": "Neu von SD importieren",
@@ -967,9 +968,9 @@
       "vite": "Das Build-Werkzeug und der Entwicklungsserver. Vite bietet schnelles Hot Module Replacement während der Entwicklung und optimierte Produktions-Builds.",
       "chartjs": "Zeichnet den Bewertungsgraphen, der den Vorteil in der Stellung über die Zeit zeigt. Stellt den Bewertungsverlauf der Engine bei der Nachbereitung einer Partie als interaktives Diagramm dar.",
       "zustand": "Verwaltet den globalen Zustand der Anwendung. Zustand kümmert sich um die Synchronisierung des Partiezustands, den Verbindungsstatus und die Einstellungen über alle Komponenten hinweg.",
-      "waveshareEpaper": "Quelle der Waveform-Tabellen des SSD1680 (GDEM029T94) und der Initialisierung für den Treiber des V1-Panels und das Profil „Waveshare 2.9″ V2“ sowie der partiellen UC8151D-LUTs/Analog-Bytes (epd2in9d.py), die das Standardprofil „Waveshare 2.9″ V2 — UC8151D“ verwendet.",
-      "gxepd2": "Arduino-E-Paper-Bibliothek von Jean-Marc Zingg. Wortgetreue Quelle der IL3820/GDEH029A1-LUTs (Klasse GxEPD2_290), der partiellen Register-LUT des DEPG0290BS (GxEPD2_290_BS) und der partiellen LUTs/Analog-Bytes der UC8151D-Varianten — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) und das experimentelle GDEW029M06 (GxEPD2_290_M06) —, die die Feinabstimmungsprofile verwenden; bestätigt außerdem die GDEM029T94-Tabelle und den OTP-Ansatz des Panels.",
-      "goodDisplay": "Original-Demo-Code des Herstellers (wortgetreu über GxEPD2 weitergegeben) hinter den Feinabstimmungsprofilen IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 und T5D."
+      "waveshareEpaper": "Quelle der Waveform-Tabellen des SSD1680 (GDEM029T94) und der Initialisierung für den Treiber des V1-Panels und die Waveform „Waveshare 2.9″ V2“ sowie der partiellen UC8151D-LUTs/Analog-Bytes (epd2in9d.py), die die Standard-Waveform „Waveshare 2.9″ V2 — UC8151D“ verwendet.",
+      "gxepd2": "Arduino-E-Paper-Bibliothek von Jean-Marc Zingg. Wortgetreue Quelle der IL3820/GDEH029A1-LUTs (Klasse GxEPD2_290), der partiellen Register-LUT des DEPG0290BS (GxEPD2_290_BS) und der partiellen LUTs/Analog-Bytes der UC8151D-Varianten — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) und das experimentelle GDEW029M06 (GxEPD2_290_M06) —, die die Feinabstimmungs-Waveforms verwenden; bestätigt außerdem die GDEM029T94-Tabelle und den OTP-Ansatz des Panels.",
+      "goodDisplay": "Original-Demo-Code des Herstellers (wortgetreu über GxEPD2 weitergegeben) hinter den Feinabstimmungs-Waveforms IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 und T5D."
     }
   },
   "engineProfile": {
@@ -987,6 +988,8 @@
     "deleteFailed": "Löschen fehlgeschlagen: {{error}}",
     "unknownError": "unbekannter Fehler",
     "back": "← Zurück zu den Engines",
+    "backToPlayers": "← Zurück zu den Spielern",
+    "backToCentaur": "← Zurück zu Original-Centaur",
     "title": "Einstellungen für {{name}}",
     "loading": "Engine-Optionen werden geladen...",
     "retry": "Erneut versuchen",
@@ -1010,9 +1013,9 @@
     "caseCollisionFailed": "Die Duplikate konnten nicht aufgelöst werden: {{error}}",
     "caseCollisionDone": "„{{name}}“ behalten; {{removed}} entfernt.",
     "referencesMoved": "Verwendet jetzt „{{to}}“: {{settings}}.",
-    "referencePlayerOne": "Stärke von Spieler 1",
-    "referencePlayerTwo": "Stärke von Spieler 2",
-    "referenceCentaur": "Original-Centaur-Stufe",
+    "referencePlayerOne": "Profil von Spieler 1",
+    "referencePlayerTwo": "Profil von Spieler 2",
+    "referenceCentaur": "Original-Centaur-Profil",
     "startFailed": "Diese Engine ist installiert, startete aber nicht, daher konnten ihre Optionen nicht gelesen werden. Versuchen Sie, sie im Tab Engines zu deinstallieren und neu zu installieren; das Ereignisprotokoll unter System enthält die Details."
   },
   "connectivity": {

@@ -413,7 +413,8 @@
       "defaultAccount": "Default account",
       "accountSignIn": "Sign in to see saved accounts.",
       "accountLoadFailed": "Could not load accounts. Check the connection and try again.",
-      "hintsWillUse": "Hints will use <1>{{engine}}</1> (configured in Game Settings → Analysis Engine)"
+      "hintsWillUse": "Hints will use <1>{{engine}}</1> (configured in Game Settings → Analysis Engine)",
+      "editProfiles": "Edit profiles"
     },
     "lichessLobby": {
       "unknownUser": "Unknown",
@@ -791,24 +792,24 @@
     },
     "displayTuning": {
       "titleUc8151d": "Display tuning (UC8151D)",
-      "descriptionUc8151d": "If a replacement panel ghosts, smears, or looks faint on partial updates (e.g. the clock), try a different waveform profile. Full refresh always uses the panel's built-in waveform; only the partial-refresh waveform changes. Each selection applies immediately with a full refresh -- no reboot.",
+      "descriptionUc8151d": "If a replacement panel ghosts, smears, or looks faint on partial updates (e.g. the clock), try a different waveform. Full refresh always uses the panel's built-in waveform; only the partial-refresh waveform changes. Each selection applies immediately with a full refresh -- no reboot.",
       "titleSsd16xx": "Display tuning (SSD1680)",
-      "descriptionSsd16xx": "If the panel is blank, faint, or ghosted, try a different waveform profile. Each selection is applied immediately with a full refresh -- no reboot -- so you can compare them and keep the one that produces a clean image.",
+      "descriptionSsd16xx": "If the panel is blank, faint, or ghosted, try a different waveform. Each selection is applied immediately with a full refresh -- no reboot -- so you can compare them and keep the one that produces a clean image.",
       "titleUnknown": "Display tuning",
-      "descriptionUnknown": "No panel was detected. Choose a waveform profile for the panel you have. The selection is saved and applied on the next boot, and live if the board is running. UC8151D profiles are for V2 panels; SSD1680 profiles are for V1 replacement panels.",
-      "waveformLabel": "Waveform profile",
+      "descriptionUnknown": "No panel was detected. Choose a waveform for the panel you have. The selection is saved and applied on the next boot, and live if the board is running. UC8151D waveforms are for V2 panels; SSD1680 waveforms are for V1 replacement panels.",
+      "waveformLabel": "Waveform",
       "waveformHelp": "The recipe used to drive the panel. Built-In uses the panel's own factory waveform; the others load a known manufacturer table.",
       "waveformSource": "Waveform source:",
       "batchLabel": "Batch rapid updates",
       "batchHelp": "Coalesce a rapid burst of screen updates into a single refresh of the final frame. When updates arrive faster than the e-paper can redraw, this skips the intermediate frames so the display shows the latest state instead of lagging behind. Turn off to draw every intermediate frame (slower when updates come quickly, but shows each step). Recommended on.",
       "highContrastLabel": "High contrast (experimental)",
-      "highContrastHelp": "Drive the VCOM/source voltages harder than the profile's defaults to darken a faint image. Try this if the image draws but only faintly. Not a datasheet-backed setting; leave off if the display already looks good.",
+      "highContrastHelp": "Drive the VCOM/source voltages harder than the waveform's defaults to darken a faint image. Try this if the image draws but only faintly. Not a datasheet-backed setting; leave off if the display already looks good.",
       "threeColorLabel": "Three-color (red) mode",
       "threeColorHelp": "For red/white/black panels only. Highlights checks, threatened queens, the game result, and losing evaluation bars in red. Red ink can only change with a full refresh, so those red updates take ~12-15 seconds; ordinary moves stay fast.",
       "savedOffline": "Saved. It will apply when the board is running.",
       "threeColorOn": "Three-color mode on. Red highlights refresh in ~12-15s; normal moves stay fast.",
       "applied": "Applied. The panel refreshed with the new setting.",
-      "updateFailed": "Failed to update the display profile.",
+      "updateFailed": "Failed to update the display waveform.",
       "networkError": "Network error"
     },
     "centaur": {
@@ -853,8 +854,8 @@
       "engineTitle": "Engine",
       "engineIntro": "In translate mode, Centaur plays through Universal Chess's engine proxy, so you can use any installed engine and its games are recorded in your database. Changes apply the next time Centaur launches.",
       "engineLabel": "Engine",
-      "strengthLabel": "Strength",
-      "strengthHelp": "Playing strength for the engine Centaur drives. Levels come from the engine's own profiles.",
+      "profileLabel": "Profile",
+      "profileHelp": "The engine profile Centaur plays. Named after the Elo, style, or both that it sets.",
       "engineSaveFailed": "Failed to save the Centaur engine settings.",
       "hideReimport": "Hide re-import",
       "reimport": "Re-import from SD",
@@ -967,9 +968,9 @@
       "vite": "The build tool and development server. Vite provides fast hot module replacement during development and optimized production builds.",
       "chartjs": "Renders the evaluation graph showing position advantage over time. Displays engine evaluation history as an interactive chart during game review.",
       "zustand": "Manages global application state. Zustand handles game state synchronization, connection status, and settings across all components.",
-      "waveshareEpaper": "Source of the SSD1680 (GDEM029T94) waveform tables and init for the V1-panel driver and the \"Waveshare 2.9″ V2\" profile, and of the UC8151D partial LUTs/analog bytes (epd2in9d.py) used by the default \"Waveshare 2.9″ V2 — UC8151D\" profile.",
-      "gxepd2": "Arduino e-paper library by Jean-Marc Zingg. Verbatim source of the IL3820/GDEH029A1 LUTs (class GxEPD2_290), the DEPG0290BS register partial LUT (GxEPD2_290_BS), and the UC8151D variant partial LUTs/analog bytes — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) and the experimental GDEW029M06 (GxEPD2_290_M06) — used by the tuning profiles; also corroborates the GDEM029T94 table and the panel-OTP approach.",
-      "goodDisplay": "Original vendor demo code (relayed verbatim via GxEPD2) behind the IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 and T5D tuning profiles."
+      "waveshareEpaper": "Source of the SSD1680 (GDEM029T94) waveform tables and init for the V1-panel driver and the \"Waveshare 2.9″ V2\" waveform, and of the UC8151D partial LUTs/analog bytes (epd2in9d.py) used by the default \"Waveshare 2.9″ V2 — UC8151D\" waveform.",
+      "gxepd2": "Arduino e-paper library by Jean-Marc Zingg. Verbatim source of the IL3820/GDEH029A1 LUTs (class GxEPD2_290), the DEPG0290BS register partial LUT (GxEPD2_290_BS), and the UC8151D variant partial LUTs/analog bytes — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) and the experimental GDEW029M06 (GxEPD2_290_M06) — used by the tuning waveforms; also corroborates the GDEM029T94 table and the panel-OTP approach.",
+      "goodDisplay": "Original vendor demo code (relayed verbatim via GxEPD2) behind the IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 and T5D tuning waveforms."
     }
   },
   "engineProfile": {
@@ -987,6 +988,8 @@
     "deleteFailed": "Delete failed: {{error}}",
     "unknownError": "unknown error",
     "back": "← Back to engines",
+    "backToPlayers": "← Back to players",
+    "backToCentaur": "← Back to Original Centaur",
     "title": "{{name}} settings",
     "loading": "Loading engine options...",
     "retry": "Retry",
@@ -1010,9 +1013,9 @@
     "caseCollisionFailed": "Could not resolve duplicates: {{error}}",
     "caseCollisionDone": "Kept \"{{name}}\"; removed {{removed}}.",
     "referencesMoved": "Now using \"{{to}}\": {{settings}}.",
-    "referencePlayerOne": "Player 1 strength",
-    "referencePlayerTwo": "Player 2 strength",
-    "referenceCentaur": "Original Centaur level",
+    "referencePlayerOne": "Player 1 profile",
+    "referencePlayerTwo": "Player 2 profile",
+    "referenceCentaur": "Original Centaur profile",
     "startFailed": "This engine is installed but did not start, so its options could not be read. Try uninstalling and reinstalling it from the Engines tab; the Event Log under System has the details."
   },
   "connectivity": {

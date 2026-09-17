@@ -182,7 +182,7 @@ function installCentaurFetchMock(opts: {
   return { posts };
 }
 
-// Engine and Strength both render as labeled form rows; the group heading is
+// Engine and Profile both render as labeled form rows; the group heading is
 // also "Engine", so the row is the labeled ancestor, not getByText('Engine').
 function selectInLabeledRow(label: string): HTMLSelectElement {
   const matches = screen.getAllByText(label);
@@ -252,8 +252,8 @@ describe('Original Centaur tab', () => {
     // id, while showing that profile's label -- a row keyed by the label instead
     // would leave the stored id unmatched and the dropdown showing the wrong
     // profile.
-    await screen.findByText('Strength');
-    const strength = selectInLabeledRow('Strength');
+    await screen.findByText('Profile');
+    const strength = selectInLabeledRow('Profile');
     expect(strength.value).toBe(STOCKFISH_RUNG);
     expect(strength.selectedOptions[0].textContent).toBe(STOCKFISH_RUNG_LABEL);
 
@@ -261,6 +261,20 @@ describe('Original Centaur tab', () => {
     expect(screen.queryByText('Elo')).toBeNull();
     expect(screen.queryByText('Threads')).toBeNull();
     expect(screen.queryByText('Hash (MB)')).toBeNull();
+  });
+
+  it('links the Profile picker to that engine\'s profile editor', async () => {
+    // Why: Centaur's profile is the same object Players pick, and without a
+    // shortcut here the editor is only reachable from Chess Engines. How a
+    // regression manifests: no Edit profiles link, or an href that names the
+    // wrong engine/profile or omits from=centaur so Back cannot return.
+    installCentaurFetchMock({ centaurAvailable: true });
+    renderCentaurTab();
+    const link = await screen.findByRole('link', { name: 'Edit profiles' });
+    expect(link).toHaveAttribute(
+      'href',
+      `/settings/engines?engine=stockfish&profile=${STOCKFISH_RUNG}&from=centaur`,
+    );
   });
 
   it('renders the engine/strength group before the handover action button', async () => {
@@ -286,11 +300,11 @@ describe('Original Centaur tab', () => {
     const { posts } = installCentaurFetchMock({ centaurAvailable: true });
     renderCentaurTab();
 
-    await screen.findByText('Strength');
+    await screen.findByText('Profile');
     expect(screen.queryByRole('button', { name: 'Save engine settings' })).toBeNull();
     expect(screen.getByText(/apply the next time Centaur launches/i)).toBeInTheDocument();
 
-    fireEvent.change(selectInLabeledRow('Strength'), { target: { value: 'Default' } });
+    fireEvent.change(selectInLabeledRow('Profile'), { target: { value: 'Default' } });
 
     await waitFor(() => {
       expect(posts.some((p) => p.url === '/api/system/centaur-engine')).toBe(true);
@@ -318,7 +332,7 @@ describe('Original Centaur tab', () => {
     });
     fireEvent.change(engineSelect, { target: { value: 'maia' } });
 
-    expect(selectInLabeledRow('Strength').value).toBe('Default');
+    expect(selectInLabeledRow('Profile').value).toBe('Default');
     await waitFor(() => {
       expect(posts.some((p) => p.url === '/api/system/centaur-engine')).toBe(true);
     });
@@ -336,8 +350,8 @@ describe('Original Centaur tab', () => {
     const { posts } = installCentaurFetchMock({ centaurAvailable: true });
     renderCentaurTab();
 
-    await screen.findByText('Strength');
-    expect(selectInLabeledRow('Strength').value).toBe(STOCKFISH_RUNG);
+    await screen.findByText('Profile');
+    expect(selectInLabeledRow('Profile').value).toBe(STOCKFISH_RUNG);
     expect(posts.filter((p) => p.url === '/api/system/centaur-engine')).toEqual([]);
   });
 
@@ -349,8 +363,8 @@ describe('Original Centaur tab', () => {
     const { posts } = installCentaurFetchMock({ centaurAvailable: true, enginePostStatus: 500 });
     renderCentaurTab();
 
-    await screen.findByText('Strength');
-    fireEvent.change(selectInLabeledRow('Strength'), { target: { value: 'Default' } });
+    await screen.findByText('Profile');
+    fireEvent.change(selectInLabeledRow('Profile'), { target: { value: 'Default' } });
 
     await waitFor(() => {
       expect(posts.some((p) => p.url === '/api/system/centaur-engine')).toBe(true);

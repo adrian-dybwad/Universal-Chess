@@ -692,9 +692,9 @@
       "help": "Motorun hamle başına ne kadar düşünebileceği"
     },
     "field.player.elo": {
-      "label": "ELO / Üslup",
-      "boardLabel": "ELO\n{value}",
-      "help": "Motorun gücü veya kişiliği"
+      "label": "Profil",
+      "boardLabel": "Profil\n{value}",
+      "help": "Oynanacak motor profili. Ayarladığı Elo, üslup veya ikisiyle adlandırılır."
     },
     "field.display.show_board": {
       "label": "Tahtayı göster",

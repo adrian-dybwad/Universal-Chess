@@ -274,8 +274,8 @@ def test_detail_rows_use_board_abbreviations_and_bound_values():
     """Detail rows render e-paper labels with the bound value substituted.
 
     Why: the board uses the optional boardLabel templates ("Type\\n{value}",
-    "Color\\n{value}", "Engine\\n{value}", "ELO\\n{value}"), where {value}
-    resolves through the option set (Type/Color) or the raw value (Engine/ELO).
+    "Color\\n{value}", "Engine\\n{value}", "Profile\\n{value}"), where {value}
+    resolves through the option set (Type/Color) or the raw value (Engine/Profile).
     How a regression manifests: a row shows the long web label or loses its
     current value.
     """
@@ -286,18 +286,18 @@ def test_detail_rows_use_board_abbreviations_and_bound_values():
     assert by_id["field.player.type"].label == "Type\nEngine"
     assert by_id["field.player.color"].label == "Color\nBlack"
     assert by_id["field.player.engine"].label == "Engine\nmaia"
-    assert by_id["field.player.elo"].label == "ELO\n1900"
+    assert by_id["field.player.elo"].label == "Profile\n1900"
 
 
 def test_elo_row_shows_provider_label_not_raw_stored_value():
-    """The ELO parent row renders the provider's label, not the raw stored value.
+    """The Profile parent row renders the provider's label, not the raw stored value.
 
     Why this test exists: ``field.player.elo`` is a provider-backed select whose
     submenu shows the ``engine_levels`` provider labels (an uncapped "Default"
-    section displays as "Default (Unlimited)"). The parent "ELO\\n{value}" button
+    section displays as "Default (Unlimited)"). The parent "Profile\\n{value}" button
     must resolve the same label source so it matches the submenu. How a
     regression manifests: the stored value "Default" is shown verbatim
-    ("ELO\\nDefault") on the parent button while drilling in shows
+    ("Profile\\nDefault") on the parent button while drilling in shows
     "Default (Unlimited)".
     """
     calls = []
@@ -312,7 +312,7 @@ def test_elo_row_shows_provider_label_not_raw_stored_value():
     )
     rows = build_rows("settings.player_detail", ctx, platform="board", catalog=load_catalog())
     by_id = {r.node["id"]: r for r in rows}
-    assert by_id["field.player.elo"].label == "ELO\nDefault (Unlimited)"
+    assert by_id["field.player.elo"].label == "Profile\nDefault (Unlimited)"
 
 
 def test_name_row_shows_entered_name_via_compute_token():

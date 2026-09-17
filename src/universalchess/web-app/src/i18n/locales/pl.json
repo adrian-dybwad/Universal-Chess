@@ -419,7 +419,8 @@
       "defaultAccount": "Konto domyślne",
       "accountSignIn": "Zaloguj się, aby zobaczyć zapisane konta.",
       "accountLoadFailed": "Nie udało się wczytać kont. Sprawdź połączenie i spróbuj ponownie.",
-      "hintsWillUse": "Podpowiedzi będą korzystać z <1>{{engine}}</1> (ustawiane w Ustawienia partii → Silnik analizy)"
+      "hintsWillUse": "Podpowiedzi będą korzystać z <1>{{engine}}</1> (ustawiane w Ustawienia partii → Silnik analizy)",
+      "editProfiles": "Edytuj profile"
     },
     "lichessLobby": {
       "unknownUser": "Nieznany",
@@ -805,24 +806,24 @@
     },
     "displayTuning": {
       "titleUc8151d": "Dostrajanie ekranu (UC8151D)",
-      "descriptionUc8151d": "Jeśli zamienny panel zostawia zjawy, smuży lub wygląda blado przy odświeżaniu częściowym (np. zegar), spróbuj innego profilu waveform. Pełne odświeżenie zawsze używa wbudowanego waveformu panelu; zmienia się tylko waveform odświeżania częściowego. Każdy wybór jest stosowany natychmiast z pełnym odświeżeniem -- bez ponownego uruchamiania.",
+      "descriptionUc8151d": "Jeśli zamienny panel zostawia zjawy, smuży lub wygląda blado przy odświeżaniu częściowym (np. zegar), spróbuj innego waveformu. Pełne odświeżenie zawsze używa wbudowanego waveformu panelu; zmienia się tylko waveform odświeżania częściowego. Każdy wybór jest stosowany natychmiast z pełnym odświeżeniem -- bez ponownego uruchamiania.",
       "titleSsd16xx": "Dostrajanie ekranu (SSD1680)",
-      "descriptionSsd16xx": "Jeśli panel jest pusty, blady lub zostawia zjawy, spróbuj innego profilu waveform. Każdy wybór jest stosowany natychmiast z pełnym odświeżeniem -- bez ponownego uruchamiania -- więc możesz je porównać i zachować ten, który daje czysty obraz.",
+      "descriptionSsd16xx": "Jeśli panel jest pusty, blady lub zostawia zjawy, spróbuj innego waveformu. Każdy wybór jest stosowany natychmiast z pełnym odświeżeniem -- bez ponownego uruchamiania -- więc możesz je porównać i zachować ten, który daje czysty obraz.",
       "titleUnknown": "Dostrajanie ekranu",
-      "descriptionUnknown": "Nie wykryto panelu. Wybierz profil waveform dla panelu, który masz. Wybór jest zapisywany i stosowany przy następnym starcie, a od razu, jeśli plansza działa. Profile UC8151D są dla paneli V2; SSD1680 dla zamiennych paneli V1.",
-      "waveformLabel": "Profil waveform",
+      "descriptionUnknown": "Nie wykryto panelu. Wybierz waveform dla panelu, który masz. Wybór jest zapisywany i stosowany przy następnym starcie, a od razu, jeśli plansza działa. Waveformy UC8151D są dla paneli V2; SSD1680 dla zamiennych paneli V1.",
+      "waveformLabel": "Waveform",
       "waveformHelp": "Przepis, według którego sterowany jest panel. Built-In używa własnego fabrycznego waveformu panelu; pozostałe wczytują znaną tabelę producenta.",
       "waveformSource": "Źródło waveformu:",
       "batchLabel": "Grupuj szybkie aktualizacje",
       "batchHelp": "Łączy szybką serię aktualizacji ekranu w jedno odświeżenie ostatniej klatki. Gdy aktualizacje przychodzą szybciej, niż e-paper potrafi je narysować, pośrednie klatki są pomijane, więc ekran pokazuje najnowszy stan, a nie zostaje w tyle. Wyłącz, aby rysować każdą pośrednią klatkę (wolniej przy szybkich aktualizacjach, ale pokazuje każdy krok). Zalecane włączone.",
       "highContrastLabel": "Wysoki kontrast (eksperymentalne)",
-      "highContrastHelp": "Steruje napięciami VCOM/source mocniej niż domyślne wartości profilu, aby przyciemnić blady obraz. Spróbuj tego, jeśli obraz się rysuje, ale tylko słabo. To ustawienie nie ma potwierdzenia w dokumentacji technicznej; pozostaw wyłączone, jeśli ekran już wygląda dobrze.",
+      "highContrastHelp": "Steruje napięciami VCOM/source mocniej niż domyślne wartości waveformu, aby przyciemnić blady obraz. Spróbuj tego, jeśli obraz się rysuje, ale tylko słabo. To ustawienie nie ma potwierdzenia w dokumentacji technicznej; pozostaw wyłączone, jeśli ekran już wygląda dobrze.",
       "threeColorLabel": "Tryb trójkolorowy (czerwony)",
       "threeColorHelp": "Tylko dla paneli czerwono-biało-czarnych. Wyróżnia na czerwono szachy, zagrożone hetmany, wynik partii i przegrywające słupki oceny. Czerwony tusz może się zmienić tylko przy pełnym odświeżeniu, więc te czerwone aktualizacje trwają ~12-15 sekund; zwykłe ruchy pozostają szybkie.",
       "savedOffline": "Zapisano. Zostanie zastosowane, gdy szachownica będzie uruchomiona.",
       "threeColorOn": "Tryb trójkolorowy włączony. Czerwone wyróżnienia odświeżają się w ~12-15 s; zwykłe ruchy pozostają szybkie.",
       "applied": "Zastosowano. Panel odświeżył się z nowym ustawieniem.",
-      "updateFailed": "Nie udało się zmienić profilu ekranu.",
+      "updateFailed": "Nie udało się zmienić waveformu ekranu.",
       "networkError": "Błąd sieci"
     },
     "centaur": {
@@ -867,8 +868,8 @@
       "engineTitle": "Silnik",
       "engineIntro": "W trybie tłumaczenia Centaur gra przez proxy silnika Universal Chess, więc możesz użyć dowolnego zainstalowanego silnika, a jego partie są zapisywane w twojej bazie danych. Zmiany działają od następnego uruchomienia Centaura.",
       "engineLabel": "Silnik",
-      "strengthLabel": "Siła",
-      "strengthHelp": "Siła gry silnika, którym steruje Centaur. Poziomy pochodzą z własnych profili silnika.",
+      "profileLabel": "Profil",
+      "profileHelp": "Profil silnika, którym gra Centaur. Nazwany od Elo, stylu lub obu, które ustawia.",
       "engineSaveFailed": "Nie udało się zapisać ustawień silnika Centaur.",
       "hideReimport": "Ukryj ponowny import",
       "reimport": "Zaimportuj ponownie z karty SD",
@@ -981,9 +982,9 @@
       "vite": "Narzędzie do budowania i serwer deweloperski. Vite zapewnia szybką podmianę modułów na gorąco podczas rozwoju i zoptymalizowane wersje produkcyjne.",
       "chartjs": "Rysuje wykres oceny pokazujący przewagę w pozycji w czasie. Wyświetla historię oceny silnika jako interaktywny wykres podczas omawiania partii.",
       "zustand": "Zarządza globalnym stanem aplikacji. Zustand obsługuje synchronizację stanu partii, status połączenia i ustawienia we wszystkich komponentach.",
-      "waveshareEpaper": "Źródło tabel waveform układu SSD1680 (GDEM029T94) oraz inicjalizacji sterownika panelu V1 i profilu „Waveshare 2.9″ V2”, a także częściowych tabel LUT i bajtów analogowych układu UC8151D (epd2in9d.py) używanych przez domyślny profil „Waveshare 2.9″ V2 — UC8151D”.",
-      "gxepd2": "Biblioteka e-paper dla Arduino autorstwa Jeana-Marca Zingga. Dosłowne źródło tabel LUT układu IL3820/GDEH029A1 (klasa GxEPD2_290), częściowej tabeli LUT rejestrów panelu DEPG0290BS (GxEPD2_290_BS) oraz częściowych tabel LUT i bajtów analogowych wariantów UC8151D — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) i eksperymentalnego GDEW029M06 (GxEPD2_290_M06) — używanych przez profile dostrajania; potwierdza także tabelę GDEM029T94 i podejście oparte na pamięci OTP panelu.",
-      "goodDisplay": "Oryginalny kod demonstracyjny producenta (przekazany dosłownie przez GxEPD2) stojący za profilami dostrajania IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 i T5D."
+      "waveshareEpaper": "Źródło tabel waveform układu SSD1680 (GDEM029T94) oraz inicjalizacji sterownika panelu V1 i waveformu „Waveshare 2.9″ V2”, a także częściowych tabel LUT i bajtów analogowych układu UC8151D (epd2in9d.py) używanych przez domyślny waveform „Waveshare 2.9″ V2 — UC8151D”.",
+      "gxepd2": "Biblioteka e-paper dla Arduino autorstwa Jeana-Marca Zingga. Dosłowne źródło tabel LUT układu IL3820/GDEH029A1 (klasa GxEPD2_290), częściowej tabeli LUT rejestrów panelu DEPG0290BS (GxEPD2_290_BS) oraz częściowych tabel LUT i bajtów analogowych wariantów UC8151D — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) i eksperymentalnego GDEW029M06 (GxEPD2_290_M06) — używanych przez waveformy dostrajania; potwierdza także tabelę GDEM029T94 i podejście oparte na pamięci OTP panelu.",
+      "goodDisplay": "Oryginalny kod demonstracyjny producenta (przekazany dosłownie przez GxEPD2) stojący za waveformami dostrajania IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 i T5D."
     }
   },
   "engineProfile": {
@@ -1001,6 +1002,8 @@
     "deleteFailed": "Usuwanie nie powiodło się: {{error}}",
     "unknownError": "nieznany błąd",
     "back": "← Powrót do silników",
+    "backToPlayers": "← Powrót do graczy",
+    "backToCentaur": "← Powrót do Oryginalnego Centaura",
     "title": "Ustawienia {{name}}",
     "loading": "Ładowanie opcji silnika...",
     "retry": "Ponów",
@@ -1024,9 +1027,9 @@
     "caseCollisionFailed": "Nie udało się rozwiązać duplikatów: {{error}}",
     "caseCollisionDone": "Zachowano „{{name}}”; usunięto {{removed}}.",
     "referencesMoved": "Teraz używają „{{to}}”: {{settings}}.",
-    "referencePlayerOne": "Siła gracza 1",
-    "referencePlayerTwo": "Siła gracza 2",
-    "referenceCentaur": "Poziom oryginalnego Centaura",
+    "referencePlayerOne": "Profil gracza 1",
+    "referencePlayerTwo": "Profil gracza 2",
+    "referenceCentaur": "Profil oryginalnego Centaura",
     "startFailed": "Ten silnik jest zainstalowany, ale nie uruchomił się, więc nie udało się odczytać jego opcji. Spróbuj odinstalować go i zainstalować ponownie z karty Silniki; szczegóły znajdziesz w Dzienniku zdarzeń w sekcji System."
   },
   "connectivity": {

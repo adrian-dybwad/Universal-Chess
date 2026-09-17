@@ -58,12 +58,23 @@ export function EngineProfileEditor({
   displayName,
   onBack,
   onProfilesReset,
+  initialProfileId = null,
+  backLabel,
 }: {
   engineName: string;
   displayName: string;
   onBack: () => void;
   /** Called after a successful reset so the parent can bust cached Elo levels. */
   onProfilesReset?: () => void;
+  /**
+   * Profile to select after load, when it is in the engine's list. Used by the
+   * Players/Centaur shortcut so the editor opens on the profile in use rather
+   * than the first row. Ignored when missing from the list (falls back to the
+   * first profile) and when a later fetch names a different id (create/delete).
+   */
+  initialProfileId?: string | null;
+  /** Overrides the default "Back to engines" label when opened from elsewhere. */
+  backLabel?: string;
 }) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
@@ -139,7 +150,10 @@ export function EngineProfileEditor({
         setCaseCollisions(data.case_collisions ?? []);
 
         const ids = data.profiles.map((p) => p.id);
-        const next = selectAfter && ids.includes(selectAfter) ? selectAfter : ids[0] ?? null;
+        const nextFromSelect = selectAfter && ids.includes(selectAfter) ? selectAfter : null;
+        const nextFromInitial =
+          initialProfileId && ids.includes(initialProfileId) ? initialProfileId : null;
+        const next = nextFromSelect ?? nextFromInitial ?? ids[0] ?? null;
         setSelectedId(next);
         setIsNew(false);
         loadField(ordered, data.profiles, next);
@@ -155,7 +169,7 @@ export function EngineProfileEditor({
         setLoading(false);
       }
     },
-    [engineName, loadField, t],
+    [engineName, initialProfileId, loadField, t],
   );
 
   // Load once, on mount. The rule reports any effect that calls a function able
@@ -505,7 +519,7 @@ export function EngineProfileEditor({
 
       <div className="profile-editor-toolbar">
         <Button variant="secondary" size="sm" onClick={onBack}>
-          {t('engineProfile.back')}
+          {backLabel ?? t('engineProfile.back')}
         </Button>
         <h2 className="profile-editor-title">{t('engineProfile.title', { name: displayName })}</h2>
       </div>

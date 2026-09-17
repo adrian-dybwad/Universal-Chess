@@ -692,9 +692,9 @@
       "help": "Jak długo silnik może myśleć nad jednym ruchem"
     },
     "field.player.elo": {
-      "label": "ELO / styl",
-      "boardLabel": "ELO\n{value}",
-      "help": "Siła lub osobowość silnika"
+      "label": "Profil",
+      "boardLabel": "Profil\n{value}",
+      "help": "Profil silnika używany w grze. Nazwany od Elo, stylu lub obu, które ustawia."
     },
     "field.display.show_board": {
       "label": "Pokaż szachownicę",

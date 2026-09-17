@@ -16,7 +16,7 @@ import { EngineProfileEditor } from './EngineProfileEditor';
  * which is the precondition for the debounced auto-save that now carries these
  * writes, and is why editing a field is all these tests do to trigger one.
  *
- * A profile is the foreign key the player strength settings and the Centaur level
+ * A profile is the foreign key the player profile settings and the Centaur profile
  * store, and mutations now move those references and report it. Reporting is the
  * whole point: a setting left naming a removed profile resolves to the engine's
  * own defaults at game start, so the change was previously undiscoverable except
@@ -151,7 +151,7 @@ describe('EngineProfileEditor saves and reference notices', () => {
 
   it('reports the settings a delete moved off the profile', async () => {
     // Delete is the case the whole repair exists for: the reference is gone from
-    // under the setting, and without the notice the strength change is silent.
+    // under the setting, and without the notice the profile change is silent.
     vi.stubGlobal('confirm', () => true);
     mockFetch({
       repointed: [{ setting: 'PlayerOne.elo', from: PROFILE_ID, to: 'Default' }],
@@ -160,7 +160,7 @@ describe('EngineProfileEditor saves and reference notices', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /^delete$/i }));
 
-    const notice = await screen.findByText(/Player 1 strength/);
+    const notice = await screen.findByText(/Player 1 profile/);
     expect(notice).toHaveTextContent('Default');
   });
 
@@ -175,7 +175,7 @@ describe('EngineProfileEditor saves and reference notices', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /reset profiles/i }));
 
-    const notice = await screen.findByText(/Original Centaur level/);
+    const notice = await screen.findByText(/Original Centaur profile/);
     expect(notice).toHaveTextContent('Default');
   });
 });

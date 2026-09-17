@@ -416,7 +416,8 @@
       "defaultAccount": "Compte par défaut",
       "accountSignIn": "Connectez-vous pour voir les comptes enregistrés.",
       "accountLoadFailed": "Impossible de charger les comptes. Vérifiez la connexion et réessayez.",
-      "hintsWillUse": "Les indices utiliseront <1>{{engine}}</1> (configuré dans Paramètres de partie → Moteur d'analyse)"
+      "hintsWillUse": "Les indices utiliseront <1>{{engine}}</1> (configuré dans Paramètres de partie → Moteur d'analyse)",
+      "editProfiles": "Modifier les profils"
     },
     "lichessLobby": {
       "unknownUser": "Inconnu",
@@ -798,24 +799,24 @@
     },
     "displayTuning": {
       "titleUc8151d": "Réglage de l'affichage (UC8151D)",
-      "descriptionUc8151d": "Si un panneau de remplacement laisse des images fantômes, bave ou paraît pâle sur les mises à jour partielles (ex. l'horloge), essayez un autre profil de forme d'onde. Le rafraîchissement complet utilise toujours la forme d'onde intégrée du panneau ; seule celle du rafraîchissement partiel change. Chaque sélection s'applique immédiatement avec un rafraîchissement complet — pas de redémarrage.",
+      "descriptionUc8151d": "Si un panneau de remplacement laisse des images fantômes, bave ou paraît pâle sur les mises à jour partielles (ex. l'horloge), essayez une autre forme d'onde. Le rafraîchissement complet utilise toujours la forme d'onde intégrée du panneau ; seule celle du rafraîchissement partiel change. Chaque sélection s'applique immédiatement avec un rafraîchissement complet — pas de redémarrage.",
       "titleSsd16xx": "Réglage de l'affichage (SSD1680)",
-      "descriptionSsd16xx": "Si le panneau est blanc, pâle ou avec des images fantômes, essayez un autre profil de forme d'onde. Chaque sélection s'applique immédiatement avec un rafraîchissement complet — pas de redémarrage — pour que vous puissiez les comparer et garder celui qui produit une image nette.",
+      "descriptionSsd16xx": "Si le panneau est blanc, pâle ou avec des images fantômes, essayez une autre forme d'onde. Chaque sélection s'applique immédiatement avec un rafraîchissement complet — pas de redémarrage — pour que vous puissiez les comparer et garder celui qui produit une image nette.",
       "titleUnknown": "Réglage de l'affichage",
-      "descriptionUnknown": "Aucun panneau n'a été détecté. Choisissez un profil de forme d'onde pour le panneau que vous avez. La sélection est enregistrée et appliquée au prochain démarrage, et immédiatement si le plateau tourne. Les profils UC8151D sont pour les panneaux V2 ; les profils SSD1680 pour les panneaux de remplacement V1.",
-      "waveformLabel": "Profil de forme d'onde",
+      "descriptionUnknown": "Aucun panneau n'a été détecté. Choisissez une forme d'onde pour le panneau que vous avez. La sélection est enregistrée et appliquée au prochain démarrage, et immédiatement si le plateau tourne. Les formes d'onde UC8151D sont pour les panneaux V2 ; les formes d'onde SSD1680 pour les panneaux de remplacement V1.",
+      "waveformLabel": "Forme d'onde",
       "waveformHelp": "La recette utilisée pour piloter le panneau. Intégré utilise la forme d'onde d'usine du panneau ; les autres chargent une table connue du fabricant.",
       "waveformSource": "Source de la forme d'onde :",
       "batchLabel": "Regrouper les mises à jour rapides",
       "batchHelp": "Regroupe une rafale rapide de mises à jour d'écran en un seul rafraîchissement de l'image finale. Lorsque les mises à jour arrivent plus vite que l'encre électronique ne peut redessiner, cela saute les images intermédiaires pour que l'écran montre l'état le plus récent au lieu de prendre du retard. Désactivez pour dessiner chaque image intermédiaire (plus lent lorsque les mises à jour arrivent vite, mais montre chaque étape). Recommandé activé.",
       "highContrastLabel": "Contraste élevé (expérimental)",
-      "highContrastHelp": "Pousse les tensions VCOM/source plus fort que les valeurs par défaut du profil pour assombrir une image pâle. Essayez ceci si l'image se dessine mais seulement faiblement. Ce n'est pas un réglage validé par la fiche technique ; laissez désactivé si l'affichage est déjà correct.",
+      "highContrastHelp": "Pousse les tensions VCOM/source plus fort que les valeurs par défaut de la forme d'onde pour assombrir une image pâle. Essayez ceci si l'image se dessine mais seulement faiblement. Ce n'est pas un réglage validé par la fiche technique ; laissez désactivé si l'affichage est déjà correct.",
       "threeColorLabel": "Mode trois couleurs (rouge)",
       "threeColorHelp": "Uniquement pour les panneaux rouge/blanc/noir. Met en rouge les échecs, les dames menacées, le résultat de la partie et les barres d'évaluation défavorables. L'encre rouge ne peut changer qu'avec un rafraîchissement complet, donc ces mises à jour rouges prennent ~12-15 secondes ; les coups ordinaires restent rapides.",
       "savedOffline": "Enregistré. Cela s'appliquera lorsque le plateau sera en marche.",
       "threeColorOn": "Mode trois couleurs activé. Les surlignages rouges se rafraîchissent en ~12-15 s ; les coups normaux restent rapides.",
       "applied": "Appliqué. Le panneau s'est rafraîchi avec le nouveau réglage.",
-      "updateFailed": "Impossible de mettre à jour le profil d'affichage.",
+      "updateFailed": "Impossible de mettre à jour la forme d'onde de l'affichage.",
       "networkError": "Erreur réseau"
     },
     "centaur": {
@@ -860,8 +861,8 @@
       "engineTitle": "Moteur",
       "engineIntro": "En mode traduction, Centaur joue via le proxy de moteur d'Universal Chess, donc vous pouvez utiliser n'importe quel moteur installé et ses parties sont enregistrées dans votre base de données. Les modifications s'appliquent au prochain lancement de Centaur.",
       "engineLabel": "Moteur",
-      "strengthLabel": "Force",
-      "strengthHelp": "Force de jeu du moteur que Centaur pilote. Les niveaux viennent des profils du moteur lui-même.",
+      "profileLabel": "Profil",
+      "profileHelp": "Le profil du moteur que Centaur joue. Nommé d'après l'Elo, le style, ou les deux qu'il définit.",
       "engineSaveFailed": "Impossible d'enregistrer les paramètres du moteur Centaur.",
       "hideReimport": "Masquer la réimportation",
       "reimport": "Réimporter depuis la SD",
@@ -974,9 +975,9 @@
       "vite": "L'outil de compilation et le serveur de développement. Vite offre un remplacement rapide de modules à chaud pendant le développement et des compilations de production optimisées.",
       "chartjs": "Affiche le graphique d'évaluation montrant l'avantage de la position dans le temps. Affiche l'historique d'évaluation du moteur comme un graphique interactif pendant la revue de la partie.",
       "zustand": "Gère l'état global de l'application. Zustand gère la synchronisation de l'état de la partie, l'état de la connexion et les paramètres dans tous les composants.",
-      "waveshareEpaper": "Source des tables de forme d'onde SSD1680 (GDEM029T94) et de l'init du pilote du panneau V1 et du profil « Waveshare 2.9″ V2 », et des LUT partielles/octets analogiques UC8151D (epd2in9d.py) utilisés par le profil par défaut « Waveshare 2.9″ V2 — UC8151D ».",
-      "gxepd2": "Bibliothèque d'encre électronique Arduino de Jean-Marc Zingg. Source verbatim des LUT IL3820/GDEH029A1 (classe GxEPD2_290), de la LUT partielle de registre DEPG0290BS (GxEPD2_290_BS) et des LUT partielles/octets analogiques des variantes UC8151D — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) et l'expérimental GDEW029M06 (GxEPD2_290_M06) — utilisées par les profils de réglage ; corrobore aussi la table GDEM029T94 et l'approche OTP du panneau.",
-      "goodDisplay": "Code de démonstration original du fabricant (relayé verbatim via GxEPD2) derrière les profils de réglage IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 et T5D."
+      "waveshareEpaper": "Source des tables de forme d'onde SSD1680 (GDEM029T94) et de l'init du pilote du panneau V1 et de la forme d'onde « Waveshare 2.9″ V2 », et des LUT partielles/octets analogiques UC8151D (epd2in9d.py) utilisés par la forme d'onde par défaut « Waveshare 2.9″ V2 — UC8151D ».",
+      "gxepd2": "Bibliothèque d'encre électronique Arduino de Jean-Marc Zingg. Source verbatim des LUT IL3820/GDEH029A1 (classe GxEPD2_290), de la LUT partielle de registre DEPG0290BS (GxEPD2_290_BS) et des LUT partielles/octets analogiques des variantes UC8151D — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) et l'expérimental GDEW029M06 (GxEPD2_290_M06) — utilisées par les formes d'onde de réglage ; corrobore aussi la table GDEM029T94 et l'approche OTP du panneau.",
+      "goodDisplay": "Code de démonstration original du fabricant (relayé verbatim via GxEPD2) derrière les formes d'onde de réglage IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 et T5D."
     }
   },
   "engineProfile": {
@@ -994,6 +995,8 @@
     "deleteFailed": "Échec de la suppression : {{error}}",
     "unknownError": "erreur inconnue",
     "back": "← Retour aux moteurs",
+    "backToPlayers": "← Retour aux joueurs",
+    "backToCentaur": "← Retour à Centaur original",
     "title": "Paramètres de {{name}}",
     "loading": "Chargement des options du moteur...",
     "retry": "Réessayer",
@@ -1017,9 +1020,9 @@
     "caseCollisionFailed": "Impossible de résoudre les doublons : {{error}}",
     "caseCollisionDone": "« {{name}} » conservé ; {{removed}} supprimé(s).",
     "referencesMoved": "Utilisent maintenant « {{to}} » : {{settings}}.",
-    "referencePlayerOne": "Force du joueur 1",
-    "referencePlayerTwo": "Force du joueur 2",
-    "referenceCentaur": "Niveau Centaur d'origine",
+    "referencePlayerOne": "Profil du joueur 1",
+    "referencePlayerTwo": "Profil du joueur 2",
+    "referenceCentaur": "Profil Centaur d'origine",
     "startFailed": "Ce moteur est installé mais n'a pas démarré, donc ses options n'ont pas pu être lues. Essayez de le désinstaller puis de le réinstaller depuis l'onglet Moteurs ; le journal des événements sous Système contient les détails."
   },
   "connectivity": {

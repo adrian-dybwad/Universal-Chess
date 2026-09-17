@@ -10,7 +10,7 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  * Guards the rule that a player's PGN name is collected for HUMAN players only,
  * on the web as on the board (field.player.name has visibleWhen type == human).
  *
- * Why this test exists: engines auto-name from the engine + strength label, and
+ * Why this test exists: engines auto-name from the engine + profile label, and
  * online (e.g. Lichess) players carry their own account identity, so neither
  * needs an editable name -- the web previously showed a Name field for every
  * type (with a borrowed placeholder), diverging from the board and letting a
@@ -79,7 +79,7 @@ function mockFetch(p1: PlayerSeed, p2: PlayerSeed) {
     if (url === '/api/settings' && method === 'GET') return jsonResponse(buildSettingsPayload(p1, p2));
     if (url === '/api/settings' && method === 'POST') return jsonResponse({ success: true });
     if (url === '/api/accounts') return jsonResponse(accountsPayload);
-    // The engine slot renders the ELO/strength select, which loads per-engine
+    // The engine slot renders the profile select, which loads per-engine
     // levels; return a minimal array so the dropdown resolves (an object here
     // would crash option rendering).
     if (url.startsWith('/api/engines/') && url.endsWith('/levels'))

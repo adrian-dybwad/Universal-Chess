@@ -693,9 +693,9 @@
       "help": "Quanto a lungo il motore può pensare per mossa"
     },
     "field.player.elo": {
-      "label": "ELO / Stile",
-      "boardLabel": "ELO\n{value}",
-      "help": "Forza o personalità del motore"
+      "label": "Profilo",
+      "boardLabel": "Profilo\n{value}",
+      "help": "Il profilo del motore da giocare. Prende il nome dall'Elo, dallo stile, o da entrambi che imposta."
     },
     "field.display.show_board": {
       "label": "Mostra scacchiera",

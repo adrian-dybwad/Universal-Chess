@@ -159,19 +159,19 @@ def test_resolve_label_mixes_value_and_computed_tokens():
 def test_resolve_label_value_placeholder_uses_provider_label():
     """A {value} template resolves through the provider's rows for a provider-backed select.
 
-    Why this test exists: provider-backed selects (ELO/Engine) carry a
+    Why this test exists: provider-backed selects (Profile/Engine) carry a
     ``provider`` instead of an ``optionSet``, and their submenu shows the
     provider row's *label* (e.g. an uncapped "Default" section displays as
     "Default (Unlimited)"). The parent {value} button must resolve the same
     label source so it does not drift from the submenu. How a regression
-    manifests: the parent button shows the raw stored value ("ELO\\nDefault")
+    manifests: the parent button shows the raw stored value ("Profile\\nDefault")
     while opening the submenu correctly shows "Default (Unlimited)".
     """
     node = {
         "id": "field.player.elo",
         "type": "select",
-        "label": "ELO / Style",
-        "boardLabel": "ELO\n{value}",
+        "label": "Profile",
+        "boardLabel": "Profile\n{value}",
         "bind": {"store": "player", "key": "elo"},
         "provider": "engine_levels",
     }
@@ -184,7 +184,7 @@ def test_resolve_label_value_placeholder_uses_provider_label():
             ]
         },
     )
-    assert resolve_label(node, ctx, platform="board") == "ELO\nDefault (Unlimited)"
+    assert resolve_label(node, ctx, platform="board") == "Profile\nDefault (Unlimited)"
 
 
 def test_resolve_label_provider_value_falls_back_to_raw_when_unmatched():
@@ -193,13 +193,13 @@ def test_resolve_label_provider_value_falls_back_to_raw_when_unmatched():
     Why this test exists: if the stored value is not among the provider's
     current rows (e.g. a level from a previously selected engine), the label
     must degrade to the raw stored text rather than rendering blank. How a
-    regression manifests: an unmatched value renders "ELO\\n" (empty) instead of
+    regression manifests: an unmatched value renders "Profile\\n" (empty) instead of
     the stored value.
     """
     node = {
         "id": "field.player.elo",
         "type": "select",
-        "boardLabel": "ELO\n{value}",
+        "boardLabel": "Profile\n{value}",
         "bind": {"store": "player", "key": "elo"},
         "provider": "engine_levels",
     }
@@ -207,7 +207,7 @@ def test_resolve_label_provider_value_falls_back_to_raw_when_unmatched():
         state={"player": {"elo": "1800 ELO"}},
         providers={"engine_levels": [MenuRow(key="Default", label="Default (Unlimited)", icon="elo")]},
     )
-    assert resolve_label(node, ctx, platform="board") == "ELO\n1800 ELO"
+    assert resolve_label(node, ctx, platform="board") == "Profile\n1800 ELO"
 
 
 def test_resolve_label_value_placeholder_without_option_set_uses_raw_value():

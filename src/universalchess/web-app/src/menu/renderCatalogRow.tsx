@@ -8,6 +8,7 @@
  * directly so its rows are identical to the ones MenuContainer produces.
  */
 
+import type { ReactNode } from 'react';
 import { CatalogField } from '../components/CatalogField';
 import type { MenuNode } from '../types/menuCatalog';
 import { isEnabled } from './engine';
@@ -24,6 +25,11 @@ export function renderCatalogRow(
      * in flight). ORed with the node's own gating, so it can only add disabling.
      */
     disabled?: boolean;
+    /**
+     * Extra help content after the catalog help (e.g. a web-only Edit profiles
+     * link). Not taken from menu.json because the board has no editor to open.
+     */
+    helpExtra?: ReactNode;
   },
 ) {
   // A `dynamic` value control (e.g. the sprite picker) binds through `itemBind`
@@ -36,6 +42,15 @@ export function renderCatalogRow(
   // nodes, but a mis-authored node without a bind should fail visibly-absent
   // rather than crash).
   if (!bind) return null;
+  const help = opts?.helpExtra
+    ? (
+        <>
+          {node.help}
+          {node.help ? ' ' : null}
+          {opts.helpExtra}
+        </>
+      )
+    : undefined;
   return (
     <CatalogField
       key={node.id}
@@ -44,6 +59,7 @@ export function renderCatalogRow(
       options={ctx.optionsFor(node)}
       placeholder={ctx.placeholderFor(node)}
       disabled={Boolean(opts?.disabled) || !isEnabled(node, ctx.get)}
+      help={help}
       onChange={(value) => ctx.set(bind.store, bind.key, value)}
     />
   );

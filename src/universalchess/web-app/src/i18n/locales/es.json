@@ -416,7 +416,8 @@
       "defaultAccount": "Cuenta predeterminada",
       "accountSignIn": "Inicia sesión para ver las cuentas guardadas.",
       "accountLoadFailed": "No se pudieron cargar las cuentas. Comprueba la conexión e inténtalo de nuevo.",
-      "hintsWillUse": "Las pistas usarán <1>{{engine}}</1> (configurado en Ajustes de partida → Motor de análisis)"
+      "hintsWillUse": "Las pistas usarán <1>{{engine}}</1> (configurado en Ajustes de partida → Motor de análisis)",
+      "editProfiles": "Editar perfiles"
     },
     "lichessLobby": {
       "unknownUser": "Desconocido",
@@ -798,24 +799,24 @@
     },
     "displayTuning": {
       "titleUc8151d": "Ajuste de pantalla (UC8151D)",
-      "descriptionUc8151d": "Si un panel de repuesto deja imágenes fantasma, se emborrona o se ve tenue en las actualizaciones parciales (p. ej. el reloj), prueba un perfil de forma de onda distinto. El refresco completo siempre usa la forma de onda integrada del panel; solo cambia la del refresco parcial. Cada selección se aplica de inmediato con un refresco completo, sin reinicio.",
+      "descriptionUc8151d": "Si un panel de repuesto deja imágenes fantasma, se emborrona o se ve tenue en las actualizaciones parciales (p. ej. el reloj), prueba una forma de onda distinta. El refresco completo siempre usa la forma de onda integrada del panel; solo cambia la del refresco parcial. Cada selección se aplica de inmediato con un refresco completo, sin reinicio.",
       "titleSsd16xx": "Ajuste de pantalla (SSD1680)",
-      "descriptionSsd16xx": "Si el panel está en blanco, tenue o con imágenes fantasma, prueba un perfil de forma de onda distinto. Cada selección se aplica de inmediato con un refresco completo, sin reinicio, para que puedas compararlas y quedarte con la que dé una imagen limpia.",
+      "descriptionSsd16xx": "Si el panel está en blanco, tenue o con imágenes fantasma, prueba una forma de onda distinta. Cada selección se aplica de inmediato con un refresco completo, sin reinicio, para que puedas compararlas y quedarte con la que dé una imagen limpia.",
       "titleUnknown": "Ajuste de pantalla",
-      "descriptionUnknown": "No se detectó ningún panel. Elige un perfil de forma de onda para el panel que tienes. La selección se guarda y se aplica en el próximo arranque, y en vivo si el tablero está en marcha. Los perfiles UC8151D son para paneles V2; los SSD1680 para paneles de recambio V1.",
-      "waveformLabel": "Perfil de forma de onda",
+      "descriptionUnknown": "No se detectó ningún panel. Elige una forma de onda para el panel que tienes. La selección se guarda y se aplica en el próximo arranque, y en vivo si el tablero está en marcha. Las formas de onda UC8151D son para paneles V2; las SSD1680 para paneles de recambio V1.",
+      "waveformLabel": "Forma de onda",
       "waveformHelp": "La receta usada para controlar el panel. Integrado usa la forma de onda de fábrica del propio panel; los demás cargan una tabla conocida del fabricante.",
       "waveformSource": "Fuente de la forma de onda:",
       "batchLabel": "Agrupar actualizaciones rápidas",
       "batchHelp": "Agrupa una ráfaga rápida de actualizaciones de pantalla en un único refresco del fotograma final. Cuando las actualizaciones llegan más rápido de lo que la tinta electrónica puede redibujar, esto omite los fotogramas intermedios para que la pantalla muestre el estado más reciente en lugar de ir con retraso. Desactívalo para dibujar cada fotograma intermedio (más lento cuando llegan rápido, pero muestra cada paso). Recomendado activado.",
       "highContrastLabel": "Alto contraste (experimental)",
-      "highContrastHelp": "Fuerza los voltajes VCOM/fuente más allá de los predeterminados del perfil para oscurecer una imagen tenue. Prueba esto si la imagen se dibuja pero solo débilmente. No es un ajuste respaldado por la hoja de datos; déjalo desactivado si la pantalla ya se ve bien.",
+      "highContrastHelp": "Fuerza los voltajes VCOM/fuente más allá de los predeterminados de la forma de onda para oscurecer una imagen tenue. Prueba esto si la imagen se dibuja pero solo débilmente. No es un ajuste respaldado por la hoja de datos; déjalo desactivado si la pantalla ya se ve bien.",
       "threeColorLabel": "Modo de tres colores (rojo)",
       "threeColorHelp": "Solo para paneles rojo/blanco/negro. Resalta en rojo los jaques, las damas amenazadas, el resultado de la partida y las barras de evaluación desfavorables. La tinta roja solo cambia con un refresco completo, así que esas actualizaciones en rojo tardan ~12-15 segundos; las jugadas normales siguen siendo rápidas.",
       "savedOffline": "Guardado. Se aplicará cuando el tablero esté en marcha.",
       "threeColorOn": "Modo de tres colores activado. Los resaltados en rojo se refrescan en ~12-15 s; las jugadas normales siguen rápidas.",
       "applied": "Aplicado. El panel se refrescó con el nuevo ajuste.",
-      "updateFailed": "No se pudo actualizar el perfil de pantalla.",
+      "updateFailed": "No se pudo actualizar la forma de onda de la pantalla.",
       "networkError": "Error de red"
     },
     "centaur": {
@@ -860,8 +861,8 @@
       "engineTitle": "Motor",
       "engineIntro": "En modo de traducción, Centaur juega a través del proxy de motor de Universal Chess, así que puedes usar cualquier motor instalado y sus partidas se registran en tu base de datos. Los cambios se aplican la próxima vez que se inicie Centaur.",
       "engineLabel": "Motor",
-      "strengthLabel": "Fuerza",
-      "strengthHelp": "Fuerza de juego del motor que controla Centaur. Los niveles provienen de los perfiles del propio motor.",
+      "profileLabel": "Perfil",
+      "profileHelp": "El perfil del motor que juega Centaur. Recibe el nombre del Elo, el estilo, o ambos que establece.",
       "engineSaveFailed": "No se pudieron guardar los ajustes del motor de Centaur.",
       "hideReimport": "Ocultar reimportación",
       "reimport": "Reimportar desde SD",
@@ -974,9 +975,9 @@
       "vite": "La herramienta de compilación y el servidor de desarrollo. Vite ofrece un reemplazo rápido de módulos en caliente durante el desarrollo y compilaciones de producción optimizadas.",
       "chartjs": "Dibuja el gráfico de evaluación que muestra la ventaja de la posición a lo largo del tiempo. Muestra el historial de evaluación del motor como un gráfico interactivo durante la revisión de la partida.",
       "zustand": "Gestiona el estado global de la aplicación. Zustand maneja la sincronización del estado de la partida, el estado de la conexión y los ajustes en todos los componentes.",
-      "waveshareEpaper": "Fuente de las tablas de forma de onda del SSD1680 (GDEM029T94) y la inicialización del controlador del panel V1 y el perfil «Waveshare 2.9″ V2», y de las LUT parciales/bytes analógicos del UC8151D (epd2in9d.py) usados por el perfil predeterminado «Waveshare 2.9″ V2 — UC8151D».",
-      "gxepd2": "Biblioteca de tinta electrónica para Arduino de Jean-Marc Zingg. Fuente literal de las LUT del IL3820/GDEH029A1 (clase GxEPD2_290), la LUT parcial de registro del DEPG0290BS (GxEPD2_290_BS) y las LUT parciales/bytes analógicos de las variantes del UC8151D —GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) y el experimental GDEW029M06 (GxEPD2_290_M06)— usadas por los perfiles de ajuste; también corrobora la tabla GDEM029T94 y el enfoque OTP del panel.",
-      "goodDisplay": "Código de demostración original del fabricante (retransmitido literalmente vía GxEPD2) detrás de los perfiles de ajuste IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 y T5D."
+      "waveshareEpaper": "Fuente de las tablas de forma de onda del SSD1680 (GDEM029T94) y la inicialización del controlador del panel V1 y la forma de onda «Waveshare 2.9″ V2», y de las LUT parciales/bytes analógicos del UC8151D (epd2in9d.py) usados por la forma de onda predeterminada «Waveshare 2.9″ V2 — UC8151D».",
+      "gxepd2": "Biblioteca de tinta electrónica para Arduino de Jean-Marc Zingg. Fuente literal de las LUT del IL3820/GDEH029A1 (clase GxEPD2_290), la LUT parcial de registro del DEPG0290BS (GxEPD2_290_BS) y las LUT parciales/bytes analógicos de las variantes del UC8151D —GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) y el experimental GDEW029M06 (GxEPD2_290_M06)— usadas por las formas de onda de ajuste; también corrobora la tabla GDEM029T94 y el enfoque OTP del panel.",
+      "goodDisplay": "Código de demostración original del fabricante (retransmitido literalmente vía GxEPD2) detrás de las formas de onda de ajuste IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 y T5D."
     }
   },
   "engineProfile": {
@@ -994,6 +995,8 @@
     "deleteFailed": "Error al eliminar: {{error}}",
     "unknownError": "error desconocido",
     "back": "← Volver a los motores",
+    "backToPlayers": "← Volver a los jugadores",
+    "backToCentaur": "← Volver a Centaur original",
     "title": "Ajustes de {{name}}",
     "loading": "Cargando opciones del motor...",
     "retry": "Reintentar",
@@ -1017,9 +1020,9 @@
     "caseCollisionFailed": "No se pudieron resolver los duplicados: {{error}}",
     "caseCollisionDone": "Se conservó «{{name}}»; se eliminaron {{removed}}.",
     "referencesMoved": "Ahora usan «{{to}}»: {{settings}}.",
-    "referencePlayerOne": "Fuerza del jugador 1",
-    "referencePlayerTwo": "Fuerza del jugador 2",
-    "referenceCentaur": "Nivel de Centaur original",
+    "referencePlayerOne": "Perfil del jugador 1",
+    "referencePlayerTwo": "Perfil del jugador 2",
+    "referenceCentaur": "Perfil de Centaur original",
     "startFailed": "Este motor está instalado pero no se inició, así que no se pudieron leer sus opciones. Prueba a desinstalarlo y volver a instalarlo desde la pestaña Motores; el Registro de eventos en Sistema tiene los detalles."
   },
   "connectivity": {

@@ -106,7 +106,7 @@ function renderDisplayTab() {
 }
 
 describe('Display tuning card stays offered when the panel is down', () => {
-  it('shows the card and both profile families when GET reports no panel', async () => {
+  it('shows the card and both waveform families when GET reports no panel', async () => {
     // Why: available:false / active_controller:null used to unmount the card,
     // which is the failed-init recovery case. A regression hides the heading
     // or drops one family from the dropdown so there is nothing to persist.
@@ -125,7 +125,7 @@ describe('Display tuning card stays offered when the panel is down', () => {
     const heading = await screen.findByRole('heading', { name: 'Display tuning' });
     const card = heading.closest('.card') as HTMLElement;
     expect(card).not.toBeNull();
-    const label = await within(card).findByText('Waveform profile');
+    const label = await within(card).findByText('Waveform');
     const row = label.closest('.form-row') as HTMLElement;
     const waveform = await waitFor(() => {
       const select = within(row).getByRole('combobox') as HTMLSelectElement;

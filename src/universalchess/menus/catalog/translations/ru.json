@@ -696,9 +696,9 @@
       "help": "Как долго движок может думать на ход"
     },
     "field.player.elo": {
-      "label": "ELO / Стиль",
-      "boardLabel": "ELO\n{value}",
-      "help": "Сила или характер движка"
+      "label": "Профиль",
+      "boardLabel": "Профиль\n{value}",
+      "help": "Профиль движка, которым играют. Назван по Elo, стилю или обоим, которые задаёт."
     },
     "field.display.show_board": {
       "label": "Показать доску",

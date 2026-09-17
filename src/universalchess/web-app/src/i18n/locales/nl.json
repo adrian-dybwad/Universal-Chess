@@ -413,7 +413,8 @@
       "defaultAccount": "Standaardaccount",
       "accountSignIn": "Meld je aan om opgeslagen accounts te zien.",
       "accountLoadFailed": "De accounts konden niet worden geladen. Controleer de verbinding en probeer het opnieuw.",
-      "hintsWillUse": "Hints gebruiken <1>{{engine}}</1> (ingesteld bij Partij-instellingen → Analysemotor)"
+      "hintsWillUse": "Hints gebruiken <1>{{engine}}</1> (ingesteld bij Partij-instellingen → Analysemotor)",
+      "editProfiles": "Profielen bewerken"
     },
     "lichessLobby": {
       "unknownUser": "Onbekend",
@@ -791,24 +792,24 @@
     },
     "displayTuning": {
       "titleUc8151d": "Schermafstemming (UC8151D)",
-      "descriptionUc8151d": "Als een vervangend paneel bij gedeeltelijke verversingen (bijv. de klok) schaduwen laat zien, uitsmeert of vaag lijkt, probeer dan een ander waveform-profiel. Een volledige verversing gebruikt altijd de ingebouwde waveform van het paneel; alleen de waveform van de gedeeltelijke verversing verandert. Elke keuze wordt direct toegepast met een volledige verversing -- geen herstart nodig.",
+      "descriptionUc8151d": "Als een vervangend paneel bij gedeeltelijke verversingen (bijv. de klok) schaduwen laat zien, uitsmeert of vaag lijkt, probeer dan een andere waveform. Een volledige verversing gebruikt altijd de ingebouwde waveform van het paneel; alleen de waveform van de gedeeltelijke verversing verandert. Elke keuze wordt direct toegepast met een volledige verversing -- geen herstart nodig.",
       "titleSsd16xx": "Schermafstemming (SSD1680)",
-      "descriptionSsd16xx": "Als het paneel leeg, vaag of met schaduwen wordt weergegeven, probeer dan een ander waveform-profiel. Elke keuze wordt direct toegepast met een volledige verversing -- geen herstart nodig -- zodat je ze kunt vergelijken en degene kunt houden die een schoon beeld geeft.",
+      "descriptionSsd16xx": "Als het paneel leeg, vaag of met schaduwen wordt weergegeven, probeer dan een andere waveform. Elke keuze wordt direct toegepast met een volledige verversing -- geen herstart nodig -- zodat je ze kunt vergelijken en degene kunt houden die een schoon beeld geeft.",
       "titleUnknown": "Schermafstemming",
-      "descriptionUnknown": "Er is geen paneel gedetecteerd. Kies een waveform-profiel voor het paneel dat je hebt. De keuze wordt opgeslagen en toegepast bij de volgende start, en direct als het bord draait. UC8151D-profielen zijn voor V2-panelen; SSD1680-profielen voor V1-vervangingspanelen.",
-      "waveformLabel": "Waveform-profiel",
+      "descriptionUnknown": "Er is geen paneel gedetecteerd. Kies een waveform voor het paneel dat je hebt. De keuze wordt opgeslagen en toegepast bij de volgende start, en direct als het bord draait. UC8151D-waveforms zijn voor V2-panelen; SSD1680-waveforms voor V1-vervangingspanelen.",
+      "waveformLabel": "Waveform",
       "waveformHelp": "Het recept waarmee het paneel wordt aangestuurd. Built-In gebruikt de eigen fabriekswaveform van het paneel; de andere laden een bekende tabel van de fabrikant.",
       "waveformSource": "Bron van de waveform:",
       "batchLabel": "Snelle updates bundelen",
       "batchHelp": "Voegt een snelle reeks schermupdates samen tot één verversing van het laatste beeld. Als updates sneller binnenkomen dan het e-paper kan tekenen, worden de tussenliggende beelden overgeslagen, zodat het scherm de nieuwste stand toont in plaats van achter te lopen. Zet uit om elk tussenliggend beeld te tekenen (langzamer bij snel opeenvolgende updates, maar toont elke stap). Aanbevolen: aan.",
       "highContrastLabel": "Hoog contrast (experimenteel)",
-      "highContrastHelp": "Stuurt de VCOM-/source-spanningen harder aan dan de standaardwaarden van het profiel, om een vaag beeld donkerder te maken. Probeer dit als het beeld wel wordt getekend, maar alleen zwak. Deze instelling wordt niet door een datasheet gedekt; laat hem uit als het scherm er al goed uitziet.",
+      "highContrastHelp": "Stuurt de VCOM-/source-spanningen harder aan dan de standaardwaarden van de waveform, om een vaag beeld donkerder te maken. Probeer dit als het beeld wel wordt getekend, maar alleen zwak. Deze instelling wordt niet door een datasheet gedekt; laat hem uit als het scherm er al goed uitziet.",
       "threeColorLabel": "Driekleurmodus (rood)",
       "threeColorHelp": "Alleen voor rood/wit/zwarte panelen. Markeert schaak, bedreigde dames, het resultaat van de partij en verliezende evaluatiebalken in rood. Rode inkt kan alleen met een volledige verversing veranderen, dus die rode updates duren ~12-15 seconden; gewone zetten blijven snel.",
       "savedOffline": "Opgeslagen. Het wordt toegepast zodra het bord actief is.",
       "threeColorOn": "Driekleurmodus aan. Rode markeringen verversen in ~12-15 s; normale zetten blijven snel.",
       "applied": "Toegepast. Het paneel is met de nieuwe instelling ververst.",
-      "updateFailed": "Het schermprofiel kon niet worden gewijzigd.",
+      "updateFailed": "De waveform van het scherm kon niet worden gewijzigd.",
       "networkError": "Netwerkfout"
     },
     "centaur": {
@@ -853,8 +854,8 @@
       "engineTitle": "Motor",
       "engineIntro": "In vertaalmodus speelt Centaur via de motorproxy van Universal Chess, zodat je elke geïnstalleerde motor kunt gebruiken en de partijen in je database worden opgeslagen. Wijzigingen gelden vanaf de volgende keer dat Centaur start.",
       "engineLabel": "Motor",
-      "strengthLabel": "Sterkte",
-      "strengthHelp": "Speelsterkte van de motor die Centaur aanstuurt. De niveaus komen uit de profielen van de motor zelf.",
+      "profileLabel": "Profiel",
+      "profileHelp": "Het motorprofiel dat Centaur speelt. Genoemd naar de Elo, de stijl, of beide die het instelt.",
       "engineSaveFailed": "De Centaur-motorinstellingen konden niet worden opgeslagen.",
       "hideReimport": "Opnieuw importeren verbergen",
       "reimport": "Opnieuw importeren vanaf SD",
@@ -967,9 +968,9 @@
       "vite": "Het buildgereedschap en de ontwikkelserver. Vite biedt snelle hot module replacement tijdens de ontwikkeling en geoptimaliseerde productiebuilds.",
       "chartjs": "Tekent de evaluatiegrafiek die het voordeel in de stelling in de loop van de tijd toont. Geeft de evaluatiegeschiedenis van de motor tijdens het nabespreken van een partij als een interactief diagram weer.",
       "zustand": "Beheert de globale toestand van de applicatie. Zustand verzorgt de synchronisatie van de partijtoestand, de verbindingsstatus en de instellingen in alle componenten.",
-      "waveshareEpaper": "Bron van de waveform-tabellen van de SSD1680 (GDEM029T94) en van de initialisatie voor de driver van het V1-paneel en het profiel “Waveshare 2.9″ V2”, en van de partiële LUT's/analoge bytes van de UC8151D (epd2in9d.py) die het standaardprofiel “Waveshare 2.9″ V2 — UC8151D” gebruikt.",
-      "gxepd2": "Arduino-e-paperbibliotheek van Jean-Marc Zingg. Letterlijke bron van de IL3820/GDEH029A1-LUT's (klasse GxEPD2_290), van de partiële register-LUT van de DEPG0290BS (GxEPD2_290_BS) en van de partiële LUT's/analoge bytes van de UC8151D-varianten — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) en de experimentele GDEW029M06 (GxEPD2_290_M06) — die de afstemmingsprofielen gebruiken; bevestigt daarnaast de GDEM029T94-tabel en de OTP-aanpak van het paneel.",
-      "goodDisplay": "Originele democode van de fabrikant (letterlijk doorgegeven via GxEPD2) achter de afstemmingsprofielen IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 en T5D."
+      "waveshareEpaper": "Bron van de waveform-tabellen van de SSD1680 (GDEM029T94) en van de initialisatie voor de driver van het V1-paneel en de waveform “Waveshare 2.9″ V2”, en van de partiële LUT's/analoge bytes van de UC8151D (epd2in9d.py) die de standaardwaveform “Waveshare 2.9″ V2 — UC8151D” gebruikt.",
+      "gxepd2": "Arduino-e-paperbibliotheek van Jean-Marc Zingg. Letterlijke bron van de IL3820/GDEH029A1-LUT's (klasse GxEPD2_290), van de partiële register-LUT van de DEPG0290BS (GxEPD2_290_BS) en van de partiële LUT's/analoge bytes van de UC8151D-varianten — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) en de experimentele GDEW029M06 (GxEPD2_290_M06) — die de afstemmingswaveforms gebruiken; bevestigt daarnaast de GDEM029T94-tabel en de OTP-aanpak van het paneel.",
+      "goodDisplay": "Originele democode van de fabrikant (letterlijk doorgegeven via GxEPD2) achter de afstemmingswaveforms IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 en T5D."
     }
   },
   "engineProfile": {
@@ -987,6 +988,8 @@
     "deleteFailed": "Verwijderen mislukt: {{error}}",
     "unknownError": "onbekende fout",
     "back": "← Terug naar de motoren",
+    "backToPlayers": "← Terug naar de spelers",
+    "backToCentaur": "← Terug naar Originele Centaur",
     "title": "Instellingen van {{name}}",
     "loading": "Motoropties laden...",
     "retry": "Opnieuw proberen",
@@ -1010,9 +1013,9 @@
     "caseCollisionFailed": "De duplicaten konden niet worden opgelost: {{error}}",
     "caseCollisionDone": "“{{name}}” gehouden; {{removed}} verwijderd.",
     "referencesMoved": "Gebruiken nu “{{to}}”: {{settings}}.",
-    "referencePlayerOne": "Sterkte van speler 1",
-    "referencePlayerTwo": "Sterkte van speler 2",
-    "referenceCentaur": "Origineel Centaur-niveau",
+    "referencePlayerOne": "Profiel van speler 1",
+    "referencePlayerTwo": "Profiel van speler 2",
+    "referenceCentaur": "Origineel Centaur-profiel",
     "startFailed": "Deze motor is geïnstalleerd maar is niet gestart, dus zijn opties konden niet worden gelezen. Probeer hem via het tabblad Motoren te verwijderen en opnieuw te installeren; in het Gebeurtenislogboek onder Systeem staan de details."
   },
   "connectivity": {

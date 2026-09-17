@@ -692,9 +692,9 @@
       "help": "Wie lange die Engine je Zug rechnen darf"
     },
     "field.player.elo": {
-      "label": "ELO / Stil",
-      "boardLabel": "ELO\n{value}",
-      "help": "Spielstärke oder Persönlichkeit der Engine"
+      "label": "Profil",
+      "boardLabel": "Profil\n{value}",
+      "help": "Das Engine-Profil, das gespielt wird. Benannt nach der Elo-Zahl, dem Stil oder beidem, das es setzt."
     },
     "field.display.show_board": {
       "label": "Brett anzeigen",

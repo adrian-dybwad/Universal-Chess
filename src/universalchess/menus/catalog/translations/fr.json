@@ -678,9 +678,9 @@
       "help": "Combien de temps le moteur peut réfléchir par coup"
     },
     "field.player.elo": {
-      "label": "ELO / Style",
-      "boardLabel": "ELO\n{value}",
-      "help": "Force ou personnalité du moteur"
+      "label": "Profil",
+      "boardLabel": "Profil\n{value}",
+      "help": "Le profil du moteur à jouer. Nommé d'après l'Elo, le style, ou les deux qu'il définit."
     },
     "field.display.show_board": {
       "label": "Afficher l'échiquier",

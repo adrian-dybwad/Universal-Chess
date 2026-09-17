@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ReactNode } from 'react';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router';
 import { useTranslation, Trans } from 'react-i18next';
 import { Button, Card, CardHeader, FormRow, Input, Select, Toggle, Badge, ProgressBar } from '../components/ui';
 import { WebMenuContext } from '../menu/context';
@@ -209,6 +209,44 @@ const DEFAULT_SETTINGS_TAB: SettingsTab = 'players';
  */
 function parseSettingsTab(value: string | undefined): SettingsTab {
   return VALID_SETTINGS_TABS.includes(value as SettingsTab) ? (value as SettingsTab) : DEFAULT_SETTINGS_TAB;
+}
+
+/** Origin of a deep-link into the engine profile editor. Only these send Back
+ *  somewhere other than the engines list. */
+type EngineProfilesFrom = 'players' | 'centaur';
+
+function isEngineProfilesFrom(value: string | null): value is EngineProfilesFrom {
+  return value === 'players' || value === 'centaur';
+}
+
+const ENGINE_PROFILES_BACK_TAB = {
+  players: 'players',
+  centaur: 'centaur',
+} satisfies Record<EngineProfilesFrom, SettingsTab>;
+
+const ENGINE_PROFILES_BACK_LABEL = {
+  players: 'engineProfile.backToPlayers',
+  centaur: 'engineProfile.backToCentaur',
+} satisfies Record<EngineProfilesFrom, string>;
+
+/**
+ * URL of the Chess Engines profile editor for one engine.
+ *
+ * Query keys are engine (required to open the editor), profile (select that id
+ * when it exists), and from (players or centaur so Back returns there). A
+ * missing or unknown from leaves Back on the engines list. Used by the Players
+ * and Original Centaur Profile pickers and by Configure profiles on an engine
+ * card.
+ */
+function engineProfilesPath(
+  engineName: string,
+  opts?: { profile?: string | null; from?: EngineProfilesFrom },
+): string {
+  const params = new URLSearchParams();
+  params.set('engine', engineName);
+  if (opts?.profile) params.set('profile', opts.profile);
+  if (opts?.from) params.set('from', opts.from);
+  return `/settings/engines?${params.toString()}`;
 }
 
 interface PlayerSettings {
@@ -575,7 +613,15 @@ export function Settings() {
   const { t } = useTranslation();
   const { tab: tabParam } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const activeTab = parseSettingsTab(tabParam);
+  // The Engines tab shows the profile editor when the URL names an engine
+  // (`?engine=`), including the Players/Centaur shortcut. Sidebar Chess Engines
+  // navigates to /settings/engines with no query and closes it.
+  const profileEngineName = (searchParams.get('engine') ?? '').trim();
+  const profileQueryId = searchParams.get('profile');
+  const fromParam = searchParams.get('from');
+  const profileFrom = isEngineProfilesFrom(fromParam) ? fromParam : null;
   // Switch sub-nav via the URL so the selection survives a refresh and is
   // shareable. A history push (not replace) lets the browser Back button step
   // between visited tabs as users expect from in-page navigation.
@@ -596,7 +642,7 @@ export function Settings() {
   // that looked like "no accounts saved".
   const [accounts, setAccounts] = useState<AccountRecord[]>([]);
   const [accountsState, setAccountsState] = useState<'loading' | 'ready' | 'failed' | 'unauthorized'>('loading');
-  // Per-engine strength picker rows from /levels: {value,label} where value is
+  // Per-engine profile picker rows from /levels: {value,label} where value is
   // the profile id persisted as the slot's `elo` and label is projected from that
   // profile's own option values (an uncapped "Default" shows as
   // "Default (Unlimited)"). The id is opaque, so the label is the only thing
@@ -649,9 +695,6 @@ export function Settings() {
   // in that engine's card (below its action button) instead of at the top of the
   // list, where it is easy to miss while scrolling/installing.
   const [engineError, setEngineError] = useState<{ engine: string; message: string } | null>(null);
-  // When set, the Engines tab shows the profile editor for this engine instead
-  // of the install list. Cleared via the editor's "Back to engines" control.
-  const [profileEngine, setProfileEngine] = useState<EngineDefinition | null>(null);
   // Retry-after-login for every auth-gated write on this page: the settings
   // save, the timezone and language applies (each has its own endpoint), engine
   // install/uninstall/repair, adding a custom engine, resetting profiles,
@@ -1996,9 +2039,9 @@ export function Settings() {
       'player',
       (key) => (formSettings[playerKey] as unknown as Record<string, FieldValue>)[key],
       (key, value) => {
-        // Changing the engine resets the strength to Default: an engine's levels
+        // Changing the engine resets the profile to Default: an engine's profiles
         // are engine-specific, so carrying the old selection to a new engine would
-        // bind a level it does not have. Think Time is stored as a number.
+        // bind a profile it does not have. Think Time is stored as a number.
         if (key === 'engine')
           updateFormSettings(playerKey, { engine: String(value), elo: 'Default' });
         else if (key === 'think_time')
@@ -2029,7 +2072,21 @@ export function Settings() {
   const renderPlayerCard = (playerKey: 'player1' | 'player2', title: string) => {
     const ctx = buildPlayerCtx(playerKey);
     const rows = buildSections(catalog, 'settings.player_detail', ctx.get).flatMap((section) =>
-      section.rows.map((node) => renderCatalogRow(node, ctx)),
+      section.rows.map((node) =>
+        renderCatalogRow(node, ctx, {
+          helpExtra:
+            node.id === 'field.player.elo' ? (
+              <Link
+                to={engineProfilesPath(formSettings[playerKey].engine, {
+                  profile: formSettings[playerKey].elo,
+                  from: 'players',
+                })}
+              >
+                {t('settingsPage.players.editProfiles')}
+              </Link>
+            ) : undefined,
+        }),
+      ),
     );
     return (
       <Card className="mb-6">
@@ -2361,15 +2418,27 @@ export function Settings() {
         {/* ENGINES TAB */}
         {activeTab === 'engines' && (
           <section>
-            {profileEngine ? (
+            {profileEngineName ? (
               <EngineProfileEditor
-                engineName={profileEngine.name}
-                displayName={profileEngine.display_name}
-                onBack={() => setProfileEngine(null)}
+                key={profileEngineName}
+                engineName={profileEngineName}
+                displayName={
+                  engines.find((e) => e.name === profileEngineName)?.display_name
+                  ?? profileEngineName
+                }
+                initialProfileId={profileQueryId}
+                backLabel={profileFrom ? t(ENGINE_PROFILES_BACK_LABEL[profileFrom]) : undefined}
+                onBack={() =>
+                  navigate(
+                    profileFrom
+                      ? `/settings/${ENGINE_PROFILES_BACK_TAB[profileFrom]}`
+                      : '/settings/engines',
+                  )
+                }
                 onProfilesReset={() => {
                   setEngineLevels((prev) => {
                     const next = { ...prev };
-                    delete next[profileEngine.name];
+                    delete next[profileEngineName];
                     return next;
                   });
                 }}
@@ -2390,7 +2459,7 @@ export function Settings() {
                   onResume={resumeInstall}
                   onDiscard={discardInstall}
                   onCancel={cancelInstall}
-                  onConfigureProfiles={setProfileEngine}
+                  onConfigureProfiles={(engine) => navigate(engineProfilesPath(engine.name))}
                   onResetProfiles={resetEngineProfiles}
                   onDismissFailure={dismissEngineFailure}
                 />
@@ -4383,9 +4452,9 @@ function CentaurDisplayDriverDetails({ reloadToken }: { reloadToken: number }) {
 }
 
 
-// A waveform profile as reported by /api/system/display-tuning. The dropdown is
+// A waveform as reported by /api/system/display-tuning. The dropdown is
 // driven entirely by the backend registry (waveform_profiles.py), filtered to
-// the active controller, so adding a profile there is enough -- no change here.
+// the active controller, so adding a waveform there is enough -- no change here.
 // `source`/`url` credit the waveform's origin and are shown in the card.
 interface WaveformProfile {
   key: string;
@@ -4782,10 +4851,9 @@ function CentaurSettings() {
   const importPollCancelRef = useRef(false);
 
   // Centaur engine-proxy config (translate mode): which UC engine Centaur drives
-  // and its strength level -- an engine profile id (a generated "Profile-<hex>",
-  // or the reserved "Default"), chosen exactly like a player's strength. The
-  // level resolves to UCI options server-side; Hash is clamped to the memory
-  // floor there too.
+  // and its profile -- a generated "Profile-<hex>", or the reserved "Default",
+  // chosen exactly like a player's profile. The profile resolves to UCI options
+  // server-side; Hash is clamped to the memory floor there too.
   const [engineList, setEngineList] = useState<{ value: string; label: string }[]>([]);
   const [centaurEngine, setCentaurEngine] = useState('stockfish');
   const [centaurLevel, setCentaurLevel] = useState('Default');
@@ -4840,9 +4908,9 @@ function CentaurSettings() {
       });
   }, []);
 
-  // Load the selectable strength levels for the chosen engine, mirroring the
-  // player strength picker. Reruns when the engine changes so the dropdown always
-  // reflects that engine's profiles; falls back to the currently-selected level
+  // Load the selectable profiles for the chosen engine, mirroring the
+  // player profile picker. Reruns when the engine changes so the dropdown always
+  // reflects that engine's profiles; falls back to the currently-selected profile
   // as a single option if the list cannot be fetched.
   useEffect(() => {
     let active = true;
@@ -4910,7 +4978,7 @@ function CentaurSettings() {
     }
   };
 
-  // Persist the Centaur engine and strength as soon as either dropdown changes
+  // Persist the Centaur engine and profile as soon as either dropdown changes
   // (no Save button -- the same contract as other value settings and Direct Mode
   // on this card). The dedicated endpoint still resolves the level to UCI
   // options; the proxy reads them at its next launch. Values are passed in so
@@ -4938,8 +5006,8 @@ function CentaurSettings() {
     }
   };
 
-  // Changing the engine resets strength to Default: an engine's levels are
-  // engine-specific, so carrying the old selection would bind a level it does
+  // Changing the engine resets the profile to Default: an engine's profiles are
+  // engine-specific, so carrying the old selection would bind a profile it does
   // not have. Same reset Players applies when its engine dropdown changes.
   const updateCentaurEngine = (nextEngine: string) => {
     setCentaurEngine(nextEngine);
@@ -5152,7 +5220,7 @@ function CentaurSettings() {
               onChange={(v) => updateDirectMode(v)}
               disabled={directBusy || busy !== null || centaurRunning}
             />
-            {/* Engine + strength apply only in translate mode, where Centaur
+            {/* Engine + profile apply only in translate mode, where Centaur
                 plays through the UC engine proxy; in direct mode Centaur uses its
                 own engine, so these controls are hidden to avoid implying they
                 take effect. */}
@@ -5170,7 +5238,22 @@ function CentaurSettings() {
                     disabled={engineBusy || centaurRunning}
                   />
                 </FormRow>
-                <FormRow label={t('settingsPage.systemActions.strengthLabel')} help={t('settingsPage.systemActions.strengthHelp')}>
+                <FormRow
+                  label={t('settingsPage.systemActions.profileLabel')}
+                  help={
+                    <>
+                      {t('settingsPage.systemActions.profileHelp')}{' '}
+                      <Link
+                        to={engineProfilesPath(centaurEngine, {
+                          profile: centaurLevel,
+                          from: 'centaur',
+                        })}
+                      >
+                        {t('settingsPage.players.editProfiles')}
+                      </Link>
+                    </>
+                  }
+                >
                   <Select
                     value={centaurLevel}
                     options={engineLevels.length ? engineLevels : [{ value: centaurLevel, label: centaurLevel }]}

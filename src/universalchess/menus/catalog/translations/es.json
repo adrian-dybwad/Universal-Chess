@@ -678,9 +678,9 @@
       "help": "Cuánto tiempo puede pensar el motor por jugada"
     },
     "field.player.elo": {
-      "label": "ELO / Estilo",
-      "boardLabel": "ELO\n{value}",
-      "help": "Fuerza o personalidad del motor"
+      "label": "Perfil",
+      "boardLabel": "Perfil\n{value}",
+      "help": "El perfil del motor que se juega. Recibe el nombre del Elo, el estilo, o ambos que establece."
     },
     "field.display.show_board": {
       "label": "Mostrar tablero",

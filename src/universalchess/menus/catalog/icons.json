@@ -30,7 +30,7 @@
     "account": { "description": "User account.", "epaper": true, "web": true },
     "lichess": { "description": "Lichess service.", "epaper": true, "web": false },
     "engine": { "description": "Chess engine / CPU.", "epaper": true, "web": true },
-    "elo": { "description": "Engine strength / ELO.", "epaper": true, "web": false },
+    "elo": { "description": "Engine profile.", "epaper": true, "web": false },
     "timer": { "description": "Timer (off / disabled).", "epaper": true, "web": true },
     "timer_checked": { "description": "Timer (enabled).", "epaper": true, "web": true },
     "info": { "description": "Information.", "epaper": true, "web": true },

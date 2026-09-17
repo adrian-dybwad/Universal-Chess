@@ -65,8 +65,8 @@ export function profileLabel(profile: Profile): string {
 /**
  * One settings key that referenced a profile and was moved by a mutation.
  *
- * A profile's name is stored as a foreign key by the player strength settings
- * and the Centaur level, and nothing enforced that reference: a rename or delete
+ * A profile's identity is stored as a foreign key by the player profile settings
+ * and the Centaur profile, and nothing enforced that reference: a rename or delete
  * used to leave the setting naming a section that no longer existed, which the
  * engine silently resolved to its own defaults at game start. The backend now
  * moves those references and reports what it moved (see
