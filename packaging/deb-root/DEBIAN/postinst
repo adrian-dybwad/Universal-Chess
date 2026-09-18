@@ -130,10 +130,10 @@ LEGACY_RC_LOCAL_MARKER="Starting DGT Centaur menu"
 # Why the tree is not simply handed to the service user: scripts/ holds the
 # helpers that each have a passwordless sudo grant (install-update, bt-admin,
 # uc-set-timezone, centaur-import-mount, uc-engine-deps, uc-build-memory,
-# centaur-armhf-setup). Write access to a file root will execute on request is
-# equivalent to root, so a compromised web process could rewrite a helper and run
-# its own code as root through the existing grant. The Python sources the
-# root-run units execute and .venv/ carry the same exposure.
+# centaur-armhf-setup, uc-centaur-launch). Write access to a file root will
+# execute on request is equivalent to root, so a compromised web process could
+# rewrite a helper and run its own code as root through the existing grant. The
+# Python sources the root-run units execute and .venv/ carry the same exposure.
 #
 # config/ is listed whole because centaur.ini is rewritten via a temp file
 # created in that directory, and engine .uci profiles are added and removed
@@ -799,6 +799,32 @@ if [ -f "$ARMHF_SETUP_HELPER" ]; then
     fi
 else
     echo -e "::: Warning: centaur-armhf helper not found at $ARMHF_SETUP_HELPER"
+fi
+
+# Grant the pinned Original Centaur launch helper. Direct mode has to run the
+# imported binary as root (GPIO/SPI via /dev/mem), and the translate-mode exit
+# chord has to signal it. `sudo ./centaur` cannot be granted -- sudoers
+# authorizes a resolved absolute path, not a relative command under a
+# caller-chosen working directory -- so on a stock board it died with "a
+# terminal is required to read the password" and Original Centaur bounced
+# straight back to Universal Chess. Granting pkill would let the service
+# signal any process. As with the other helpers, grant passwordless sudo to
+# exactly this one pinned script, whose verb case (launch / stop) is the
+# boundary.
+echo -e "::: Configuring sudoers for Original Centaur launch"
+CENTAUR_LAUNCH_HELPER="${DGTCM_PATH}/scripts/uc-centaur-launch"
+if [ -f "$CENTAUR_LAUNCH_HELPER" ]; then
+    chmod +x "$CENTAUR_LAUNCH_HELPER"
+    CENTAUR_LAUNCH_SUDOERS_FILE="/etc/sudoers.d/universal-chess-centaur-launch"
+    echo "$PRIMARY_USER ALL=(root) NOPASSWD: $CENTAUR_LAUNCH_HELPER" > "$CENTAUR_LAUNCH_SUDOERS_FILE"
+    chmod 440 "$CENTAUR_LAUNCH_SUDOERS_FILE"
+    # Validate before it can take effect; a malformed drop-in can lock out sudo.
+    if ! visudo -cf "$CENTAUR_LAUNCH_SUDOERS_FILE" >/dev/null 2>&1; then
+        echo -e "::: Warning: centaur-launch sudoers entry invalid; removing"
+        rm -f "$CENTAUR_LAUNCH_SUDOERS_FILE"
+    fi
+else
+    echo -e "::: Warning: centaur-launch helper not found at $CENTAUR_LAUNCH_HELPER"
 fi
 
 # Grant the pinned engine-dependency helper. Most engines build with the

@@ -1,0 +1,105 @@
+#!/bin/sh
+# Root helper for Original Centaur's privileged process lifecycle: launching the
+# imported binary as root (direct mode) and terminating it (the translate-mode
+# held-BACK exit chord).
+#
+# Invoked by the board through a single pinned, passwordless sudo grant the
+# package postinst installs:
+#
+#   <service-user> ALL=(root) NOPASSWD: /opt/universalchess/scripts/uc-centaur-launch
+#
+# Why a fixed helper instead of NOPASSWD on ./centaur or pkill: sudoers
+# authorizes a resolved absolute path, so `sudo ./centaur` under a caller-chosen
+# working directory cannot be granted at all. On a stock board that has no
+# blanket NOPASSWD rule, that command dies with "a terminal is required to read
+# the password" and Original Centaur bounces straight back to Universal Chess.
+# Granting pkill would let the service signal any process. This helper narrows
+# the grant to exactly two operations and refuses anything else -- the `case` is
+# the security boundary; do not add a passthrough/escape branch.
+#
+# Callers use `sudo -n` so a missing grant fails fast ("a password is required")
+# and is logged, rather than hanging on a password prompt.
+set -u
+
+usage() {
+	echo "usage: uc-centaur-launch {launch|stop}" >&2
+	exit 2
+}
+
+[ "$#" -eq 1 ] || usage
+
+# Test-only override of the binary path. sudo's default env_reset strips
+# caller-set variables, so under the real grant this never arrives and the
+# pinned ~<sudo-user>/centaur/centaur path always applies.
+BIN="${UC_CENTAUR_BIN:-}"
+
+resolve_bin() {
+	if [ -n "$BIN" ]; then
+		printf '%s\n' "$BIN"
+		return
+	fi
+	user="${SUDO_USER:-}"
+	if [ -z "$user" ]; then
+		echo "refused: must be invoked via sudo" >&2
+		exit 3
+	fi
+	# Usernames the service actually has: alphanumerics, underscore, hyphen.
+	# Reject anything else before handing it to getent.
+	case "$user" in
+		*[!a-zA-Z0-9_-]*)
+			echo "refused: invalid SUDO_USER" >&2
+			exit 3
+			;;
+	esac
+	home=$(getent passwd "$user" | cut -d: -f6)
+	if [ -z "$home" ]; then
+		echo "refused: cannot resolve home for $user" >&2
+		exit 3
+	fi
+	printf '%s\n' "$home/centaur/centaur"
+}
+
+assert_pinned_path() {
+	bin="$1"
+	# Traversal first: a suffix check alone would accept
+	# '<somewhere>/centaur/centaur/../../evil'.
+	case "$bin" in
+		*..*)
+			echo "refused: path traversal" >&2
+			exit 3
+			;;
+	esac
+	# The Original Centaur binary always lives at ~/centaur/centaur. Anything
+	# else would turn the grant into arbitrary root execution.
+	case "$bin" in
+		*/centaur/centaur) ;;
+		*)
+			echo "refused: not the pinned centaur binary" >&2
+			exit 3
+			;;
+	esac
+}
+
+case "$1" in
+	launch)
+		bin=$(resolve_bin)
+		assert_pinned_path "$bin"
+		[ -f "$bin" ] || { echo "no such binary: $bin" >&2; exit 4; }
+		# Best-effort: the import may have left the bit off. Failure is not
+		# fatal; exec reports a non-executable file itself.
+		chmod +x "$bin" 2>/dev/null || true
+		cd "$(dirname "$bin")" || exit 5
+		# Replace this helper so the process name is `centaur` (what the web
+		# status probe and `stop` both match) and so a signal aimed at centaur
+		# does not have to go through an extra shell.
+		exec "$bin"
+		;;
+	stop)
+		# -x: exact process name. A substring match would also hit this helper
+		# (uc-centaur-launch) and any other process with "centaur" in the name.
+		exec pkill -x centaur
+		;;
+	*)
+		usage
+		;;
+esac

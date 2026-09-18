@@ -16,7 +16,8 @@ import signal
 import time
 from typing import Callable, Optional
 
-from universalchess.utils.led import LED_SPEED_NORMAL, LED_INTENSITY_DEFAULT
+from universalchess.paths import CENTAUR_LAUNCH
+from universalchess.utils.led import LED_INTENSITY_DEFAULT, LED_SPEED_NORMAL
 
 # The single command that brings Universal Chess back after the original Centaur
 # software exits. Defined once so every return path -- the two on-board handoffs
@@ -35,6 +36,14 @@ RESTART_UNIVERSAL_CHESS_CMD = [
     "universal-chess.service",
 ]
 
+# Direct-mode launch and the translate-mode exit chord. Both used to invoke
+# system binaries the package could not grant (`sudo ./centaur`, `sudo pkill
+# centaur`); they now go through the pinned helper. ``-n`` so a missing grant
+# fails with "a password is required" instead of stalling on a prompt the
+# service has no terminal to answer.
+CENTAUR_DIRECT_LAUNCH_CMD = ["sudo", "-n", CENTAUR_LAUNCH, "launch"]
+CENTAUR_STOP_CMD = ["sudo", "-n", CENTAUR_LAUNCH, "stop"]
+
 # Signals that mean "the user asked centaur to exit" -- the return/exit chord
 # pkills it (SIGTERM), or a shutdown/reboot terminates it -- rather than a crash.
 # These are reported at info; every other non-zero exit is an error worth
@@ -49,9 +58,9 @@ def classify_centaur_exit(returncode: int) -> tuple[str, str]:
 
     ``subprocess`` reports a signal death as a negative code, while a child
     launched through ``sudo`` (direct mode) instead surfaces it as
-    ``128 + signal``. Both encodings are normalized here so the direct
-    (``sudo ./centaur``) and translate (``./centaur``) launches classify
-    identically.
+    ``128 + signal``. Both encodings are normalized here so the direct-mode
+    launch (root, via the pinned helper) and the translate-mode launch
+    (``./centaur``) classify identically.
 
     Returns ``("info", ...)`` for a clean exit (0) or an expected termination
     signal (the return/exit chord, shutdown), and ``("error", ...)`` for a crash

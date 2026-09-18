@@ -1350,6 +1350,21 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Original Centaur in direct mode bounced straight back to Universal Chess
+  on a stock board**: launching it ran `sudo ./centaur`, which sudoers cannot
+  grant -- it authorizes a resolved absolute path, not a relative command
+  under a caller-chosen working directory. On a Trixie Lite image with no
+  blanket NOPASSWD rule, sudo died with "a terminal is required to read the
+  password" / "a password is required", the Event Log reported "Original
+  Centaur exited with code 1", and the board returned to the menu immediately.
+  Boards where an operator had added passwordless sudo by hand never saw it,
+  which is why it survived. Direct mode and the translate-mode held-BACK
+  chord (which used the equally ungranted `sudo pkill centaur`) now go
+  through one pinned helper, `scripts/uc-centaur-launch`, which the package
+  grants passwordless sudo on and which performs only those two operations.
+  Callers use `sudo -n` so a missing grant fails immediately rather than
+  stalling on a prompt the service has no terminal to answer.
+
 - **A leftover player name no longer replaces the engine in the PGN**:
   The Name field is only shown for Human, but a name set there stayed on
   the slot after Type switched to Engine or Hand+Brain and overrode the

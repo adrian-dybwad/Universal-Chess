@@ -82,12 +82,6 @@ UNENFORCED: dict[tuple[str, str], str] = {
     ("services/centaur_serial/relay.py", "ln"): "owed a pinned relay helper",
     ("services/centaur_serial/relay.py", "rm"): "owed a pinned relay helper",
     ("services/centaur_serial/relay.py", "systemctl"): "owed a pinned relay helper",
-    # Direct mode runs the original Centaur binary as root from its own directory.
-    # sudoers authorizes a resolved absolute path, so a relative "./centaur" under
-    # a caller-chosen working directory cannot be expressed as a grant at all --
-    # closing this needs a helper that launches one pinned path.
-    ("app/board_app.py", "./centaur"): "relative path is not expressible as a grant",
-    ("app/board_app.py", "pkill"): "owed a pinned helper alongside the direct-mode launch",
 }
 
 

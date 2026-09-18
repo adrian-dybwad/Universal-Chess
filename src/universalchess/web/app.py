@@ -4385,8 +4385,9 @@ def _centaur_is_running() -> bool:
 
     Detection matches the centaur main process by exact name. This is robust
     across both launch modes -- translate runs ``./centaur`` as the pi user and
-    direct runs ``sudo ./centaur`` (root), but the process name is ``centaur`` in
-    both, while its engine subprocess has a different name and is not matched.
+    direct runs the pinned helper which execs the binary as root -- but the
+    process name is ``centaur`` in both, while its engine subprocess has a
+    different name and is not matched.
     Process names under ``/proc`` are world-readable, so the (non-root) web
     process can see a root-owned direct-mode centaur too.
     """

@@ -5930,9 +5930,10 @@ def _run_centaur():
     time.sleep(1)
     
     # subprocess launches Centaur and stops this service below without a shell;
-    # the commands are fixed constants run via sudo (NOPASSWD on the Pi).
+    # the launch goes through the pinned helper (NOPASSWD on that one path).
     import subprocess  # nosec B404
     from universalchess.services.power import (
+        CENTAUR_DIRECT_LAUNCH_CMD,
         perform_centaur_handoff,
         return_to_universal_chess,
     )
@@ -5941,17 +5942,17 @@ def _run_centaur():
 
     def _launch_centaur(software_path: str) -> None:
         # 0o755 is the conventional mode for an executable program (not data);
-        # the launcher runs it via sudo below.
+        # the helper also ensures the bit as root if this is denied.
         try:
             os.chmod(software_path, 0o755)  # noqa: S103  # nosec B103  # nosemgrep: python.lang.security.audit.insecure-file-permissions.insecure-file-permissions
         except Exception as e:
             log.warning(f"Could not set execute permissions on centaur: {e}")
-        # Run Centaur from its own directory, without a shell. The command is a
-        # fixed constant. Output is captured to centaur.log and the exit is
-        # classified/logged by _run_centaur_binary (a crash is no longer silent).
-        # sudo/./centaur are trusted, controlled-PATH paths (S607/B607 accepted).
-        os.chdir(centaur_dir)
-        _run_centaur_binary(["sudo", "./centaur"], cwd=centaur_dir)  # noqa: S607
+        # The helper cds to the binary's directory and execs it as root. Output
+        # is captured to centaur.log and the exit is classified/logged by
+        # _run_centaur_binary (a crash is no longer silent). sudo -n so a missing
+        # grant fails immediately rather than prompting for a password this
+        # service has no terminal to answer.
+        _run_centaur_binary(CENTAUR_DIRECT_LAUNCH_CMD, cwd=centaur_dir)
 
     def _return_to_universal() -> None:
         # Take the panel back before drawing: unlike translate mode, direct mode
@@ -6066,6 +6067,7 @@ def _run_centaur_translate():
     import subprocess  # nosec B404
     from universalchess.paths import CENTAUR_DISPLAY_SHIM
     from universalchess.services.power import (
+        CENTAUR_STOP_CMD,
         perform_centaur_translate_handoff,
         return_to_universal_chess,
     )
@@ -6109,7 +6111,7 @@ def _run_centaur_translate():
         # runs the normal teardown (restore port, stop gateway) and then restarts
         # the UC service (return_to_universal_chess) so Universal Chess comes back.
         log.info("[centaur-serial] exit chord detected; terminating centaur")
-        subprocess.run(["sudo", "pkill", "centaur"], check=False)  # noqa: S607  # nosec B603 B607
+        subprocess.run(CENTAUR_STOP_CMD, check=False)  # noqa: S603  # nosec B603 - pinned helper argv, no shell, no user input
 
     # Piece-in-hand overlay (display-only) is gated behind a flag: it re-broadcasts
     # a lightweight pending-move overlay from this process, whereas the

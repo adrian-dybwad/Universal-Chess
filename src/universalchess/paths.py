@@ -69,6 +69,13 @@ WIFI_ADMIN = f"{SCRIPTS_DIR}/uc-wifi-admin"
 # apt itself would be unrestricted root.
 OS_UPGRADE_ADMIN = f"{SCRIPTS_DIR}/uc-os-upgrade"
 
+# uc-centaur-launch: runs the imported Original Centaur binary as root (direct
+# mode) and terminates it (the translate-mode held-BACK chord). sudoers cannot
+# grant `sudo ./centaur` (a relative path under a caller-chosen cwd), so without
+# this helper a stock board dies with "a password is required" and bounces
+# straight back to Universal Chess.
+CENTAUR_LAUNCH = f"{SCRIPTS_DIR}/uc-centaur-launch"
+
 # Resources directory relative to this file (works in both installed and dev environments)
 # This file is at: <base>/paths.py, so resources is at: <base>/resources
 RESOURCES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources")

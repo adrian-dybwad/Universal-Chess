@@ -8,11 +8,12 @@ which handed the service user write access to the *entire* install tree. That
 tree contains ``scripts/``, and every helper in it is the target of a
 passwordless sudo grant (``install-update``, ``bt-admin``, ``uc-set-timezone``,
 ``centaur-import-mount``, ``uc-engine-deps``, ``uc-build-memory``,
-``centaur-armhf-setup``). Write access to a file that root will execute on
-demand is equivalent to root: a compromised web process could rewrite
-``bt-admin`` and invoke its own code as root through the existing grant. The
-same applied to the Python sources the root-run units execute and to
-``config/ssl``, whose private keys became readable by the service user.
+``centaur-armhf-setup``, ``uc-centaur-launch``). Write access to a file that
+root will execute on demand is equivalent to root: a compromised web process
+could rewrite ``bt-admin`` and invoke its own code as root through the
+existing grant. The same applied to the Python sources the root-run units
+execute and to ``config/ssl``, whose private keys became readable by the
+service user.
 
 The fix inverts the default: the tree is root-owned, and only the paths the
 running product genuinely writes are handed to the service user. These tests
