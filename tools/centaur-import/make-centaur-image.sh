@@ -2,7 +2,7 @@
 #
 # make-centaur-image.sh
 #
-# Capture the original DGT Centaur SD card's Linux (ext4) root partition into a
+# Capture the original DGT Centaur SD card's Linux (ext4) partitions into a
 # compressed image that can be uploaded to Universal Chess (System -> Original
 # Centaur -> Import from SD).
 #
@@ -12,9 +12,15 @@
 # Universal Chess runs on Linux and loop-mounts that image read-only to extract
 # the app. The same dd path also works on Linux, so one script serves both.
 #
+# Official DGT stores persistent settings (including settings/epaper.info, which
+# original dgt_epaper.createEPaper requires) on the smaller ext4 data partition.
+# The default capture therefore images the largest Linux partition (app) and the
+# next-largest (settings) into one upload. A card with a single Linux partition
+# is still a gzip of that ext4, matching the previous format.
+#
 # The SD is only ever read (never written), so it is safe to run against a
-# read-only card. The image is the partition, not the whole 4 GB disk, so the
-# upload is ~200 MB (gzip collapses the partition's free space).
+# read-only card. The image is the partitions, not the whole 4 GB disk, so the
+# upload is a few hundred MB (gzip collapses each partition's free space).
 #
 # Usage:
 #   ./make-centaur-image.sh [--disk <id>] [--output <file>] [--yes] [--all-linux]
@@ -23,9 +29,9 @@
 #                   Linux). Skips auto-detection.
 #   --output <file> Output image path (default: ./centaur-sd.img.gz).
 #   --yes           Do not prompt for confirmation.
-#   --all-linux     Image every Linux partition found (root + data), not just
-#                   the largest. Use only if import cannot find the app on the
-#                   root partition.
+#   --all-linux     Image every Linux partition found as separate numbered
+#                   files, not a single bundle. Use only if import cannot find
+#                   the app on the largest partition.
 #   -h, --help      Show this help.
 
 set -euo pipefail
@@ -75,7 +81,8 @@ sha256_of() {
 # Partition discovery. Each backend prints, one per line:
 #   <raw-partition-device> <size-bytes> <human-label>
 # sorted so the FIRST line is the largest Linux partition (the ext4 root that
-# holds the app -- the smaller Linux partition is persistent data).
+# holds the app -- the smaller Linux partition is persistent data, including
+# settings/epaper.info).
 # ---------------------------------------------------------------------------
 
 discover_macos() {
@@ -160,8 +167,10 @@ fi
 if [ "$ALL_LINUX" = "1" ]; then
   selected="$parts"
 else
-  # Largest Linux partition = ext4 root holding the app.
-  selected="$(printf '%s\n' "$parts" | head -n1)"
+  # Largest Linux partition = ext4 root holding the app. Next-largest = the
+  # data volume original DGT mounts at ~/centaur/settings. Both go in the
+  # default upload so createEPaper can open settings/epaper.info.
+  selected="$(printf '%s\n' "$parts" | awk 'NR<=2')"
 fi
 
 echo "" >&2
@@ -176,8 +185,10 @@ if [ "$ASSUME_YES" != "1" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Image it. Single partition -> OUTPUT directly. Multiple (--all-linux) ->
-# OUTPUT plus a numbered suffix per partition, since each is a separate ext4.
+# Image it. Single partition -> gzip of that ext4 (legacy format). Two default
+# partitions -> gzip of a tar holding centaur-root.img.gz + centaur-data.img.gz,
+# one upload the importer unpacks. --all-linux with multiple partitions ->
+# numbered files, since each is a separate ext4 the user picks from.
 # bs is given in plain bytes (4 MiB) which both BSD (macOS) and GNU dd accept.
 # ---------------------------------------------------------------------------
 BS=4194304
@@ -194,12 +205,30 @@ image_one() {
   note "SHA-256: $(sha256_of "$out")"
 }
 
-n="$(printf '%s\n' "$selected" | wc -l | tr -d ' ')"
-if [ "$n" = "1" ]; then
-  dev="$(printf '%s\n' "$selected" | awk '{print $1}')"
-  image_one "$dev" "$OUTPUT"
-  produced="$OUTPUT"
-else
+pack_bundle() {
+  local root_dev="$1" data_dev="$2" out="$3"
+  local work
+  work="$(mktemp -d "${TMPDIR:-/tmp}/centaur-img.XXXXXX")"
+  image_one "$root_dev" "$work/centaur-root.img.gz"
+  image_one "$data_dev" "$work/centaur-data.img.gz"
+  note "Packing application and settings partitions into ${out}..."
+  # Member names are the basenames the importer allow-lists. cd so tar does not
+  # store the temp-dir prefix. ustar + COPYFILE_DISABLE keep macOS from adding
+  # AppleDouble/PAX members the importer would refuse as an unexpected layout.
+  (
+    cd "$work" || exit 1
+    COPYFILE_DISABLE=1 tar --format=ustar -cf - centaur-root.img.gz centaur-data.img.gz
+  ) | gzip -c > "$out"
+  rm -rf "$work"
+  local sz
+  sz="$(wc -c < "$out" | tr -d ' ')"
+  [ "$sz" -gt 0 ] || die "produced an empty image (${out}); check the device and sudo access."
+  note "Wrote ${out} (${sz} bytes compressed)."
+  note "SHA-256: $(sha256_of "$out")"
+}
+
+n="$(printf '%s\n' "$selected" | sed '/^$/d' | wc -l | tr -d ' ')"
+if [ "$ALL_LINUX" = "1" ] && [ "$n" != "1" ]; then
   produced=""
   i=1
   while read -r dev _bytes _name; do
@@ -211,6 +240,15 @@ else
   done <<EOF
 $selected
 EOF
+elif [ "$n" = "1" ]; then
+  dev="$(printf '%s\n' "$selected" | awk '{print $1}')"
+  image_one "$dev" "$OUTPUT"
+  produced="$OUTPUT"
+else
+  root_dev="$(printf '%s\n' "$selected" | awk 'NR==1{print $1}')"
+  data_dev="$(printf '%s\n' "$selected" | awk 'NR==2{print $1}')"
+  pack_bundle "$root_dev" "$data_dev" "$OUTPUT"
+  produced="$OUTPUT"
 fi
 
 echo "" >&2

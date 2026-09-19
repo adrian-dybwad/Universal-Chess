@@ -1,10 +1,10 @@
 """Tests for the SD-capture helper (tools/centaur-import/make-centaur-image.sh).
 
-The helper reads the original DGT Centaur SD card's ext4 root partition into a
+The helper reads the original DGT Centaur SD card's ext4 partitions into a
 gzip image for upload (System -> Original Centaur -> Import from SD). Its Linux
-backend has to pick the right partition out of the card's block devices: the
-ext4 root (largest ext partition) and never the vfat boot partition or the whole
-disk, since dd'ing either produces an image the importer cannot loop-mount.
+backend has to pick the right partitions out of the card's block devices: the
+ext4 root (largest ext partition, the app) and the smaller ext4 data volume
+(settings/epaper.info), and never the vfat boot partition or the whole disk.
 
 That selection only runs against real block devices, so the tests drive the
 script end-to-end with the external commands it shells out to (uname, lsblk,
@@ -14,11 +14,13 @@ device names cannot drift.
 """
 
 import gzip
+import io
 import json
 import os
 import re
 import stat
 import subprocess
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -163,6 +165,18 @@ def _image_bytes(path):
         return fh.read()
 
 
+def _bundle_inner(path):
+    """Map tar member name -> inner decompressed payload for a gzipped bundle."""
+    with gzip.open(path, "rb") as fh:
+        raw = io.BytesIO(fh.read())
+    with tarfile.open(fileobj=raw, mode="r:") as tar:
+        out = {}
+        for member in tar.getmembers():
+            extracted = tar.extractfile(member)
+            out[Path(member.name).name] = gzip.decompress(extracted.read())
+        return out
+
+
 # --------------------------------------------------------------------------- #
 # Linux partition discovery
 # --------------------------------------------------------------------------- #
@@ -180,23 +194,28 @@ def test_images_largest_ext_partition_on_linux(linux_card, tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert "Traceback" not in proc.stderr
     assert f"/dev/{_ROOT_PART} {_size_of(_ROOT_PART)} {_ROOT_PART}" in proc.stderr
+    assert f"/dev/{_DATA_PART} {_size_of(_DATA_PART)} {_DATA_PART}" in proc.stderr
     assert out.is_file()
-    assert _image_bytes(out) == _stub_payload(f"/dev/{_ROOT_PART}")
+    members = _bundle_inner(out)
+    assert members["centaur-root.img.gz"] == _stub_payload(f"/dev/{_ROOT_PART}")
+    assert members["centaur-data.img.gz"] == _stub_payload(f"/dev/{_DATA_PART}")
 
 
-@pytest.mark.parametrize("excluded", [_BOOT_PART, _DATA_PART, _UNFORMATTED_PART, _CARD_DISK])
-def test_only_the_ext_root_is_imaged_by_default(linux_card, tmp_path, excluded):
-    # The default single-partition run must read exactly the ext4 root: imaging
-    # the vfat boot partition, the unformatted partition, or the whole disk gives
-    # the importer something it cannot loop-mount as the app filesystem, and the
-    # smaller ext4 data partition has no app on it. Manifests as the excluded
-    # device appearing in the selection list / as the imaged payload.
+@pytest.mark.parametrize("excluded", [_BOOT_PART, _UNFORMATTED_PART, _CARD_DISK])
+def test_boot_and_whole_disk_are_never_imaged(linux_card, tmp_path, excluded):
+    # The default run images the ext4 root and the smaller ext4 data partition
+    # (original DGT stores settings/epaper.info on the data volume). Imaging the
+    # vfat boot partition, the unformatted partition, or the whole disk gives
+    # the importer something it cannot loop-mount. Manifests as the excluded
+    # device appearing in the selection list / as a bundle member payload.
     out = tmp_path / "centaur-sd.img.gz"
     proc = _run(linux_card, tmp_path, "--disk", _CARD_DISK, "--output", str(out))
 
     assert proc.returncode == 0, proc.stderr
     assert f"/dev/{excluded} " not in proc.stderr
-    assert _image_bytes(out) != _stub_payload(f"/dev/{excluded}")
+    members = _bundle_inner(out)
+    excluded_payload = _stub_payload(f"/dev/{excluded}")
+    assert excluded_payload not in members.values()
 
 
 def test_autodetect_picks_removable_disk_with_ext_partition(linux_card, tmp_path):
@@ -209,7 +228,9 @@ def test_autodetect_picks_removable_disk_with_ext_partition(linux_card, tmp_path
 
     assert proc.returncode == 0, proc.stderr
     assert f"Target disk: {_CARD_DISK}" in proc.stderr
-    assert _image_bytes(out) == _stub_payload(f"/dev/{_ROOT_PART}")
+    members = _bundle_inner(out)
+    assert members["centaur-root.img.gz"] == _stub_payload(f"/dev/{_ROOT_PART}")
+    assert members["centaur-data.img.gz"] == _stub_payload(f"/dev/{_DATA_PART}")
 
 
 def test_all_linux_images_every_ext_partition_largest_first(linux_card, tmp_path):
@@ -237,7 +258,9 @@ def test_disk_argument_accepts_a_dev_path(linux_card, tmp_path):
     proc = _run(linux_card, tmp_path, "--disk", f"/dev/{_CARD_DISK}", "--output", str(out))
 
     assert proc.returncode == 0, proc.stderr
-    assert _image_bytes(out) == _stub_payload(f"/dev/{_ROOT_PART}")
+    members = _bundle_inner(out)
+    assert members["centaur-root.img.gz"] == _stub_payload(f"/dev/{_ROOT_PART}")
+    assert members["centaur-data.img.gz"] == _stub_payload(f"/dev/{_DATA_PART}")
 
 
 # --------------------------------------------------------------------------- #

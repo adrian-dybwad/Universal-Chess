@@ -12,6 +12,7 @@ import gzip
 import os
 import shutil
 import subprocess
+import tarfile
 import types
 from pathlib import Path
 
@@ -32,7 +33,9 @@ from universalchess.services.centaur_import.events import EVENT_CATEGORY
 from universalchess.services.centaur_import.installer import (
     ARMHF_SETUP_HELPER,
     MOUNT_HELPER,
+    _gunzip_to,
     ensure_armhf_support,
+    find_settings_dir,
 )
 
 # Debug artifacts the managed copy must never carry over from the SD image.
@@ -358,6 +361,33 @@ def test_install_from_image_preserves_existing_display_shim(tmp_path):
     assert (dest / "centaur").is_file()
 
 
+def test_install_from_image_preserves_existing_settings(tmp_path):
+    """Re-import must keep an existing settings/ tree, including epaper.info.
+
+    Why this test exists: original DGT's dgt_epaper.createEPaper opens
+    cwd-relative settings/epaper.info and raises SystemError Invalid epaper
+    definition file when the file is missing. The import wipes dest before
+    copying the SD app, and official DGT's app partition has no settings
+    files (they live on the data partition). Without preservation, a
+    re-import of a working tree deletes epaper.info and Original Centaur
+    dies on the next launch.
+
+    How the regression manifests: dest/settings/epaper.info is gone or its
+    contents were replaced by the empty factory.info seed.
+    """
+    dest = tmp_path / "dest" / "centaur"
+    dest.mkdir(parents=True)
+    (dest / "settings").mkdir()
+    (dest / "settings" / "epaper.info").write_text("panel-def\n")
+    (dest / "settings" / "factory.info").write_bytes(b"")
+
+    _install(tmp_path, dest=dest)
+
+    assert (dest / "settings" / "epaper.info").read_text() == "panel-def\n"
+    assert (dest / "settings" / "factory.info").is_file()
+    assert (dest / "centaur").is_file()
+
+
 def test_install_from_image_installs_engine_proxy_hook(tmp_path):
     """Import must replace engines/stockfish_pi with the UC proxy launcher.
 
@@ -584,6 +614,142 @@ def test_ensure_factory_marker_is_idempotent_and_preserves_content(tmp_path):
 
     assert created is False
     assert marker.read_bytes() == b"preexisting"
+
+
+def test_find_settings_dir_accepts_a_volume_root_with_epaper_info(tmp_path):
+    """Official DGT mounts the data partition at settings/, files at volume root.
+
+    Why this test exists: original dgt_epaper.createEPaper needs epaper.info.
+    That file sits at the root of the smaller ext4 volume, not under an app
+    directory, so detection keyed on a centaur binary would miss it.
+
+    How the regression manifests: find_settings_dir returns None for a volume
+    that contains epaper.info at the root, and the importer never copies it.
+    """
+    volume = tmp_path / "data"
+    volume.mkdir()
+    (volume / "epaper.info").write_text("panel-def\n")
+    (volume / "factory.info").write_bytes(b"")
+    assert find_settings_dir(volume) == volume
+
+
+def test_find_settings_dir_ignores_a_rootfs_without_epaper_files(tmp_path):
+    """A Linux root partition must not be treated as a settings volume.
+
+    Why this test exists: the app partition can contain an empty settings/
+    mountpoint and a factory.info seed. Copying that tree as settings would
+    overwrite real panel files with an empty directory.
+
+    How the regression manifests: find_settings_dir returns the rootfs (or
+    its empty settings mount) and the importer stages the wrong tree.
+    """
+    rootfs = tmp_path / "root"
+    (rootfs / "home" / "pi" / "centaur" / "settings").mkdir(parents=True)
+    (rootfs / "etc").mkdir()
+    (rootfs / "home" / "pi" / "centaur" / "settings" / "factory.info").write_bytes(b"")
+    assert find_settings_dir(rootfs) is None
+
+
+def test_find_settings_dir_finds_nested_settings_with_epaper_info(tmp_path):
+    """A settings/ subdirectory that holds epaper.info is still the source.
+
+    Why this test exists: some captures keep the files under settings/ rather
+    than at the volume root. Detection must find that tree so the copy is not
+    limited to the official data-partition layout.
+
+    How the regression manifests: nested epaper.info is ignored and Original
+    Centaur still dies with Invalid epaper definition file after import.
+    """
+    root = tmp_path / "mnt"
+    settings = root / "settings"
+    settings.mkdir(parents=True)
+    (settings / "epaper.info").write_text("panel-def\n")
+    assert find_settings_dir(root) == settings
+
+
+class _BundleMounter(_FakeMounter):
+    """Mounts root vs data members of a capture bundle as distinct trees.
+
+    Official DGT stores the app on the largest ext4 and settings files on the
+    smaller one. The fake must populate a different tree per image so the
+    importer's second mount is what supplies epaper.info.
+    """
+
+    def __call__(self, cmd, *args, **kwargs):
+        self.commands.append(list(cmd))
+        verb = next((c for c in cmd if c in ("mount", "stage", "umount")), None)
+        self.calls.append(verb)
+        if verb == "umount":
+            if self.mount_root.exists():
+                shutil.rmtree(self.mount_root)
+            return types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        if verb == "mount" and self.populate:
+            self.mount_root.mkdir(parents=True, exist_ok=True)
+            image = Path(cmd[cmd.index("mount") + 1])
+            if image.name == "centaur-data.img":
+                (self.mount_root / "epaper.info").write_text("panel-def\n")
+                (self.mount_root / "epaper_vcom.info").write_text("vcom\n")
+                (self.mount_root / "factory.info").write_bytes(b"")
+                (self.mount_root / "lost+found").mkdir()
+                (self.mount_root / "lost+found" / "orphan").write_text("no\n")
+            else:
+                _make_app_tree(self.mount_root, subdir="home/pi/centaur", cruft=self.cruft)
+        elif verb == "stage":
+            idx = cmd.index("stage")
+            src, dst = cmd[idx + 1], cmd[idx + 2]
+            shutil.copytree(src, dst)
+        return types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+
+def _write_settings_bundle(path: Path) -> None:
+    """Gzip-of-tar capture: centaur-root.img.gz + centaur-data.img.gz."""
+    work = path.parent / "bundle-work"
+    work.mkdir()
+    with gzip.open(work / "centaur-root.img.gz", "wb") as fh:
+        fh.write(b"ROOT-EXT4")
+    with gzip.open(work / "centaur-data.img.gz", "wb") as fh:
+        fh.write(b"DATA-EXT4")
+    tar_path = work / "bundle.tar"
+    with tarfile.open(tar_path, "w") as tar:
+        tar.add(work / "centaur-root.img.gz", arcname="centaur-root.img.gz")
+        tar.add(work / "centaur-data.img.gz", arcname="centaur-data.img.gz")
+    with gzip.open(path, "wb") as fh, open(tar_path, "rb") as tar_fh:
+        shutil.copyfileobj(tar_fh, fh)
+
+
+def test_install_from_image_copies_epaper_info_from_the_data_partition(tmp_path):
+    """A bundled capture must land data-partition settings into dest/settings.
+
+    Why this test exists: original DGT's dgt_epaper.createEPaper opens
+    settings/epaper.info and raises SystemError Invalid epaper definition file
+    when it is missing. Official DGT stores that file on the smaller ext4
+    (mounted at ~/centaur/settings on the original OS). Imaging only the app
+    partition, then seeding factory.info, produced a tree that died on
+    launch. The capture now packs both partitions; the importer must copy
+    the data member's settings files.
+
+    How the regression manifests: dest/settings/epaper.info is absent after
+    importing a bundle that contains it, or lost+found is copied in.
+    """
+    image = tmp_path / "centaur-sd.img.gz"
+    _write_settings_bundle(image)
+    dest = tmp_path / "dest" / "centaur"
+    mount_root = tmp_path / "mnt"
+    runner = _BundleMounter(mount_root)
+    install_from_image(
+        image,
+        dest,
+        tmp_dir=tmp_path / "tmp",
+        mount_root=mount_root,
+        runner=runner,
+        decompress=_gunzip_to,
+        ensure_runtime=lambda _runner: True,
+    )
+    assert (dest / "settings" / "epaper.info").read_text() == "panel-def\n"
+    assert (dest / "settings" / "epaper_vcom.info").read_text() == "vcom\n"
+    assert (dest / "centaur").is_file()
+    assert not (dest / "settings" / "lost+found").exists()
+    assert runner.calls == ["mount", "stage", "umount", "mount", "stage", "umount"]
 
 
 # ---------------------------------------------------------------------------
@@ -946,7 +1112,6 @@ def test_successful_import_records_each_stage_and_a_timed_completion(tmp_path, r
 
     events = recorded_events()
     assert [e["category"] for e in events] == [EVENT_CATEGORY] * len(events)
-    assert [e["level"] for e in events] == ["info"] * len(events)
 
     # read_events returns newest first; the pipeline order reads oldest first.
     oldest_first = list(reversed(events))
@@ -960,8 +1125,16 @@ def test_successful_import_records_each_stage_and_a_timed_completion(tmp_path, r
         "Configuring engine proxy...",
         "Finalizing...",
     ]
+    # A root-only capture (this fixture) has no settings/epaper.info. Original
+    # DGT dies on launch without that file, so the import must record it.
+    assert oldest_first[8]["level"] == "warning"
+    assert "epaper.info" in oldest_first[8]["message"]
+    assert oldest_first[8]["category"] == EVENT_CATEGORY
 
     completion = events[0]
+    assert completion["level"] == "info"
     assert completion["duration_ms"] >= 0
     assert str(result.file_count) in completion["message"]
-    assert len(events) == 9
+    assert len(events) == 10
+    assert [e["level"] for e in oldest_first[:8]] == ["info"] * 8
+    assert oldest_first[9]["level"] == "info"

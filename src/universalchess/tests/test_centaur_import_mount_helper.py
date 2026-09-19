@@ -164,6 +164,21 @@ def test_stage_copies_app_subtree_and_makes_it_readable(env_and_log):
     assert os.stat(staging / "engines").st_mode & 0o005 == 0o005
 
 
+def test_stage_allows_the_mount_root_as_source(env_and_log):
+    # Official DGT's data partition has settings files at the volume root, so
+    # the importer must stage the mountpoint itself, not only a subdirectory.
+    # The helper used to require `$MNT/*`, which refused `$MNT` and left
+    # epaper.info uncopied. Staging the mount root is still inside the grant
+    # boundary (that one mount); a path outside MNT must still be refused.
+    env, _log, _img_dir, mnt = env_and_log
+    mnt.mkdir()
+    (mnt / "epaper.info").write_text("panel-def\n")
+    staging = Path(env["CENTAUR_IMPORT_IMG_DIR"]) / "centaur-settings-stage"
+    proc, _calls = _run(env, "stage", str(mnt), str(staging))
+    assert proc.returncode == 0, proc.stderr
+    assert (staging / "epaper.info").read_text() == "panel-def\n"
+
+
 def test_stage_refuses_source_outside_mount(env_and_log):
     # Boundary: stage may only read from inside the fixed mountpoint, so it cannot
     # be turned into a root "copy any path" primitive.

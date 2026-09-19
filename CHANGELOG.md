@@ -1365,6 +1365,23 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   Callers use `sudo -n` so a missing grant fails immediately rather than
   stalling on a prompt the service has no terminal to answer.
 
+- **Original Centaur died with Invalid epaper definition file after a
+  fresh import**: original DGT's `dgt_epaper.createEPaper` opens
+  cwd-relative `settings/epaper.info` and treats a missing file as a fatal
+  definition error. Those files live on the SD's smaller ext4 data
+  partition (the original OS mounts it at `~/centaur/settings`), and the
+  default capture imaged only the app partition, so a stock import seeded
+  `factory.info` and nothing else. The capture now packs the data partition
+  into the same upload, the importer copies those settings files, a
+  re-import keeps an existing `settings/` tree, and the launch helper sets
+  `HOME` to the service user's home so sudo's `env_reset` (`HOME=/root`)
+  cannot redirect `~` into `/root/centaur/settings`. A board that already
+  launches Original Centaur does not need a new image. A board that exits
+  with Invalid epaper definition file (or whose Event Log warns that
+  `settings/epaper.info` is missing) must recapture the original DGT SD
+  with this capture script and import that new image -- re-importing the
+  old app-only `.img.gz` cannot create the file.
+
 - **A leftover player name no longer replaces the engine in the PGN**:
   The Name field is only shown for Human, but a name set there stayed on
   the slot after Type switched to Engine or Hand+Brain and overrode the

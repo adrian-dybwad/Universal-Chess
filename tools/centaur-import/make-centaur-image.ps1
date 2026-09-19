@@ -10,9 +10,13 @@
     this script reads that partition and writes a gzip image. Universal Chess
     runs on Linux and loop-mounts the image read-only to extract the app.
 
+    Official DGT stores persistent settings (including settings/epaper.info)
+    on the smaller ext4 data partition. The default capture images the largest
+    Linux partition (app) and the next-largest (settings) into one upload.
+
     The card is only ever READ (never written), so it is safe against a
-    read-only card. The image is the partition, not the whole disk, so gzip
-    collapses the partition's free space to a ~200 MB upload.
+    read-only card. The image is the partitions, not the whole disk, so gzip
+    collapses each partition's free space.
 
     Must be run from an elevated (Administrator) PowerShell: reading a raw
     physical disk requires administrative rights.
@@ -27,8 +31,9 @@
     Do not prompt for confirmation.
 
 .PARAMETER AllLinux
-    Image every Linux partition found (root + data), not just the largest. Use
-    only if import cannot find the app on the root partition.
+    Image every Linux partition found as separate numbered files, not a
+    single bundle. Use only if import cannot find the app on the largest
+    partition.
 
 .EXAMPLE
     .\make-centaur-image.ps1
@@ -208,8 +213,9 @@ if ($parts.Count -eq 0) {
 }
 
 if (-not $AllLinux) {
-    # Largest Linux partition = the ext4 root that holds the app.
-    $parts = @($parts[0])
+    # Largest Linux partition = the ext4 root that holds the app. Next-largest
+    # is the data volume original DGT mounts at ~/centaur/settings.
+    if ($parts.Count -gt 2) { $parts = @($parts[0], $parts[1]) }
 }
 
 Write-Host ""
@@ -222,11 +228,51 @@ if (-not $Yes) {
     if ($reply -notmatch '^(y|yes)$') { Die "aborted." }
 }
 
+function Compress-FileToGzip([string] $srcPath, [string] $outPath) {
+    $src = $null; $dst = $null; $gz = $null
+    try {
+        $src = New-Object System.IO.FileStream($srcPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+        $dst = New-Object System.IO.FileStream($outPath, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
+        $gz = New-Object System.IO.Compression.GZipStream($dst, [System.IO.Compression.CompressionMode]::Compress)
+        $src.CopyTo($gz)
+    } finally {
+        if ($gz)  { $gz.Dispose() }
+        if ($dst) { $dst.Dispose() }
+        if ($src) { $src.Dispose() }
+    }
+}
+
+function Pack-RootAndDataBundle([int] $disk, $rootPart, $dataPart, [string] $outPath) {
+    $work = Join-Path ([IO.Path]::GetTempPath()) ("centaur-img-" + [guid]::NewGuid().ToString("n"))
+    New-Item -ItemType Directory -Path $work | Out-Null
+    try {
+        $rootGz = Join-Path $work "centaur-root.img.gz"
+        $dataGz = Join-Path $work "centaur-data.img.gz"
+        Read-PartitionToGzip $disk $rootPart.Offset $rootPart.Size $rootGz
+        Read-PartitionToGzip $disk $dataPart.Offset $dataPart.Size $dataGz
+        Note "Packing application and settings partitions into $outPath..."
+        $tarPath = Join-Path $work "bundle.tar"
+        Push-Location $work
+        try {
+            $env:COPYFILE_DISABLE = "1"
+            & tar --format=ustar -cf $tarPath centaur-root.img.gz centaur-data.img.gz
+            if ($LASTEXITCODE -ne 0) { Die "tar failed while packing the image bundle." }
+        } finally {
+            Pop-Location
+        }
+        Compress-FileToGzip $tarPath $outPath
+    } finally {
+        Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    }
+    $compressed = (Get-Item $outPath).Length
+    if ($compressed -le 0) { Die "produced an empty image ($outPath); check the disk number and that PowerShell is elevated." }
+    $hash = (Get-FileHash -Algorithm SHA256 -Path $outPath).Hash
+    Note "Wrote $outPath ($compressed bytes compressed)."
+    Note "SHA-256: $hash"
+}
+
 $produced = @()
-if ($parts.Count -eq 1) {
-    Read-PartitionToGzip $DiskNumber $parts[0].Offset $parts[0].Size $Output
-    $produced += $Output
-} else {
+if ($AllLinux -and $parts.Count -gt 1) {
     $base = $Output -replace '\.img\.gz$', ''
     $idx = 1
     foreach ($p in $parts) {
@@ -235,6 +281,12 @@ if ($parts.Count -eq 1) {
         $produced += $out
         $idx++
     }
+} elseif ($parts.Count -eq 1) {
+    Read-PartitionToGzip $DiskNumber $parts[0].Offset $parts[0].Size $Output
+    $produced += $Output
+} else {
+    Pack-RootAndDataBundle $DiskNumber $parts[0] $parts[1] $Output
+    $produced += $Output
 }
 
 Write-Host ""

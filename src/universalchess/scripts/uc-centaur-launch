@@ -88,6 +88,24 @@ case "$1" in
 		# Best-effort: the import may have left the bit off. Failure is not
 		# fatal; exec reports a non-executable file itself.
 		chmod +x "$bin" 2>/dev/null || true
+		# sudo env_reset sets HOME=/root and USER=root. Original Centaur opens
+		# settings/epaper.info relative to cwd (this helper cds to the binary
+		# directory) and other original-DGT paths expand ~. Point HOME at the
+		# service user's home so those resolve to ~/centaur/settings.
+		user="${SUDO_USER:-}"
+		if [ -n "$user" ]; then
+			case "$user" in
+				*[!a-zA-Z0-9_-]*) ;;
+				*)
+					home=$(getent passwd "$user" | cut -d: -f6)
+					if [ -n "$home" ]; then
+						export HOME="$home"
+						export USER="$user"
+						export LOGNAME="$user"
+					fi
+					;;
+			esac
+		fi
 		cd "$(dirname "$bin")" || exit 5
 		# Replace this helper so the process name is `centaur` (what the web
 		# status probe and `stop` both match) and so a signal aimed at centaur

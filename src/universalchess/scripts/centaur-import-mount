@@ -74,14 +74,15 @@ case "$1" in
 		# so the unprivileged service user cannot read into them directly off the
 		# mount; staging as root and relaxing read bits lets the subsequent
 		# unprivileged copy (which applies cruft-stripping policy) read every entry.
-		# Both endpoints are path-restricted -- src must be inside the fixed
-		# mountpoint and dst inside the allowed tmp dir -- so this cannot become a
-		# general root copy primitive.
+# Both endpoints are path-restricted -- src must be the fixed mountpoint or a
+		# path inside it, and dst inside the allowed tmp dir -- so this cannot become
+		# a general root copy primitive. The mount root itself is allowed because
+		# original DGT's data partition stores settings files at the volume root.
 		[ "$#" -eq 3 ] || usage
 		src="$2"
 		dst="$3"
 		case "$src" in
-			"$MNT"/*) ;;
+			"$MNT"|"$MNT"/*) ;;
 			*) echo "refused: source must be under $MNT" >&2; exit 3 ;;
 		esac
 		case "$dst" in

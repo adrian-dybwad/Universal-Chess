@@ -52,6 +52,8 @@ echo "$2:x:1000:1000::$GETENT_HOME:/bin/sh"
 _FAKE_CENTAUR = """#!/bin/sh
 echo "cwd=$(pwd)" > "$CENTAUR_LAUNCH_TEST_LOG"
 echo "bin=$0" >> "$CENTAUR_LAUNCH_TEST_LOG"
+echo "HOME=$HOME" >> "$CENTAUR_LAUNCH_TEST_LOG"
+echo "USER=$USER" >> "$CENTAUR_LAUNCH_TEST_LOG"
 exit 0
 """
 
@@ -94,7 +96,7 @@ def _assert_launched(env: dict[str, str], binary: Path) -> None:
     macOS /var -> /private/var cwd does not fail an otherwise correct launch.
     """
     lines = _calls(env)
-    assert len(lines) == 2, lines
+    assert len(lines) >= 2, lines
     assert lines[0].startswith("cwd=")
     assert Path(lines[0][4:]).resolve() == binary.parent.resolve()
     assert lines[1].startswith("bin=")
@@ -169,6 +171,43 @@ def test_launch_resolves_the_binary_from_sudo_user_home(tmp_path):
     proc = _run(env, "launch")
     assert proc.returncode == 0, proc.stderr
     _assert_launched(env, binary)
+
+
+def test_launch_sets_home_to_the_sudo_user(tmp_path):
+    """sudo env_reset sets HOME=/root; original Centaur must see the service home.
+
+    Why this test exists: original DGT's dgt_epaper.createEPaper opens
+    settings/epaper.info (cwd-relative after the helper cds to ~/centaur) and
+    other original-DGT paths expand ~. With HOME=/root those resolve under
+    /root/centaur/settings, which is not the imported tree, and createEPaper
+    raises SystemError Invalid epaper definition file.
+
+    How the regression manifests: HOME or USER in the exec'd environment is
+    not the getent home / SUDO_USER, so a stock sudo launch looks in /root.
+    """
+    home = tmp_path / "pi-home"
+    binary = home / "centaur" / "centaur"
+    binary.parent.mkdir(parents=True)
+    binary.write_text(_FAKE_CENTAUR)
+    binary.chmod(0o755)
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    _write_tool(bindir, "getent", _FAKE_GETENT)
+
+    env = _base_env(tmp_path, bindir=bindir)
+    env["SUDO_USER"] = "pi"
+    env["GETENT_HOME"] = str(home)
+    # What sudo env_reset actually supplies; the helper must overwrite these.
+    env["HOME"] = "/root"
+    env["USER"] = "root"
+    env["LOGNAME"] = "root"
+    proc = _run(env, "launch")
+    assert proc.returncode == 0, proc.stderr
+    _assert_launched(env, binary)
+    lines = _calls(env)
+    assert f"HOME={home}" in lines
+    assert "USER=pi" in lines
 
 
 def test_launch_refuses_a_binary_outside_the_pinned_location(tmp_path):

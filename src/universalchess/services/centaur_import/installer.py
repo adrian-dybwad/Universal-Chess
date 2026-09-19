@@ -9,12 +9,13 @@ import gzip
 import os
 import shutil
 import subprocess  # nosec B404 - only the pinned, path-validated mount/runtime helpers are invoked
+import tarfile
 import time
 import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Dict, List, Optional, Tuple
 
 from universalchess.paths import CENTAUR_HOME, SCRIPTS_DIR, TMP_DIR
 from universalchess.services.centaur_import.detection import (
@@ -88,6 +89,16 @@ _PRESERVE_ON_REINSTALL = ("spishim.so", "spishim.so.srchash")
 # Relative path of the marker Centaur writes when its one-time factory hardware-
 # test + field-calibration sequence completes (see ``ensure_factory_marker``).
 _FACTORY_MARKER_RELPATH = ("settings", "factory.info")
+
+# Member names inside a gzip-of-tar capture (root + data partitions). A bare
+# gzip-of-ext4 upload (the previous capture format) has no tar members.
+_BUNDLE_ROOT_MEMBER = "centaur-root.img.gz"
+_BUNDLE_DATA_MEMBER = "centaur-data.img.gz"
+
+# Files that identify original DGT's persistent settings volume. factory.info
+# alone is not enough: the importer seeds that marker itself, and the app
+# partition can carry an empty settings/ mountpoint with the same name.
+_SETTINGS_MARKERS = ("epaper.info", "epaper_vcom.info")
 
 
 class CentaurImportError(Exception):
@@ -196,8 +207,8 @@ def ensure_factory_marker(app_dir=CENTAUR_HOME) -> bool:
     Centaur writes this 0-byte marker only when its factory hardware-test + field-
     calibration sequence completes; on a normal boot it is never written. A real
     (factory-calibrated) board carries the marker from its one-time factory setup,
-    so it boots straight to play. The SD import rebuilds ``settings/`` from scratch
-    at runtime, so the marker is absent on a fresh install -- and without it
+    so it boots straight to play. A root-only import has no data-partition
+    settings files, so the marker is absent on a fresh install -- and without it
     Centaur re-enters the factory "Test Screen" on every launch. Worse, that
     calibration never completes in this integration, so the marker is never
     written and the board is trapped in the loop permanently.
@@ -218,6 +229,107 @@ def ensure_factory_marker(app_dir=CENTAUR_HOME) -> bool:
     # is the signal), so an empty 0o700 file is the minimal correct marker.
     marker.chmod(0o700)  # nosec B103 - owner-only is least-permissive for this flag
     return True
+
+
+def find_settings_dir(root) -> Optional[Path]:
+    """Return the original DGT settings directory on a mounted volume, or None.
+
+    Official DGT mounts the smaller ext4 data partition at ``~/centaur/settings``,
+    so ``epaper.info`` (what ``dgt_epaper.createEPaper`` opens) sits at the
+    volume root. A Linux rootfs must not match: it may have an empty
+    ``settings/`` mountpoint or only the ``factory.info`` marker this importer
+    seeds. Matching requires a panel definition file, not the factory flag.
+
+    ``root`` is injected in tests as a fixture tree; production passes the
+    loop-mount directory.
+    """
+    root = Path(root)
+
+    def has_markers(directory: Path) -> bool:
+        return directory.is_dir() and any(
+            (directory / name).is_file() for name in _SETTINGS_MARKERS
+        )
+
+    if has_markers(root):
+        return root
+    nested = root / "settings"
+    if has_markers(nested):
+        return nested
+    nested_home = root / "home" / "pi" / "centaur" / "settings"
+    if has_markers(nested_home):
+        return nested_home
+    return None
+
+
+def _snapshot_dir(path: Path) -> Dict[str, bytes]:
+    """Read a settings tree into memory, skipping ext4 ``lost+found``."""
+    snapshot: Dict[str, bytes] = {}
+    if not path.is_dir():
+        return snapshot
+    for file_path in path.rglob("*"):
+        if not file_path.is_file():
+            continue
+        rel = file_path.relative_to(path).as_posix()
+        if rel == "lost+found" or rel.startswith("lost+found/"):
+            continue
+        snapshot[rel] = file_path.read_bytes()
+    return snapshot
+
+
+def _restore_snapshot(dest: Path, snapshot: Dict[str, bytes], *, overwrite: bool) -> None:
+    """Write ``snapshot`` under ``dest``. Existing files win unless ``overwrite``."""
+    if not snapshot:
+        return
+    dest.mkdir(parents=True, exist_ok=True)
+    for rel, data in snapshot.items():
+        target = dest / rel
+        if not overwrite and target.exists():
+            continue
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+
+
+def _split_uploaded_image(raw_image: Path, tmp_dir: Path) -> Tuple[Path, List[Path]]:
+    """Return ``(root_ext4, extra_ext4_images)`` for a capture file.
+
+    Older captures are a gzip of a single ext4 (already decompressed into
+    ``raw_image``). Current captures are a gzip of a tar holding
+    ``centaur-root.img.gz`` (app) and ``centaur-data.img.gz`` (settings).
+    Unknown tar members are refused so the unpack cannot write arbitrary paths.
+    """
+    if not tarfile.is_tarfile(raw_image):
+        return raw_image, []
+    extract_dir = tmp_dir / "centaur-bundle"
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    allowed = {_BUNDLE_ROOT_MEMBER, _BUNDLE_DATA_MEMBER}
+    with tarfile.open(raw_image, "r:") as tar:
+        for member in tar.getmembers():
+            name = Path(member.name).name
+            if name not in allowed:
+                raise CentaurImportError(
+                    "The uploaded image has an unexpected layout."
+                )
+            if not member.isfile():
+                continue
+            member.name = name
+            try:
+                tar.extract(member, path=extract_dir, filter="data")
+            except TypeError:
+                tar.extract(member, path=extract_dir)
+    root_gz = extract_dir / _BUNDLE_ROOT_MEMBER
+    if not root_gz.is_file():
+        raise CentaurImportError(
+            "The uploaded image is missing the Centaur application partition."
+        )
+    root_img = tmp_dir / "centaur-root.img"
+    _gunzip_to(root_gz, root_img)
+    extras: List[Path] = []
+    data_gz = extract_dir / _BUNDLE_DATA_MEMBER
+    if data_gz.is_file():
+        data_img = tmp_dir / "centaur-data.img"
+        _gunzip_to(data_gz, data_img)
+        extras.append(data_img)
+    return root_img, extras
 
 
 def ensure_armhf_support(runner: Callable = subprocess.run) -> None:
@@ -360,7 +472,19 @@ def install_from_image(
     ):
         decompress(image_path, raw_image)
 
+    extra_images: List[Path] = []
+    settings_staging = tmp_dir / "centaur-settings-stage"
+    data_settings: Dict[str, bytes] = {}
     try:
+        # Older uploads are a bare ext4; current captures are a tar of root+data
+        # gzip members. Split before the first mount so the helper always sees
+        # one ext4 image.
+        with _step(
+            "Unpack uploaded image", DECOMPRESS_FAILED_MSG,
+            errors=(OSError, EOFError, zlib.error, tarfile.TarError),
+            free_space_dir=tmp_dir,
+        ):
+            root_image, extra_images = _split_uploaded_image(raw_image, tmp_dir)
         # The helper pins its own read-only mountpoint (its security boundary),
         # so it takes only the image: `mount <image>`. ``mount_root`` here must
         # equal the helper's fixed MNT (both default to TMP_DIR/centaur-mnt); it
@@ -368,7 +492,7 @@ def install_from_image(
         # the helper. Passing it to the helper pushes its token count past the
         # `$# -eq 2` check and the mount silently fails.
         report(ImportStage.MOUNTING, "Mounting SD image...")
-        _run_helper(runner, "mount", str(raw_image))
+        _run_helper(runner, "mount", str(root_image))
         try:
             # Detection/validation only need to *see* the centaur file and stat
             # engines/fonts (search on the parent), which the service user can do
@@ -404,6 +528,19 @@ def install_from_image(
             # umount takes no argument -- the helper unmounts its fixed MNT.
             _run_helper(runner, "umount")
 
+        # Official DGT stores settings/epaper.info on the smaller data partition.
+        # The helper has one mountpoint, so this is a second mount after the app
+        # tree has been staged. A root-only (legacy) upload has no extra images.
+        for data_img in extra_images:
+            _run_helper(runner, "mount", str(data_img))
+            try:
+                settings_src = find_settings_dir(mount_root)
+                if settings_src is not None:
+                    _run_helper(runner, "stage", str(settings_src), str(settings_staging))
+                    data_settings = _snapshot_dir(settings_staging)
+            finally:
+                _run_helper(runner, "umount")
+
         # The mount is released; the staged copy is service-readable. Apply the
         # cruft-stripping / shim-preserving copy from staging into the install dir.
         report(ImportStage.INSTALLING_FILES, "Installing Centaur software...")
@@ -415,9 +552,23 @@ def install_from_image(
             errors=(OSError, shutil.Error), free_space_dir=dest.parent,
         ):
             _install_app_dir(staging, dest, copytree)
+            # Fill gaps only: a live dest/settings from a previous install wins
+            # over the data-partition copy of the same name.
+            _restore_snapshot(dest / "settings", data_settings, overwrite=False)
     finally:
         if raw_image.exists():
             raw_image.unlink()
+        root_extracted = tmp_dir / "centaur-root.img"
+        if root_extracted.exists() and root_extracted != raw_image:
+            root_extracted.unlink()
+        for extra in extra_images:
+            if extra.exists():
+                extra.unlink()
+        bundle_dir = tmp_dir / "centaur-bundle"
+        if bundle_dir.exists():
+            shutil.rmtree(bundle_dir, ignore_errors=True)
+        if settings_staging.exists():
+            shutil.rmtree(settings_staging, ignore_errors=True)
         if staging.exists():
             shutil.rmtree(staging, ignore_errors=True)
 
@@ -442,6 +593,15 @@ def install_from_image(
     report(ImportStage.FINALIZING, "Finalizing...")
     with _step("Create factory marker", FINALIZE_FAILED_MSG):
         ensure_factory_marker(dest)
+    if not (dest / "settings" / "epaper.info").is_file():
+        # Original dgt_epaper.createEPaper treats a missing file as a fatal
+        # definition error. A root-only (legacy) capture never had the data
+        # partition, which is the usual reason this file is absent.
+        log_import_event(
+            "Imported Centaur has no settings/epaper.info; Original Centaur "
+            "exits on launch until the SD data partition is included in the image.",
+            level="warning",
+        )
     file_count = sum(1 for p in dest.rglob("*") if p.is_file())
     # The completion record is the baseline a slow import is measured against and
     # the confirmation that the tree really was written; a failed import has no
@@ -458,14 +618,19 @@ def _install_app_dir(app_dir: Path, dest: Path, copytree: Callable) -> None:
     """Replace ``dest`` with a clean copy of ``app_dir``, preserving UC artifacts.
 
     The destination is wiped first so a re-import cannot leave stale files, but
-    UC-built artifacts that are not on the SD (the display shim) are carried
-    across the wipe so translate mode keeps working after a re-import.
+    UC-built artifacts that are not on the SD (the display shim) and the live
+    ``settings/`` tree (original DGT's ``epaper.info`` and calibration files)
+    are carried across the wipe. Official DGT stores those settings on the
+    data partition, which the app copy does not include; deleting them here
+    would make Original Centaur raise SystemError Invalid epaper definition
+    file on the next launch.
     """
     preserved = {}
     for name in _PRESERVE_ON_REINSTALL:
         existing = dest / name
         if existing.is_file():
             preserved[name] = existing.read_bytes()
+    preserved_settings = _snapshot_dir(dest / "settings")
 
     if dest.exists():
         shutil.rmtree(dest)
@@ -474,3 +639,5 @@ def _install_app_dir(app_dir: Path, dest: Path, copytree: Callable) -> None:
 
     for name, data in preserved.items():
         (dest / name).write_bytes(data)
+    # Live settings win over whatever the new app tree carried (usually nothing).
+    _restore_snapshot(dest / "settings", preserved_settings, overwrite=True)
