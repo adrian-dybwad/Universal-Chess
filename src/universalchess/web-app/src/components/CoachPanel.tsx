@@ -20,7 +20,8 @@ interface CoachPanelProps {
   /**
    * Container chrome: 'box' matches the live board, 'card' matches Analyze, and
    * 'inline' renders the coaching text with no box/card chrome so it can be
-   * embedded inside another card (e.g. above the Analysis graph).
+   * embedded inside another card. GameView uses 'box' so the remark is a
+   * titled sibling of the board (and can stick under the navbar on a phone).
    */
   variant?: 'box' | 'card' | 'inline';
 }
@@ -192,7 +193,7 @@ export function CoachPanel({ gameId, ply, moveKey, variant = 'box' }: CoachPanel
   }
 
   return (
-    <div className="box coach-panel" style={{ marginTop: '1rem' }}>
+    <div className="box coach-panel">
       <h3 className="title is-5 box-title">{t('coach.title')}</h3>
       <div className="coach-panel-body">{body}</div>
     </div>

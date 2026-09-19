@@ -66,4 +66,18 @@ describe('App chrome stickiness', () => {
     expect(appCss).toMatch(/\.app-chrome\s*\{[^}]*position:\s*sticky/s);
     expect(appCss).toMatch(/\.app-chrome\s*\{[^}]*top:\s*0/s);
   });
+
+  it('publishes the chrome height for in-page sticky elements', () => {
+    // The coach remark on a phone sticks just below this bar. Without the
+    // measured height it would use a fallback and slide under the nav when
+    // a banner makes the chrome taller. How a regression manifests: App.tsx
+    // no longer writes --app-chrome-height, so GameView's sticky top has
+    // nothing to bind to.
+    const appTsx = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), 'App.tsx'),
+      'utf8',
+    );
+    expect(appTsx).toMatch(/--app-chrome-height/);
+    expect(appTsx).toMatch(/ResizeObserver/);
+  });
 });

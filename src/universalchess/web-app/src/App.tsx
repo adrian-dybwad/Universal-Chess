@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useDeviceLanguage } from './i18n/useDeviceLanguage';
@@ -59,6 +60,33 @@ export function AppRoutes() {
 function AppShell() {
   const { t } = useTranslation();
   useDeviceLanguage();
+
+  // Publish the sticky chrome's height so in-page sticky elements (the coach
+  // remark on a phone) sit just below the nav rather than sliding under it.
+  // Unset when height is 0 (jsdom, or a hidden chrome) so CSS can use its
+  // fallback instead of sticking at top: 0.
+  useEffect(() => {
+    const chrome = document.querySelector('.app-chrome');
+    if (!(chrome instanceof HTMLElement)) return;
+    const apply = () => {
+      const height = chrome.getBoundingClientRect().height;
+      if (height > 0) {
+        document.documentElement.style.setProperty('--app-chrome-height', `${height}px`);
+      }
+    };
+    apply();
+    if (typeof ResizeObserver === 'undefined') {
+      return () => {
+        document.documentElement.style.removeProperty('--app-chrome-height');
+      };
+    }
+    const observer = new ResizeObserver(apply);
+    observer.observe(chrome);
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty('--app-chrome-height');
+    };
+  }, []);
 
   return (
     <>

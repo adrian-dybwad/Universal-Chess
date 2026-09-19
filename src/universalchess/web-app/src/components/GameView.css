@@ -1,30 +1,42 @@
 /**
  * GameView - shared board + analysis layout used by the live board and the game
- * review page. Owns the Bulma-style columns/box/button/tag primitives both pages
- * rely on (previously in LiveBoard.css).
+ * review page. Owns the Bulma-style box/button/tag primitives both pages rely
+ * on (previously in LiveBoard.css), plus the two-column board/widgets grid.
+ *
+ * The coach remark is a grid item of its own, not nested in the Analysis box,
+ * so a narrow viewport can place it under the board and stick it below the
+ * navbar. Nested inside Analysis it stacked below a full-width board and
+ * scrolled off as soon as the user stepped through moves.
  */
 
-/* Bulma-style columns grid */
-.columns {
-  display: flex;
-  flex-wrap: wrap;
-  margin: -0.75rem;
+.game-view {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-areas:
+    "board header"
+    "board coach"
+    "board analysis"
+    "board moves"
+    "board pgn";
+  gap: 1rem 1.5rem;
+  align-items: start;
 }
 
-.column {
-  display: block;
-  flex: 1 1 0%;
-  padding: 0.75rem;
+.game-view-board {
+  grid-area: board;
+  min-width: 0;
 }
 
-.column.is-8 {
-  flex: none;
-  width: 66.6667%;
-}
+.game-view-header { grid-area: header; }
+.game-view-coach { grid-area: coach; }
+.game-view-analysis { grid-area: analysis; }
+.game-view-moves { grid-area: moves; }
+.game-view-pgn { grid-area: pgn; }
 
-.column.is-4 {
-  flex: none;
-  width: 33.3333%;
+/* The box variant used to sit under another card and carried a 1rem top margin;
+   the grid gap is the spacing now. */
+.game-view-coach .coach-panel {
+  margin-top: 0;
 }
 
 /* Box styling - matches Bulma's .box */
@@ -60,6 +72,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 0.5rem;
   margin-bottom: 0.75rem;
 }
@@ -70,6 +83,7 @@
 
 .current-game-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 
@@ -206,21 +220,38 @@
   transition: transform 0.2s ease;
 }
 
-/* Responsive - tablet and below */
+/* Responsive - tablet and below. Flex (not grid) so the coach can be sticky:
+   a grid item's sticky containing block is only its own cell, which is a
+   no-op. In a column flex container as tall as the page, sticky holds the
+   remark under the navbar while the move list scrolls. */
 @media screen and (max-width: 768px) {
-  .columns {
+  .game-view {
+    display: flex;
     flex-direction: column;
-    margin: -0.5rem;
+    gap: 0.75rem;
+    /* The desktop grid sets align-items: start; that would shrink every
+       widget to its content width once this becomes a column flex. */
+    align-items: stretch;
   }
 
-  .column {
-    padding: 0.5rem;
+  .game-view-board {
+    order: 1;
   }
 
-  .column.is-8,
-  .column.is-4 {
-    width: 100%;
+  .game-view-coach {
+    order: 2;
+    position: sticky;
+    top: var(--app-chrome-height, 5.75rem);
+    z-index: 50;
+    background: var(--color-bg, #fff);
+    max-height: calc(100vh - var(--app-chrome-height, 5.75rem) - 2rem);
+    overflow-y: auto;
   }
+
+  .game-view-header { order: 3; }
+  .game-view-analysis { order: 4; }
+  .game-view-moves { order: 5; }
+  .game-view-pgn { order: 6; }
 
   .box {
     padding: 1rem;
@@ -230,12 +261,8 @@
 
 /* Responsive - mobile */
 @media screen and (max-width: 480px) {
-  .columns {
-    margin: -0.25rem;
-  }
-
-  .column {
-    padding: 0.25rem;
+  .game-view {
+    gap: 0.5rem;
   }
 
   .box {

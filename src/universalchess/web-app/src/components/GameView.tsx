@@ -63,7 +63,9 @@ interface GameViewProps {
  * Shared board + analysis view rendered by both the live board and the game
  * review page. It owns the analysis-controller wiring (viewed position, best/
  * played move, move index, eval history, move navigation) and the two-column
- * board/widgets layout, so the two pages cannot drift apart. The page supplies
+ * board/widgets layout, so the two pages cannot drift apart. The coach remark
+ * is a sibling of the board (not nested in Analysis) so a phone can keep it
+ * on screen under the board while the move list scrolls. The page supplies
  * the top-right header box (and any page-level dialogs) and picks the mode via
  * `live`; a live game can still be reviewed by scrubbing back, which is why the
  * same component serves both rather than a separate "review-only" component.
@@ -205,85 +207,92 @@ export function GameView({
     : bestMove;
 
   return (
-    <div className="columns">
+    <>
       {overlays}
 
-      {/* Left column: board */}
-      <div className="column is-8">
-        <ChessBoard
-          fen={boardFen}
-          maxBoardWidth={boardMaxWidth}
-          alertSquare={alertSquare}
-          alertType={alertType}
-          showBestMove={boardBestMove}
-          showPlayedMove={playedMove}
-          showPendingMove={live && isAtLatestMove ? pendingArrowMove : null}
-          showLastMove={live && isAtLatestMove ? lastArrowMove : null}
-          allowDragging={allowDragging}
-          canDragPiece={canDragPiece}
-          onPieceDrop={onPieceDrop}
-        />
-      </div>
+      <div className="game-view">
+        <div className="game-view-board">
+          <ChessBoard
+            fen={boardFen}
+            maxBoardWidth={boardMaxWidth}
+            alertSquare={alertSquare}
+            alertType={alertType}
+            showBestMove={boardBestMove}
+            showPlayedMove={playedMove}
+            showPendingMove={live && isAtLatestMove ? pendingArrowMove : null}
+            showLastMove={live && isAtLatestMove ? lastArrowMove : null}
+            allowDragging={allowDragging}
+            canDragPiece={canDragPiece}
+            onPieceDrop={onPieceDrop}
+          />
+        </div>
 
-      {/* Right column: header (page-specific) + analysis + moves + PGN */}
-      <div className="column is-4">
-        {header}
+        <div className="game-view-header">{header}</div>
 
-        <div className="box" style={{ marginTop: '1rem' }}>
-          <h3 className="title is-5 box-title">{t('liveBoard.analysis')}</h3>
+        <div className="game-view-coach">
           <CoachPanel
             gameId={coachGameId}
             ply={currentMoveIndex}
             moveKey={live ? currentMoveKey : undefined}
-            variant="inline"
-          />
-          <Analysis
-            positions={effectivePositions}
-            mode={live ? 'live' : 'static'}
-            onPositionChange={handlePositionChange}
-            onBestMoveChange={handleBestMoveChange}
-            onPlayedMoveChange={handlePlayedMoveChange}
-            onMoveDataChange={handleMoveDataChange}
-            goToMoveRef={goToMoveRef}
-            showBestMoveForLatest={live ? showBestMoveEnabled : undefined}
-            onToggleShowBestMove={live ? toggleShowBestMove : undefined}
+            variant="box"
           />
         </div>
 
-        <div className="box" style={{ marginTop: '1rem' }}>
-          <h3 className="title is-5 box-title">{t('liveBoard.moves')}</h3>
-          <MoveTable
-            positions={effectivePositions}
-            currentMoveIndex={currentMoveIndex}
-            notation={notation}
-            evalHistory={evalHistory}
-            onMoveClick={handleMoveTableClick}
-          />
-        </div>
-
-        <div className="box" style={{ marginTop: '1rem' }}>
-          <button
-            className="pgn-toggle"
-            onClick={() => setPgnExpanded(!pgnExpanded)}
-            aria-expanded={pgnExpanded}
-          >
-            <h3 className="title is-5 box-title" style={{ margin: 0 }}>
-              {t(live ? 'liveBoard.currentPgn' : 'analyze.pgn')}
-            </h3>
-            <span className="pgn-toggle-icon">{pgnExpanded ? '\u25BC' : '\u25B6'}</span>
-          </button>
-          {pgnExpanded && (
-            <textarea
-              className="textarea"
-              placeholder={t('liveBoard.pgnPlaceholder')}
-              rows={8}
-              readOnly
-              value={effectivePgn}
-              style={{ marginTop: '0.75rem' }}
+        <div className="game-view-analysis">
+          <div className="box">
+            <h3 className="title is-5 box-title">{t('liveBoard.analysis')}</h3>
+            <Analysis
+              positions={effectivePositions}
+              mode={live ? 'live' : 'static'}
+              onPositionChange={handlePositionChange}
+              onBestMoveChange={handleBestMoveChange}
+              onPlayedMoveChange={handlePlayedMoveChange}
+              onMoveDataChange={handleMoveDataChange}
+              goToMoveRef={goToMoveRef}
+              showBestMoveForLatest={live ? showBestMoveEnabled : undefined}
+              onToggleShowBestMove={live ? toggleShowBestMove : undefined}
             />
-          )}
+          </div>
+        </div>
+
+        <div className="game-view-moves">
+          <div className="box">
+            <h3 className="title is-5 box-title">{t('liveBoard.moves')}</h3>
+            <MoveTable
+              positions={effectivePositions}
+              currentMoveIndex={currentMoveIndex}
+              notation={notation}
+              evalHistory={evalHistory}
+              onMoveClick={handleMoveTableClick}
+            />
+          </div>
+        </div>
+
+        <div className="game-view-pgn">
+          <div className="box">
+            <button
+              className="pgn-toggle"
+              onClick={() => setPgnExpanded(!pgnExpanded)}
+              aria-expanded={pgnExpanded}
+            >
+              <h3 className="title is-5 box-title" style={{ margin: 0 }}>
+                {t(live ? 'liveBoard.currentPgn' : 'analyze.pgn')}
+              </h3>
+              <span className="pgn-toggle-icon">{pgnExpanded ? '\u25BC' : '\u25B6'}</span>
+            </button>
+            {pgnExpanded && (
+              <textarea
+                className="textarea"
+                placeholder={t('liveBoard.pgnPlaceholder')}
+                rows={8}
+                readOnly
+                value={effectivePgn}
+                style={{ marginTop: '0.75rem' }}
+              />
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }

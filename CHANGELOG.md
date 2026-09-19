@@ -1350,6 +1350,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **The coach remark stays on screen while analysing on a phone**: the
+  web review and live-board layouts nested the coach inside the Analysis
+  box in the right-hand column. On a narrow viewport that column stacks
+  below a full-width board, so stepping through moves (or tapping one in
+  the move list) updated a remark that was off-screen -- the comment
+  appeared not to exist. The coach is now a sibling of the board: under
+  the position on a phone, stuck below the navbar while the move list
+  scrolls, and in its own titled box beside the board on a wide screen.
+
 - **Original Centaur in direct mode bounced straight back to Universal Chess
   on a stock board**: launching it ran `sudo ./centaur`, which sudoers cannot
   grant -- it authorizes a resolved absolute path, not a relative command
