@@ -350,6 +350,32 @@ def test_system_info_reports_centaur_availability(client, monkeypatch):
     assert json.loads(resp.data)["centaur_available"] is False
 
 
+def test_system_info_reports_when_original_centaur_needs_an_epaper_recapture(client, monkeypatch):
+    """/api/system/info must tell the Original Centaur tab to show recapture steps.
+
+    Why this test exists: original dgt_epaper.createEPaper dies with Invalid
+    epaper definition file when settings/epaper.info is missing, and the import
+    writes that warning to the Event Log. The tab has to learn that state from
+    this probe so it can show the recapture instructions instead of only a
+    Switch button that bounces back to Universal Chess.
+
+    How the regression manifests: the field is absent or always false, so a
+    board that already imported without the data partition never sees the
+    recapture card.
+    """
+    import universalchess.services.centaur_import as centaur_import
+
+    monkeypatch.setattr(centaur_import, "centaur_app_installed", lambda: True)
+    monkeypatch.setattr(centaur_import, "needs_epaper_settings_recapture", lambda: True)
+    resp = client.get("/api/system/info")
+    assert resp.status_code == 200
+    assert json.loads(resp.data)["centaur_needs_epaper_recapture"] is True
+
+    monkeypatch.setattr(centaur_import, "needs_epaper_settings_recapture", lambda: False)
+    resp = client.get("/api/system/info")
+    assert json.loads(resp.data)["centaur_needs_epaper_recapture"] is False
+
+
 @pytest.mark.parametrize(
     "has_wifi, has_bluetooth",
     [(True, True), (False, False), (True, False), (False, True)],

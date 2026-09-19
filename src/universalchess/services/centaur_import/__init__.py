@@ -26,6 +26,7 @@ from universalchess.services.centaur_import.installer import (
     InstallResult,
     ensure_factory_marker,
     install_from_image,
+    needs_epaper_settings_recapture,
 )
 
 
@@ -54,4 +55,5 @@ __all__ = [
     "CentaurImportError",
     "InstallResult",
     "install_from_image",
+    "needs_epaper_settings_recapture",
 ]

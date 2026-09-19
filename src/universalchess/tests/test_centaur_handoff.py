@@ -451,6 +451,47 @@ def test_classify_centaur_exit_levels(returncode, expected_level):
     assert "Centaur" in message
 
 
+def test_classify_centaur_exit_names_a_missing_epaper_definition():
+    """A non-zero exit whose log is Invalid epaper definition file must say how to recapture.
+
+    Why this test exists: original dgt_epaper.createEPaper writes that SystemError
+    to centaur.log and exits 1. The Event Log used to record only "Original
+    Centaur exited with code 1. See centaur.log", which hid the recapture that
+    actually fixes it. The classification must carry the missing-file diagnosis
+    and the recapture instruction so Settings -> Event Log shows them.
+
+    How the regression manifests: the message is the generic code-1 line, and
+    the Event Log does not mention epaper.info or recapturing the original SD.
+    """
+    log_text = (
+        "FileNotFoundError: [Errno 2] No such file or directory: "
+        "'settings/epaper.info'\n"
+        "SystemError: Invalid epaper definition file\n"
+    )
+    level, message = classify_centaur_exit(1, log_text=log_text)
+    assert level == "error"
+    assert "epaper.info" in message
+    assert "recapture" in message.lower()
+    assert "Invalid epaper definition file" in message
+
+
+def test_classify_centaur_exit_keeps_the_generic_code_without_epaper_log():
+    """A code-1 exit with no epaper traceback must stay the generic Event Log line.
+
+    Why this test exists: not every exit 1 is a missing settings file (sudo
+    password, missing binary). Replacing every code-1 with the recapture
+    instruction would send those boards to recapture an SD that is not the
+    problem.
+
+    How the regression manifests: a non-epaper code-1 is labelled as Invalid
+    epaper definition file.
+    """
+    level, message = classify_centaur_exit(1, log_text="a terminal is required to read the password")
+    assert level == "error"
+    assert message == "Original Centaur exited with code 1"
+    assert "epaper.info" not in message
+
+
 # ---------------------------------------------------------------------------
 # return_to_universal_chess()
 # ---------------------------------------------------------------------------

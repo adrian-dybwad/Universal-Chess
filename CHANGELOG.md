@@ -1380,7 +1380,10 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   with Invalid epaper definition file (or whose Event Log warns that
   `settings/epaper.info` is missing) must recapture the original DGT SD
   with this capture script and import that new image -- re-importing the
-  old app-only `.img.gz` cannot create the file.
+  old app-only `.img.gz` cannot create the file. Settings -> Original
+  Centaur shows those recapture steps when the imported tree is missing
+  `epaper.info`, and Event Log rows for that warning or launch failure
+  link to that tab.
 
 - **A leftover player name no longer replaces the engine in the PGN**:
   The Name field is only shown for Human, but a name set there stayed on

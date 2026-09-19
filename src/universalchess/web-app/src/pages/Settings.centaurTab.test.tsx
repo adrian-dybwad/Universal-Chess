@@ -26,14 +26,18 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  *    does not invent BCM pin numbers when that build only stores the names.
  *    Pins used at runtime come from the last Translate Mode launch. The scan
  *    runs when Show details is opened, not when the tab loads.
+ *  - a missing settings/epaper.info install shows recapture steps (Invalid
+ *    epaper definition file) and opens the importer; a working install and the
+ *    not-installed importer do not.
  *
  * A regression manifests as: no "Original Centaur" tab; an "Elo"/"Threads"/"Hash"
  * input reappearing; the strength dropdown missing; the action button
  * preceding the engine group again; a Save button returning (and changes not
  * POSTing until it is clicked); the PowerShell remedies missing / shown
- * expanded so they crowd the import steps; or the display-driver card missing,
+ * expanded so they crowd the import steps; the display-driver card missing,
  * showing Universal Chess pins, or filling BCM numbers the uploaded build does
- * not contain.
+ * not contain; or the recapture card missing when epaper.info is gone / shown
+ * on a working install.
  */
 
 const menuSchema: unknown = menuSchemaFixture;
@@ -127,6 +131,7 @@ function installCentaurFetchMock(opts: {
   enginePostStatus?: number;
   directMode?: boolean;
   displayDiagnostics?: Record<string, unknown>;
+  needsEpaperRecapture?: boolean;
 }) {
   const posts: PostRecord[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
@@ -137,7 +142,12 @@ function installCentaurFetchMock(opts: {
       posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') });
       return jsonResponse({ success: true });
     }
-    if (url === '/api/system/info') return jsonResponse({ centaur_available: opts.centaurAvailable });
+    if (url === '/api/system/info') {
+      return jsonResponse({
+        centaur_available: opts.centaurAvailable,
+        centaur_needs_epaper_recapture: opts.needsEpaperRecapture ?? false,
+      });
+    }
     if (url === '/api/system/centaur-mode') return jsonResponse({ direct_mode: opts.directMode ?? false });
     if (url === '/api/system/centaur-status') return jsonResponse({ running: false });
     if (url === '/api/system/run-centaur' && method === 'POST') {
@@ -372,6 +382,53 @@ describe('Original Centaur tab', () => {
     expect(
       await screen.findByText('Failed to save the Centaur engine settings.')
     ).toBeInTheDocument();
+  });
+
+  it('shows recapture steps when settings/epaper.info is missing', async () => {
+    // Why: original dgt_epaper.createEPaper dies with Invalid epaper definition
+    // file when that file is missing, and the Event Log warns the same. The
+    // tab used to offer only Switch to Original Centaur, which bounced back
+    // to Universal Chess. The recapture card must name the missing file, say
+    // to recapture the original SD with the current script, and open the
+    // importer so the user does not have to find Re-import from SD.
+
+    // How the regression manifests: the alert is absent, the download buttons
+    // stay hidden behind Re-import, or a working install (flag false) still
+    // shows the card.
+    installCentaurFetchMock({ centaurAvailable: true, needsEpaperRecapture: true });
+    renderCentaurTab();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('Original Centaur cannot start');
+    expect(alert).toHaveTextContent('settings/epaper.info');
+    expect(alert).toHaveTextContent(/recapture that card/i);
+    expect(alert).toHaveTextContent(/older app-only/i);
+    expect(screen.getByRole('button', { name: /Download script \(macOS\/Linux\)/i })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Switch to Original Centaur' })).toBeInTheDocument();
+  });
+
+  it('does not show the recapture card on a working Original Centaur install', async () => {
+    // Why: boards that already launch must not be told to recapture. Manifests
+    // as Original Centaur cannot start appearing whenever Centaur is installed.
+    installCentaurFetchMock({ centaurAvailable: true, needsEpaperRecapture: false });
+    renderCentaurTab();
+
+    await screen.findByRole('button', { name: 'Switch to Original Centaur' });
+    expect(screen.queryByText('Original Centaur cannot start')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Download script \(macOS\/Linux\)/i })).not.toBeInTheDocument();
+  });
+
+  it('does not show the recapture card before Centaur is imported', async () => {
+    // Why: the not-installed importer is the first import, not a recapture.
+    // Manifests as Invalid-epaper recapture copy on a board that has never
+    // imported Centaur.
+    installCentaurFetchMock({ centaurAvailable: false, needsEpaperRecapture: false });
+    renderCentaurTab();
+
+    expect(
+      await screen.findByText(/The original DGT Centaur software is not installed yet/i)
+    ).toBeInTheDocument();
+    expect(screen.queryByText('Original Centaur cannot start')).not.toBeInTheDocument();
   });
 
   it('keeps Windows PowerShell troubleshooting collapsed until opened', async () => {

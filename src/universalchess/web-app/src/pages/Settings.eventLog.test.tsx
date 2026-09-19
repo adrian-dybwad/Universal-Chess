@@ -18,7 +18,8 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  * support when an import fails.
  *
  * A regression manifests as the raw category token appearing in the badge
- * instead of the translated label.
+ * instead of the translated label, or an epaper.info / Invalid epaper
+ * definition row with no link to Settings -> Original Centaur.
  */
 
 const menuSchema: unknown = menuSchemaFixture;
@@ -56,6 +57,13 @@ const importEvents = [
     level: 'error',
     category: 'centaur',
     message: 'Original Centaur failed to launch',
+  },
+  {
+    ts: '2026-08-25T09:58:00Z',
+    level: 'warning',
+    category: 'centaur_import',
+    message:
+      'Original Centaur cannot start: Invalid epaper definition file. settings/epaper.info is missing.',
   },
 ];
 
@@ -144,7 +152,7 @@ describe('Event Log viewer', () => {
 
     expect(await scoped.findByText('Image mount failed (exit code 32): mount: wrong fs type')).toBeInTheDocument();
     // Both import rows carry the translated badge; the raw token must not leak.
-    expect(scoped.getAllByText('Centaur import')).toHaveLength(2);
+    expect(scoped.getAllByText('Centaur import')).toHaveLength(3);
     expect(scoped.queryByText('centaur_import')).not.toBeInTheDocument();
   });
 
@@ -152,8 +160,23 @@ describe('Event Log viewer', () => {
     const scoped = await openEventLog();
 
     expect(await scoped.findByText('Original Centaur failed to launch')).toBeInTheDocument();
-    expect(scoped.getByText('Original Centaur')).toBeInTheDocument();
+    expect(scoped.getByText('Original Centaur', { exact: true })).toBeInTheDocument();
     expect(scoped.queryByText('centaur')).not.toBeInTheDocument();
+  });
+
+  it('links an epaper.info warning to the Original Centaur recapture steps', async () => {
+    // Why: a board that imported without the data partition logs a warning
+    // about settings/epaper.info, and a launch that dies with Invalid epaper
+    // definition file logs the same diagnosis. The Event Log used to show
+    // only that line, with no path to the capture script. The row must link
+    // to the Original Centaur tab where recapture lives.
+
+    // How the regression manifests: the recapture CTA is absent, or it is
+    // not a link to /settings/centaur.
+    const scoped = await openEventLog();
+
+    const cta = await scoped.findByRole('link', { name: 'Recapture the original SD' });
+    expect(cta).toHaveAttribute('href', '/settings/centaur');
   });
 
   it('labels display probe rows instead of showing the raw category token', async () => {

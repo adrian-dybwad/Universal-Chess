@@ -99,6 +99,23 @@ _BUNDLE_DATA_MEMBER = "centaur-data.img.gz"
 # alone is not enough: the importer seeds that marker itself, and the app
 # partition can carry an empty settings/ mountpoint with the same name.
 _SETTINGS_MARKERS = ("epaper.info", "epaper_vcom.info")
+_EPAPER_INFO_RELPATH = ("settings", "epaper.info")
+
+# Substring original dgt_epaper.createEPaper writes to centaur.log (and raises
+# as SystemError) when settings/epaper.info is missing or unreadable.
+INVALID_EPAPER_DEFINITION = "Invalid epaper definition file"
+
+# Event Log / UI copy for a board that imported without the data partition.
+# Author-written: names the missing file, the recapture, and why re-importing
+# an older app-only image cannot fix it. Shared by the import warning and the
+# launch-exit classifier so both Event Log rows agree.
+EPAPER_RECAPTURE_EVENT = (
+    "Original Centaur cannot start: Invalid epaper definition file. "
+    "settings/epaper.info is missing. That file lives on the original DGT SD "
+    "data partition. Recapture the original SD with the current image script "
+    "and import that new image. Re-importing an older app-only image cannot "
+    "create the file."
+)
 
 
 class CentaurImportError(Exception):
@@ -229,6 +246,22 @@ def ensure_factory_marker(app_dir=CENTAUR_HOME) -> bool:
     # is the signal), so an empty 0o700 file is the minimal correct marker.
     marker.chmod(0o700)  # nosec B103 - owner-only is least-permissive for this flag
     return True
+
+
+def needs_epaper_settings_recapture(app_dir=CENTAUR_HOME) -> bool:
+    """True when Original Centaur is installed but ``settings/epaper.info`` is absent.
+
+    Official DGT's ``dgt_epaper.createEPaper`` opens that file relative to cwd
+    and treats a missing file as ``SystemError: Invalid epaper definition file``.
+    The import warns in the Event Log; the Original Centaur tab uses this flag
+    to show recapture steps. An incomplete tree (no executable/engines/fonts)
+    is the not-installed importer, not a recapture.
+
+    ``app_dir`` is injected in tests; production uses ``CENTAUR_HOME``.
+    """
+    if not validate_app_dir(app_dir).ok:
+        return False
+    return not Path(app_dir).joinpath(*_EPAPER_INFO_RELPATH).is_file()
 
 
 def find_settings_dir(root) -> Optional[Path]:
@@ -597,11 +630,7 @@ def install_from_image(
         # Original dgt_epaper.createEPaper treats a missing file as a fatal
         # definition error. A root-only (legacy) capture never had the data
         # partition, which is the usual reason this file is absent.
-        log_import_event(
-            "Imported Centaur has no settings/epaper.info; Original Centaur "
-            "exits on launch until the SD data partition is included in the image.",
-            level="warning",
-        )
+        log_import_event(EPAPER_RECAPTURE_EVENT, level="warning")
     file_count = sum(1 for p in dest.rglob("*") if p.is_file())
     # The completion record is the baseline a slow import is measured against and
     # the confirmation that the tree really was written; a failed import has no

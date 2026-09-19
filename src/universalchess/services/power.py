@@ -17,6 +17,10 @@ import time
 from typing import Callable, Optional
 
 from universalchess.paths import CENTAUR_LAUNCH
+from universalchess.services.centaur_import.installer import (
+    EPAPER_RECAPTURE_EVENT,
+    INVALID_EPAPER_DEFINITION,
+)
 from universalchess.utils.led import LED_INTENSITY_DEFAULT, LED_SPEED_NORMAL
 
 # The single command that brings Universal Chess back after the original Centaur
@@ -53,7 +57,7 @@ _EXPECTED_EXIT_SIGNALS = frozenset(
 )
 
 
-def classify_centaur_exit(returncode: int) -> tuple[str, str]:
+def classify_centaur_exit(returncode: int, *, log_text: str | None = None) -> tuple[str, str]:
     """Map a centaur process exit code to an ``(event level, message)`` pair.
 
     ``subprocess`` reports a signal death as a negative code, while a child
@@ -61,6 +65,12 @@ def classify_centaur_exit(returncode: int) -> tuple[str, str]:
     ``128 + signal``. Both encodings are normalized here so the direct-mode
     launch (root, via the pinned helper) and the translate-mode launch
     (``./centaur``) classify identically.
+
+    ``log_text`` is the stdout/stderr captured for this launch (centaur.log
+    after the launch marker). Original DGT's ``createEPaper`` writes
+    ``Invalid epaper definition file`` there when ``settings/epaper.info`` is
+    missing; that diagnosis replaces the generic code-1 line so the Event Log
+    names the recapture.
 
     Returns ``("info", ...)`` for a clean exit (0) or an expected termination
     signal (the return/exit chord, shutdown), and ``("error", ...)`` for a crash
@@ -82,6 +92,8 @@ def classify_centaur_exit(returncode: int) -> tuple[str, str]:
         if signum in _EXPECTED_EXIT_SIGNALS:
             return ("info", f"Original Centaur was terminated ({name})")
         return ("error", f"Original Centaur crashed ({name})")
+    if log_text and INVALID_EPAPER_DEFINITION in log_text:
+        return ("error", EPAPER_RECAPTURE_EVENT)
     return ("error", f"Original Centaur exited with code {returncode}")
 
 

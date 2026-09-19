@@ -5901,7 +5901,15 @@ def _run_centaur_binary(cmd, *, cwd, env=None):
         log_event("centaur", f"Original Centaur failed to launch: {exc}", level="error")
         return -1
 
-    level, message = classify_centaur_exit(result.returncode)
+    log_text = ""
+    try:
+        raw = centaur_log.read_text(encoding="utf-8", errors="replace")
+        mark = f"===== centaur launch {started}"
+        idx = raw.rfind(mark)
+        log_text = raw[idx:] if idx >= 0 else raw[-8192:]
+    except OSError:
+        log_text = ""
+    level, message = classify_centaur_exit(result.returncode, log_text=log_text)
     if level == "error":
         log.error("[centaur] %s (code %d); see %s", message, result.returncode, centaur_log)
         log_event("centaur", f"{message}. See centaur.log for details.", level="error")

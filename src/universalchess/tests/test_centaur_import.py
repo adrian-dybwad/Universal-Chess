@@ -27,11 +27,13 @@ from universalchess.services.centaur_import import (
     ensure_factory_marker,
     ignore_cruft,
     install_from_image,
+    needs_epaper_settings_recapture,
     validate_app_dir,
 )
 from universalchess.services.centaur_import.events import EVENT_CATEGORY
 from universalchess.services.centaur_import.installer import (
     ARMHF_SETUP_HELPER,
+    EPAPER_RECAPTURE_EVENT,
     MOUNT_HELPER,
     _gunzip_to,
     ensure_armhf_support,
@@ -752,6 +754,53 @@ def test_install_from_image_copies_epaper_info_from_the_data_partition(tmp_path)
     assert runner.calls == ["mount", "stage", "umount", "mount", "stage", "umount"]
 
 
+def test_needs_epaper_settings_recapture_when_installed_without_epaper_info(tmp_path):
+    """An installed tree without settings/epaper.info must request a recapture.
+
+    Why this test exists: original dgt_epaper.createEPaper dies with SystemError
+    Invalid epaper definition file when that file is missing, and the import
+    warns in the Event Log. The Original Centaur tab reads this flag to show
+    the recapture steps. A complete install that still lacks the data-partition
+    file is the board that bounced back to Universal Chess.
+
+    How the regression manifests: the function returns False and the tab offers
+    Switch to Original Centaur with no explanation, repeating the bounce.
+    """
+    app = _make_app_tree(tmp_path, subdir="centaur")
+    (app / "settings").mkdir()
+    (app / "settings" / "factory.info").write_bytes(b"")
+    assert needs_epaper_settings_recapture(app) is True
+
+
+def test_needs_epaper_settings_recapture_is_false_when_epaper_info_exists(tmp_path):
+    """A working settings/epaper.info must not request a recapture.
+
+    Why this test exists: boards that already launch Original Centaur must not
+    be told to recapture the original SD. The flag is only for the missing-file
+    failure.
+
+    How the regression manifests: the function returns True whenever Centaur is
+    installed, so a working board is told to recapture on every visit.
+    """
+    app = _make_app_tree(tmp_path, subdir="centaur")
+    (app / "settings").mkdir()
+    (app / "settings" / "epaper.info").write_text("panel-def\n")
+    assert needs_epaper_settings_recapture(app) is False
+
+
+def test_needs_epaper_settings_recapture_is_false_when_centaur_is_not_installed(tmp_path):
+    """The not-installed importer must not be framed as a recapture.
+
+    Why this test exists: a board with no Centaur tree already shows the import
+    steps. Treating that as a recapture would tell the user to recapture a card
+    they have not imported yet.
+
+    How the regression manifests: an empty dest returns True and the UI shows
+    the Invalid epaper recapture card before any import.
+    """
+    assert needs_epaper_settings_recapture(tmp_path / "missing") is False
+
+
 # ---------------------------------------------------------------------------
 # Event-log diagnostics
 # ---------------------------------------------------------------------------
@@ -1128,7 +1177,7 @@ def test_successful_import_records_each_stage_and_a_timed_completion(tmp_path, r
     # A root-only capture (this fixture) has no settings/epaper.info. Original
     # DGT dies on launch without that file, so the import must record it.
     assert oldest_first[8]["level"] == "warning"
-    assert "epaper.info" in oldest_first[8]["message"]
+    assert oldest_first[8]["message"] == EPAPER_RECAPTURE_EVENT
     assert oldest_first[8]["category"] == EVENT_CATEGORY
 
     completion = events[0]

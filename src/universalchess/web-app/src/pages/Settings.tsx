@@ -3875,6 +3875,13 @@ function eventLevelVariant(level: string): 'default' | 'danger' | 'primary' {
   return 'default';
 }
 
+function eventLogNeedsEpaperRecapture(message: string): boolean {
+  return (
+    message.includes('settings/epaper.info')
+    || message.includes('Invalid epaper definition file')
+  );
+}
+
 // Compact elapsed-time label (e.g. "152s" -> "2m 32s"); null hides the column.
 function formatEventDuration(ms?: number): string | null {
   if (ms === undefined || ms === null) return null;
@@ -3983,7 +3990,17 @@ function LogViewer() {
                   <Badge variant={eventLevelVariant(event.level)}>
                     {EVENT_CATEGORY_LABEL_KEYS[event.category] ? t(EVENT_CATEGORY_LABEL_KEYS[event.category]) : event.category}
                   </Badge>
-                  <span className="event-log-message">{event.message}</span>
+                  <span className="event-log-message">
+                    {event.message}
+                    {eventLogNeedsEpaperRecapture(event.message) && (
+                      <>
+                        {' '}
+                        <Link to="/settings/centaur">
+                          {t('settingsPage.systemActions.epaperRecaptureEventLogCta')}
+                        </Link>
+                      </>
+                    )}
+                  </span>
                   {duration && <span className="event-log-duration">{duration}</span>}
                 </div>
               );
@@ -4828,6 +4845,7 @@ function CentaurSettings() {
   const { t } = useTranslation();
   const { busy, runAction, requireLogin, promptLogin, setActionOutcome, renderOutcome, loginDialog } = useAuthedSystemAction();
   const [centaurAvailable, setCentaurAvailable] = useState(false);
+  const [needsEpaperRecapture, setNeedsEpaperRecapture] = useState(false);
   const [centaurRunning, setCentaurRunning] = useState(false);
   const [directMode, setDirectMode] = useState(false);
   const [directBusy, setDirectBusy] = useState(false);
@@ -4869,6 +4887,10 @@ function CentaurSettings() {
       .then((data) => {
         if (data && typeof data.centaur_available === 'boolean') {
           setCentaurAvailable(data.centaur_available);
+        }
+        if (data && typeof data.centaur_needs_epaper_recapture === 'boolean') {
+          setNeedsEpaperRecapture(data.centaur_needs_epaper_recapture);
+          if (data.centaur_needs_epaper_recapture) setShowImport(true);
         }
       })
       .catch(() => {
@@ -5055,6 +5077,16 @@ function CentaurSettings() {
             setCentaurAvailable(true);
             setShowImport(true);
             setDisplayDiagNonce((n) => n + 1);
+            fetch(buildApiUrl('/api/system/info'))
+              .then((r) => (r.ok ? r.json() : null))
+              .then((data) => {
+                if (data && typeof data.centaur_needs_epaper_recapture === 'boolean') {
+                  setNeedsEpaperRecapture(data.centaur_needs_epaper_recapture);
+                }
+              })
+              .catch(() => {
+                // Best-effort; the recapture card stays until the next tab load.
+              });
           } else {
             setImportResult({ ok: false, text: s.result.error || t('settingsPage.systemActions.importFailed') });
           }
@@ -5210,6 +5242,12 @@ function CentaurSettings() {
       <Card className="mb-6">
         {centaurAvailable ? (
           <>
+            {needsEpaperRecapture && (
+              <Card variant="danger" className="mb-4" role="alert">
+                <h4 className="settings-group-title">{t('settingsPage.systemActions.epaperRecaptureTitle')}</h4>
+                <p className="mb-0">{t('settingsPage.systemActions.epaperRecaptureBody')}</p>
+              </Card>
+            )}
             <p className="text-muted mb-4">
               {t('settingsPage.systemActions.centaurIntro')}{centaurRunning ? t('settingsPage.systemActions.centaurIntroRunning') : t('settingsPage.systemActions.centaurIntroStopped')}
             </p>

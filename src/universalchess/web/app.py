@@ -3748,19 +3748,27 @@ def api_system_info():
     complete install (executable + engines/ + fonts/), not just the executable --
     a partial import is not launchable.
 
+    ``centaur_needs_epaper_recapture`` is true when that install is complete but
+    ``settings/epaper.info`` is missing -- original DGT then dies with Invalid
+    epaper definition file. The Original Centaur tab shows recapture steps.
+
     ``has_wifi`` / ``has_bluetooth`` report which radios the board physically has,
     read from the same module that gates the on-board Connectivity rows, so a
     board with no wireless die (a plain Pi Zero) hides the same features on both
     surfaces instead of offering inert Wi-Fi and Bluetooth controls.
     """
     from universalchess.board import wireless_capability
-    from universalchess.services.centaur_import import centaur_app_installed
+    from universalchess.services.centaur_import import (
+        centaur_app_installed,
+        needs_epaper_settings_recapture,
+    )
 
     try:
         system_user = pwd.getpwuid(os.getuid()).pw_name
         capability = wireless_capability.get_wireless_capability()
         return jsonify({
             "centaur_available": centaur_app_installed(),
+            "centaur_needs_epaper_recapture": needs_epaper_settings_recapture(),
             "username": system_user,
             "has_wifi": capability.has_wifi,
             "has_bluetooth": capability.has_bluetooth,
