@@ -23,8 +23,8 @@ berserk==0.14.0 \
     --hash=sha256:d4f4fe51f13e6b57ac017160af7b62483408006fa5dcf455cd2bccf6432948e0
 cairocffi==1.7.1 \
     --hash=sha256:9803a0e11f6c962f3b0ae2ec8ba6ae45e957a146a004697a1ac1bbf16b073b3f
-cairosvg==2.9.0 \
-    --hash=sha256:4b82d07d145377dffdfc19d9791bd5fb65539bb4da0adecf0bdbd9cd4ffd7c68
+cairosvg==2.9.1 \
+    --hash=sha256:f91c5628e834be024a0ed4544d76261cd84016a4c73bcdf26c386495825c05a1
 chess==1.11.2 \
     --hash=sha256:a8b43e5678fdb3000695bdaa573117ad683761e5ca38e591c4826eba6d25bb39
 cssselect2==0.10.1 \
@@ -37,8 +37,8 @@ ndjson==0.3.1 \
     --hash=sha256:839c22275e6baa3040077b83c005ac24199b94973309a8a1809be962c753a410
 python-dateutil==2.9.0.post0 \
     --hash=sha256:a8b2bc7bffae282281c8140a97d3aa9c14da0b136dfe83f850eea9a5f7470427
-python-pam==2.0.2 \
-    --hash=sha256:4ac51dd8953ac59aa45505882b565eef6a22e0423dcf25d63369902080416c20
+python-pam==2.1.0 \
+    --hash=sha256:5bbad1e2b93b30a48466a285e4979c702d4e6f61f3c920db874f171dfb0bb146
 segno==1.6.6 \
     --hash=sha256:28c7d081ed0cf935e0411293a465efd4d500704072cdb039778a2ab8736190c7
 six==1.17.0 \
