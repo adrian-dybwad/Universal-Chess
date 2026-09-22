@@ -465,9 +465,26 @@
       "deleteConfirm": "De gedownloade tablebase-bestanden van dit bord verwijderen?",
       "downloading": "Downloaden…",
       "failStatus": "Tablebase-status kon niet worden gelezen.",
-      "failAction": "Tablebases konden niet worden bijgewerkt."
+      "failAction": "Tablebases konden niet worden bijgewerkt.",
+      "probeLimit": "Zoeklimiet (stukken)",
+      "probeLimitHelp": "Grootste eindspel dat de motor opzoekt. 5 past bij de 3–5-stukken-set.",
+      "probeDepth": "Zoekdiepte",
+      "probeDepthHelp": "Minimale resterende zoekdiepte voordat tijdens het zoeken wordt geprobeerd.",
+      "fiftyMove": "50-zettenregel respecteren",
+      "fiftyMoveHelp": "Als dit aan staat, respecteren tablebase-resultaten de 50-zettenremise. Uit meldt het theoretische resultaat."
     },
-
+    "engineDefaults": {
+      "title": "Gedeelde motorstandaarden",
+      "description": "Hash, threads en zetoverhead gelden voor elke motor die ze aankondigt. Elke motor kan in de profieleditor Gedeelde standaarden gebruiken uitvinken.",
+      "hash": "Hash (MB)",
+      "hashHelp": "Grootte van de transpositietabel. Groter kan sterker spelen maar gebruikt meer RAM.",
+      "threads": "Threads",
+      "threadsHelp": "CPU-threads waarmee elke motor zoekt.",
+      "moveOverhead": "Zetoverhead (ms)",
+      "moveOverheadHelp": "Tijd per zet gereserveerd voor bord en GUI, zodat de motor niet overschrijdt.",
+      "failStatus": "Gedeelde motorstandaarden konden niet worden gelezen.",
+      "failAction": "Gedeelde motorstandaarden konden niet worden opgeslagen."
+    },
     "system": {
       "title": "Systeeminstellingen",
       "description": "Apparaatstatus, software-updates en systeemconfiguratie",
@@ -1038,6 +1055,9 @@
     "referencePlayerOne": "Profiel van speler 1",
     "referencePlayerTwo": "Profiel van speler 2",
     "referenceCentaur": "Origineel Centaur-profiel",
+    "useSharedDefaults": "Gedeelde standaarden gebruiken",
+    "useSharedResourcesHelp": "Als dit aan staat, gebruikt deze motor de Hash, threads en zetoverhead van Schaakmotoren. Zet uit om ze alleen voor deze motor in te stellen.",
+    "useSharedSyzygyHelp": "Als dit aan staat, gebruikt deze motor de gedeelde Syzygy-zoekinstellingen. Zet uit om ze alleen voor deze motor in te stellen.",
     "startFailed": "Deze motor is geïnstalleerd maar is niet gestart, dus zijn opties konden niet worden gelezen. Probeer hem via het tabblad Motoren te verwijderen en opnieuw te installeren; in het Gebeurtenislogboek onder Systeem staan de details."
   },
   "connectivity": {

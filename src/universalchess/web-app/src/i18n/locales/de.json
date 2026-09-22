@@ -465,9 +465,26 @@
       "deleteConfirm": "Die heruntergeladenen Tablebase-Dateien von diesem Brett entfernen?",
       "downloading": "Wird heruntergeladen…",
       "failStatus": "Tablebase-Status konnte nicht gelesen werden.",
-      "failAction": "Tablebases konnten nicht aktualisiert werden."
+      "failAction": "Tablebases konnten nicht aktualisiert werden.",
+      "probeLimit": "Abfragelimit (Steine)",
+      "probeLimitHelp": "Größtes Endspiel, das die Engine nachschlägt. 5 passt zum 3–5-Steine-Satz.",
+      "probeDepth": "Abfragetiefe",
+      "probeDepthHelp": "Mindest-Resttiefe der Suche, bevor während der Suche abgefragt wird.",
+      "fiftyMove": "50-Züge-Regel beachten",
+      "fiftyMoveHelp": "Wenn eingeschaltet, respektieren Tablebase-Ergebnisse das 50-Züge-Remis. Aus liefert das theoretische Ergebnis."
     },
-
+    "engineDefaults": {
+      "title": "Gemeinsame Engine-Vorgaben",
+      "description": "Hash, Threads und Zugoverhead gelten für jede Engine, die sie anbietet. Jede Engine kann in ihrem Profil-Editor Gemeinsame Vorgaben verwenden abwählen.",
+      "hash": "Hash (MB)",
+      "hashHelp": "Größe der Transpositionstabelle. Größer kann stärker spielen, braucht aber mehr RAM.",
+      "threads": "Threads",
+      "threadsHelp": "CPU-Threads, mit denen jede Engine sucht.",
+      "moveOverhead": "Zugoverhead (ms)",
+      "moveOverheadHelp": "Zeit pro Zug für Brett und GUI, damit die Engine nicht überzieht.",
+      "failStatus": "Gemeinsame Engine-Vorgaben konnten nicht gelesen werden.",
+      "failAction": "Gemeinsame Engine-Vorgaben konnten nicht gespeichert werden."
+    },
     "system": {
       "title": "Systemeinstellungen",
       "description": "Gerätestatus, Software-Updates und Systemkonfiguration",
@@ -1038,6 +1055,9 @@
     "referencePlayerOne": "Profil von Spieler 1",
     "referencePlayerTwo": "Profil von Spieler 2",
     "referenceCentaur": "Original-Centaur-Profil",
+    "useSharedDefaults": "Gemeinsame Vorgaben verwenden",
+    "useSharedResourcesHelp": "Wenn eingeschaltet, nutzt diese Engine Hash, Threads und Zugoverhead der Schach-Engines. Ausschalten, um sie nur für diese Engine zu setzen.",
+    "useSharedSyzygyHelp": "Wenn eingeschaltet, nutzt diese Engine die gemeinsamen Syzygy-Abfrageeinstellungen. Ausschalten, um sie nur für diese Engine zu setzen.",
     "startFailed": "Diese Engine ist installiert, startete aber nicht, daher konnten ihre Optionen nicht gelesen werden. Versuchen Sie, sie im Tab Engines zu deinstallieren und neu zu installieren; das Ereignisprotokoll unter System enthält die Details."
   },
   "connectivity": {

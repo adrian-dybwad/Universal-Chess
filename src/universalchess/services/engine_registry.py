@@ -184,7 +184,9 @@ class EngineHandle:
     ref_count: int = 0
     shared: bool = True
     
-    def _supported_options(self, options: Dict[str, str]) -> Dict[str, str]:
+    def _supported_options(
+        self, options: Dict[str, str], *, apply_shared: bool = False
+    ) -> Dict[str, str]:
         """Keep only options this engine advertised in its UCI handshake.
 
         python-chess raises ``EngineError`` for any option a UCI engine did not
@@ -198,14 +200,20 @@ class EngineHandle:
         generic profile compatible with every engine and covers every caller
         (players, hand/brain, analysis) without each re-implementing the check.
 
-        When 3–5-piece Syzygy tables are installed and enabled, ``SyzygyPath``
-        is filled in for engines that advertise it.
+        ``configure`` fills missing Hash/Threads/Syzygy knobs from the app-wide
+        defaults. ``play`` and ``analyse`` do not: analysis passes
+        full-strength knobs on a pooled process and must not reset the RAM/CPU
+        budget on every eval.
 
         Unknown options are dropped (with a log line) rather than raising: an
         option a given engine does not understand is not an error for the app,
         it simply does not apply to that engine.
         """
         advertised = self.engine.options
+        from universalchess.services import engine_defaults
+
+        if apply_shared:
+            options = engine_defaults.merge_options(options, advertised, overwrite=False)
         options = syzygy.merge_path(options, advertised)
         supported = {name: value for name, value in options.items() if name in advertised}
         dropped = [name for name in options if name not in advertised]
@@ -262,7 +270,7 @@ class EngineHandle:
             options: Dict of UCI option name -> value
         """
         with self.lock:
-            supported = self._supported_options(options or {})
+            supported = self._supported_options(options or {}, apply_shared=True)
             if supported:
                 self.engine.configure(supported)
     

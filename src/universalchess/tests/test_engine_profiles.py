@@ -68,6 +68,7 @@ GROUPS = (
 SAMPLE_UCI = """\
 [DEFAULT]
 Description = Personality engine
+UseSharedResources = false
 Hash = 16
 Threads = 2
 
@@ -848,12 +849,12 @@ def test_the_options_sent_to_the_engine_merge_the_engine_wide_defaults(uci_file)
     (a performance change with no error), or ``Description`` is sent as setoption.
     """
     options = ep.uci_options_for_section(str(uci_file), "1200 ELO")
-    assert options == {
-        "Hash": "16",
-        "Threads": "2",
-        "UCI_LimitStrength": "true",
-        "UCI_Elo": "1200",
-    }
+    assert options["Hash"] == "16"
+    assert options["Threads"] == "2"
+    assert options["UCI_LimitStrength"] == "true"
+    assert options["UCI_Elo"] == "1200"
+    assert "Description" not in options
+    assert "UseSharedResources" not in options
 
 
 def test_the_options_for_an_unresolved_reference_are_the_defaults_alone(uci_file):
@@ -868,14 +869,15 @@ def test_the_options_for_an_unresolved_reference_are_the_defaults_alone(uci_file
     appears in the result, or the engine-wide options are dropped along with the
     section.
     """
-    assert ep.uci_options_for_section(str(uci_file), "Missing") == {
-        "Hash": "16",
-        "Threads": "2",
-    }
-    assert ep.uci_options_for_section(str(uci_file), None) == {
-        "Hash": "16",
-        "Threads": "2",
-    }
+    missing = ep.uci_options_for_section(str(uci_file), "Missing")
+    assert missing["Hash"] == "16"
+    assert missing["Threads"] == "2"
+    assert "UCI_Elo" not in missing
+    assert "Description" not in missing
+    none = ep.uci_options_for_section(str(uci_file), None)
+    assert none["Hash"] == "16"
+    assert none["Threads"] == "2"
+    assert "UCI_Elo" not in none
 
 
 def test_a_reference_by_legacy_name_still_reaches_its_section(tmp_path):
@@ -1138,11 +1140,10 @@ def test_write_new_profile_preserves_others_and_default(uci_file, groups):
     raw = configparser.ConfigParser()
     raw.optionxform = str
     raw.read(str(uci_file))
-    assert raw.defaults() == {
-        "Description": "Personality engine",
-        "Hash": "16",
-        "Threads": "2",
-    }
+    assert raw.defaults()["Description"] == "Personality engine"
+    assert raw.defaults()["Hash"] == "16"
+    assert raw.defaults()["Threads"] == "2"
+    assert raw.defaults()["UseSharedResources"] == "false"
 
 
 def test_write_replaces_the_options_wholesale(uci_file, groups):
@@ -1161,6 +1162,28 @@ def test_write_replaces_the_options_wholesale(uci_file, groups):
         "OwnAttack": "200",
         "Description": "Aggressive attacking style",
     }
+
+
+def test_write_profile_drops_shared_resource_keys(uci_file):
+    """Hash/Threads belong to shared defaults, not a strength section.
+
+    Why: the profile editor used to show Hash on every profile and saving
+    wrote it into that section, so one Elo rung could pin a different hash
+    than the rest. How a regression manifests: Attacker.values contains Hash.
+    """
+    groups = GROUPS + (
+        ep.ProfileGroup(
+            "resources",
+            "Resources",
+            (ep.ProfileField("Hash", "Hash", "int", 16, 1, 1024),),
+        ),
+    )
+    ep.write_profile(
+        str(uci_file), "Attacker", {"OwnAttack": 130, "Hash": 64}, groups
+    )
+    profiles = {p["name"]: p["values"] for p in ep.read_profiles(str(uci_file))}
+    assert "Hash" not in profiles["Attacker"]
+    assert profiles["Attacker"]["OwnAttack"] == "130"
 
 
 def test_written_file_is_loadable_by_runtime_with_default_inheritance(uci_file, groups):

@@ -9,6 +9,7 @@ import { renderCatalogRow } from '../menu/renderCatalogRow';
 import { buildSections } from '../menu/engine';
 import { EngineProfileEditor } from '../components/EngineProfileEditor';
 import { SyzygyCard } from '../components/SyzygyCard';
+import { EngineDefaultsCard } from '../components/EngineDefaultsCard';
 import { BoardUnreachableCard } from '../components/BoardUnreachableCard';
 import type { FieldValue } from '../components/CatalogField';
 import { useLoginRetry } from '../components/useLoginRetry';
@@ -2449,6 +2450,7 @@ export function Settings() {
                 <h2 className="page-title">{t('settingsPage.engines.title')}</h2>
                 <p className="text-muted mb-6">{t('settingsPage.engines.description')}</p>
 
+                <EngineDefaultsCard />
                 <SyzygyCard />
 
                 <EnginesList

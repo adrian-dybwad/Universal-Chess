@@ -15,6 +15,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Shared engine defaults (HIARCS-style)**: Hash, Threads, and Move Overhead
+  were labelled engine-wide but lived in each engine's ``[DEFAULT]`` and on
+  every strength profile, so changing RAM on one rung did not apply to the
+  others. Chess Engines now has one Shared engine defaults card (and an
+  Engine defaults row on the board list). Every engine that advertises those
+  options inherits them until it unchecks Use shared defaults in its profile
+  editor. The Syzygy card gains Probe limit, Probe depth, and Honour 50-move
+  rule; the shared folder still supplies ``SyzygyPath`` when tables are on.
+  Strength, style, Ponder, and MultiPV stay per profile. An engine that does
+  not advertise an option never receives it.
+
 - **Optional 3–5-piece Syzygy tablebases**: Engines that advertise
   ``SyzygyPath`` (Stockfish from apt, Arasan) can probe a shared folder
   at ``/opt/universalchess/syzygy`` for perfect play in 5-piece-or-fewer

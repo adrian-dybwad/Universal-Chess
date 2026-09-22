@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Badge, Button, Card, CardHeader, ProgressBar, Toggle } from './ui';
+import { Badge, Button, Card, CardHeader, FormRow, ProgressBar, Slider, Toggle } from './ui';
 import { apiFetch } from '../utils/api';
+import {
+  parseEngineDefaults,
+  postEngineDefaults,
+  type EngineDefaultsStatus,
+} from './EngineDefaultsCard';
 
 /**
  * Shared 3–5-piece Syzygy tablebase card on Chess Engines.
@@ -62,15 +67,22 @@ const POLL_MS = 1000;
 export function SyzygyCard() {
   const { t } = useTranslation();
   const [status, setStatus] = useState<SyzygyStatus>(() => parseSyzygyStatus({}));
+  const [defaults, setDefaults] = useState<EngineDefaultsStatus>(() => parseEngineDefaults({}));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    const response = await apiFetch('/api/syzygy');
-    if (!response.ok) {
+    const [syzygyResponse, defaultsResponse] = await Promise.all([
+      apiFetch('/api/syzygy'),
+      apiFetch('/api/engine-defaults'),
+    ]);
+    if (!syzygyResponse.ok) {
       throw new Error('status');
     }
-    setStatus(parseSyzygyStatus(await response.json()));
+    setStatus(parseSyzygyStatus(await syzygyResponse.json()));
+    if (defaultsResponse.ok) {
+      setDefaults(parseEngineDefaults(await defaultsResponse.json()));
+    }
   }, []);
 
   useEffect(() => {
@@ -148,6 +160,44 @@ export function SyzygyCard() {
         help={t('settingsPage.syzygy.useHelp')}
         onChange={(checked) => {
           void postAction(checked ? 'enable' : 'disable');
+        }}
+      />
+
+      <FormRow label={t('settingsPage.syzygy.probeLimit')} help={t('settingsPage.syzygy.probeLimitHelp')}>
+        <Slider
+          value={defaults.syzygy_probe_limit}
+          min={0}
+          max={7}
+          disabled={busy}
+          onChange={(value) => {
+            void postEngineDefaults({ syzygy_probe_limit: value }).then(setDefaults).catch(() => {
+              setError(t('settingsPage.engineDefaults.failAction'));
+            });
+          }}
+        />
+      </FormRow>
+      <FormRow label={t('settingsPage.syzygy.probeDepth')} help={t('settingsPage.syzygy.probeDepthHelp')}>
+        <Slider
+          value={defaults.syzygy_probe_depth}
+          min={1}
+          max={20}
+          disabled={busy}
+          onChange={(value) => {
+            void postEngineDefaults({ syzygy_probe_depth: value }).then(setDefaults).catch(() => {
+              setError(t('settingsPage.engineDefaults.failAction'));
+            });
+          }}
+        />
+      </FormRow>
+      <Toggle
+        checked={defaults.syzygy_50_move_rule}
+        disabled={busy}
+        label={t('settingsPage.syzygy.fiftyMove')}
+        help={t('settingsPage.syzygy.fiftyMoveHelp')}
+        onChange={(checked) => {
+          void postEngineDefaults({ syzygy_50_move_rule: checked }).then(setDefaults).catch(() => {
+            setError(t('settingsPage.engineDefaults.failAction'));
+          });
         }}
       />
 

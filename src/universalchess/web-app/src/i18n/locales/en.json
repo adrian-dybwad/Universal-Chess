@@ -465,9 +465,26 @@
       "deleteConfirm": "Remove the downloaded tablebase files from this board?",
       "downloading": "Downloading…",
       "failStatus": "Could not read tablebase status.",
-      "failAction": "Could not update tablebases."
+      "failAction": "Could not update tablebases.",
+      "probeLimit": "Probe limit (pieces)",
+      "probeLimitHelp": "Largest endgame the engine will look up. 5 matches the 3–5-piece set.",
+      "probeDepth": "Probe depth",
+      "probeDepthHelp": "Minimum remaining search depth before probing during search.",
+      "fiftyMove": "Honour 50-move rule",
+      "fiftyMoveHelp": "When on, tablebase results respect the 50-move draw. Off reports the theoretical result."
     },
-
+    "engineDefaults": {
+      "title": "Shared engine defaults",
+      "description": "Hash, threads, and move overhead apply to every engine that advertises them. Each engine can uncheck Use shared defaults in its profile editor.",
+      "hash": "Hash (MB)",
+      "hashHelp": "Transposition table size. Larger can strengthen play but uses more RAM.",
+      "threads": "Threads",
+      "threadsHelp": "CPU threads each engine searches with.",
+      "moveOverhead": "Move overhead (ms)",
+      "moveOverheadHelp": "Time reserved each move for the board and GUI, so the engine does not overstep.",
+      "failStatus": "Could not read shared engine defaults.",
+      "failAction": "Could not save shared engine defaults."
+    },
     "system": {
       "title": "System Settings",
       "description": "Device status, software updates, and system configuration",
@@ -1038,6 +1055,9 @@
     "referencePlayerOne": "Player 1 profile",
     "referencePlayerTwo": "Player 2 profile",
     "referenceCentaur": "Original Centaur profile",
+    "useSharedDefaults": "Use shared defaults",
+    "useSharedResourcesHelp": "When on, this engine uses the Chess Engines Hash, threads, and move overhead. Turn off to set them for this engine only.",
+    "useSharedSyzygyHelp": "When on, this engine uses the shared Syzygy probe settings. Turn off to set them for this engine only.",
     "startFailed": "This engine is installed but did not start, so its options could not be read. Try uninstalling and reinstalling it from the Engines tab; the Event Log under System has the details."
   },
   "connectivity": {

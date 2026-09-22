@@ -468,9 +468,26 @@
       "deleteConfirm": "Retirer de ce plateau les fichiers de tables téléchargés ?",
       "downloading": "Téléchargement…",
       "failStatus": "Impossible de lire l'état des tables.",
-      "failAction": "Impossible de mettre à jour les tables."
+      "failAction": "Impossible de mettre à jour les tables.",
+      "probeLimit": "Limite de sondage (pièces)",
+      "probeLimitHelp": "Le plus grand final que le moteur consultera. 5 correspond au jeu 3–5 pièces.",
+      "probeDepth": "Profondeur de sondage",
+      "probeDepthHelp": "Profondeur restante minimale de recherche avant de sonder pendant la recherche.",
+      "fiftyMove": "Respecter la règle des 50 coups",
+      "fiftyMoveHelp": "Lorsque c'est activé, les résultats des tables respectent la nulle des 50 coups. Désactivé rapporte le résultat théorique."
     },
-
+    "engineDefaults": {
+      "title": "Réglages moteur partagés",
+      "description": "Hash, fils et marge de coup s'appliquent à chaque moteur qui les annonce. Chaque moteur peut décocher Utiliser les réglages partagés dans son éditeur de profils.",
+      "hash": "Hash (Mo)",
+      "hashHelp": "Taille de la table de transposition. Plus grand peut renforcer le jeu mais utilise plus de RAM.",
+      "threads": "Fils",
+      "threadsHelp": "Fils CPU avec lesquels chaque moteur cherche.",
+      "moveOverhead": "Marge de coup (ms)",
+      "moveOverheadHelp": "Temps réservé à chaque coup pour le plateau et l'interface, pour que le moteur ne dépasse pas.",
+      "failStatus": "Impossible de lire les réglages moteur partagés.",
+      "failAction": "Impossible d'enregistrer les réglages moteur partagés."
+    },
     "system": {
       "title": "Paramètres système",
       "description": "État de l'appareil, mises à jour logicielles et configuration du système",
@@ -1045,6 +1062,9 @@
     "referencePlayerOne": "Profil du joueur 1",
     "referencePlayerTwo": "Profil du joueur 2",
     "referenceCentaur": "Profil Centaur d'origine",
+    "useSharedDefaults": "Utiliser les réglages partagés",
+    "useSharedResourcesHelp": "Lorsque c'est activé, ce moteur utilise le Hash, les fils et la marge de coup de Moteurs d'échecs. Décochez pour les régler pour ce moteur seulement.",
+    "useSharedSyzygyHelp": "Lorsque c'est activé, ce moteur utilise les réglages de sondage Syzygy partagés. Décochez pour les régler pour ce moteur seulement.",
     "startFailed": "Ce moteur est installé mais n'a pas démarré, donc ses options n'ont pas pu être lues. Essayez de le désinstaller puis de le réinstaller depuis l'onglet Moteurs ; le journal des événements sous Système contient les détails."
   },
   "connectivity": {

@@ -95,6 +95,23 @@ function mockFetch(overrides: Partial<typeof idleSyzygy> = {}) {
         if (action === 'download') syzygyState = { ...syzygyState, downloading: true };
         return jsonResponse({ success: true, ...syzygyState });
       }
+      if (url === '/api/engine-defaults' && method === 'GET') {
+        return jsonResponse({
+          hash: 16, threads: 1, move_overhead: 100,
+          syzygy_probe_limit: 5, syzygy_probe_depth: 1, syzygy_50_move_rule: true,
+          hash_max_mb: 16, ram_mb: 8192, constrained: false,
+        });
+      }
+      if (url === '/api/engine-defaults' && method === 'POST') {
+        lastSyzygyPost = JSON.parse((init?.body as string) ?? '{}');
+        return jsonResponse({
+          success: true,
+          hash: 16, threads: 1, move_overhead: 100,
+          syzygy_probe_limit: 5, syzygy_probe_depth: 1, syzygy_50_move_rule: true,
+          hash_max_mb: 16, ram_mb: 8192, constrained: false,
+          ...JSON.parse((init?.body as string) ?? '{}'),
+        });
+      }
       return jsonResponse({});
     })
   );
@@ -156,6 +173,20 @@ describe('Syzygy tablebase card', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Download 3–5 piece set/ }));
     await waitFor(() => {
       expect(lastSyzygyPost).toEqual({ action: 'download' });
+    });
+  });
+
+  it('POSTs probe limit from the Syzygy card', async () => {
+    mockFetch();
+    renderEnginesTab();
+    await screen.findByRole('heading', { name: 'Endgame tablebases' });
+    const probeSlider = screen.getAllByRole('slider').find(
+      (el) => (el as HTMLInputElement).max === '7',
+    );
+    expect(probeSlider).toBeDefined();
+    fireEvent.change(probeSlider as HTMLElement, { target: { value: '4' } });
+    await waitFor(() => {
+      expect(lastSyzygyPost).toEqual({ syzygy_probe_limit: 4 });
     });
   });
 });

@@ -468,9 +468,26 @@
       "deleteConfirm": "Rimuovere da questa scheda i file delle tablebase scaricati?",
       "downloading": "Download in corso…",
       "failStatus": "Impossibile leggere lo stato delle tablebase.",
-      "failAction": "Impossibile aggiornare le tablebase."
+      "failAction": "Impossibile aggiornare le tablebase.",
+      "probeLimit": "Limite di interrogazione (pezzi)",
+      "probeLimitHelp": "Il finale più grande che il motore consulterà. 5 corrisponde al set 3–5 pezzi.",
+      "probeDepth": "Profondità di interrogazione",
+      "probeDepthHelp": "Profondità rimanente minima di ricerca prima di interrogare durante la ricerca.",
+      "fiftyMove": "Rispettare la regola delle 50 mosse",
+      "fiftyMoveHelp": "Quando è attivo, i risultati delle tablebase rispettano il patta delle 50 mosse. Disattivo riporta il risultato teorico."
     },
-
+    "engineDefaults": {
+      "title": "Predefiniti motore condivisi",
+      "description": "Hash, thread e margine mossa si applicano a ogni motore che li annuncia. Ogni motore può deselezionare Usa predefiniti condivisi nell'editor dei profili.",
+      "hash": "Hash (MB)",
+      "hashHelp": "Dimensione della tabella di trasposizione. Più grande può rafforzare il gioco ma usa più RAM.",
+      "threads": "Thread",
+      "threadsHelp": "Thread CPU con cui cerca ogni motore.",
+      "moveOverhead": "Margine mossa (ms)",
+      "moveOverheadHelp": "Tempo riservato a ogni mossa per la scacchiera e l'interfaccia, così il motore non sfora.",
+      "failStatus": "Impossibile leggere i predefiniti motore condivisi.",
+      "failAction": "Impossibile salvare i predefiniti motore condivisi."
+    },
     "system": {
       "title": "Impostazioni di sistema",
       "description": "Stato del dispositivo, aggiornamenti software e configurazione di sistema",
@@ -1044,7 +1061,10 @@
     "referencesMoved": "Ora usano \"{{to}}\": {{settings}}.",
     "referencePlayerOne": "Profilo giocatore 1",
     "referencePlayerTwo": "Profilo giocatore 2",
-    "referenceCentaur": "Profilo Centaur originale",
+    "referenceCentaur": "Profil Centaur originale",
+    "useSharedDefaults": "Usa predefiniti condivisi",
+    "useSharedResourcesHelp": "Quando è attivo, questo motore usa Hash, thread e margine mossa di Motori scacchistici. Disattiva per impostarli solo per questo motore.",
+    "useSharedSyzygyHelp": "Quando è attivo, questo motore usa le impostazioni di interrogazione Syzygy condivise. Disattiva per impostarle solo per questo motore.",
     "startFailed": "Questo motore è installato ma non è partito, quindi le sue opzioni non hanno potuto essere lette. Prova a disinstallarlo e reinstallarlo dalla scheda Motori; il Registro eventi in Sistema ha i dettagli."
   },
   "connectivity": {

@@ -65,7 +65,126 @@ CUSTOM_HEADING = "Custom"
 
 # First row on the engine list: the shared 3–5-piece Syzygy folder. Kept out of
 # the catalog view so an engine named "syzygy" cannot collide with it.
+# First rows on the engine list: shared Hash/Threads, then the Syzygy folder.
+# Keys are not engine names so a custom engine cannot collide with them.
 SYZYGY_MENU_KEY = "syzygy"
+ENGINE_DEFAULTS_MENU_KEY = "engine_defaults"
+
+_HASH_STEPS = (16, 32, 64, 128, 256, 512, 1024)
+_THREAD_STEPS = (1, 2, 3, 4, 6, 8)
+_OVERHEAD_STEPS = (10, 50, 100, 200, 500)
+
+
+def _next_step(current: int, steps: tuple, cap: Optional[int] = None) -> int:
+    allowed = [step for step in steps if cap is None or step <= cap] or list(steps[:1])
+    if current in allowed:
+        return allowed[(allowed.index(current) + 1) % len(allowed)]
+    for step in allowed:
+        if step > current:
+            return step
+    return allowed[0]
+
+
+def engine_defaults_list_entry(snapshot: Optional[Dict[str, Any]] = None) -> IconMenuEntry:
+    """Engine-list row for app-wide Hash and Threads."""
+    from universalchess.services import engine_defaults
+
+    status = snapshot if snapshot is not None else engine_defaults.status()
+    detail = t(
+        "engine.defaults_detail",
+        hash=status.get("hash") or 0,
+        threads=status.get("threads") or 0,
+    )
+    return IconMenuEntry(
+        key=ENGINE_DEFAULTS_MENU_KEY,
+        label=f"{t('engine.defaults')}\n{detail}",
+        icon_name="settings",
+        enabled=True,
+        selectable=True,
+        height_ratio=0.8,
+        layout="horizontal",
+        font_size=12,
+    )
+
+
+def handle_engine_defaults_menu(
+    menu_manager,
+    log,
+    *,
+    read_status: Optional[Callable[[], Dict[str, Any]]] = None,
+    set_values: Optional[Callable[[Dict[str, Any]], bool]] = None,
+) -> Optional[MenuSelection]:
+    """Detail screen: Hash, Threads, Move Overhead. Probe knobs live under Tablebases."""
+    from universalchess.services import engine_defaults
+
+    read_status = read_status or engine_defaults.status
+    set_values = set_values or engine_defaults.set_values
+
+    def build_entries():
+        status = read_status()
+        return [
+            IconMenuEntry(
+                key="note",
+                label=t("engine.defaults_note"),
+                icon_name="info",
+                enabled=True,
+                selectable=False,
+                height_ratio=1.0,
+                layout="horizontal",
+                font_size=11,
+            ),
+            IconMenuEntry(
+                key="hash",
+                label=t("engine.defaults_hash", value=status.get("hash") or 0),
+                icon_name="settings",
+                enabled=True,
+                selectable=True,
+                height_ratio=0.8,
+                layout="horizontal",
+                font_size=12,
+            ),
+            IconMenuEntry(
+                key="threads",
+                label=t("engine.defaults_threads", value=status.get("threads") or 0),
+                icon_name="settings",
+                enabled=True,
+                selectable=True,
+                height_ratio=0.8,
+                layout="horizontal",
+                font_size=12,
+            ),
+            IconMenuEntry(
+                key="overhead",
+                label=t("engine.defaults_overhead", value=status.get("move_overhead") or 0),
+                icon_name="settings",
+                enabled=True,
+                selectable=True,
+                height_ratio=0.8,
+                layout="horizontal",
+                font_size=12,
+            ),
+        ]
+
+    def handle_selection(result: MenuSelection):
+        status = read_status()
+        if result.key == "hash":
+            cap = int(status.get("hash_max_mb") or _HASH_STEPS[-1])
+            set_values({
+                "hash": _next_step(int(status.get("hash") or 0), _HASH_STEPS, cap),
+            })
+        elif result.key == "threads":
+            set_values({
+                "threads": _next_step(int(status.get("threads") or 0), _THREAD_STEPS),
+            })
+        elif result.key == "overhead":
+            set_values({
+                "move_overhead": _next_step(
+                    int(status.get("move_overhead") or 0), _OVERHEAD_STEPS
+                ),
+            })
+        return None
+
+    return menu_manager.run_menu_loop(build_entries, handle_selection, initial_index=1)
 
 
 def tablebases_list_entry(snapshot: Optional[Dict[str, Any]] = None) -> IconMenuEntry:
@@ -941,10 +1060,16 @@ def handle_engine_manager_menu(
 
     def build_entries():
         return [
+            engine_defaults_list_entry(),
             tablebases_list_entry(),
         ] + build_engine_list_entries(read_rows())
 
     def handle_selection(result: MenuSelection):
+        if result.key == ENGINE_DEFAULTS_MENU_KEY:
+            sub_result = handle_engine_defaults_menu(menu_manager, log)
+            if is_break_result(sub_result):
+                return sub_result
+            return None
         if result.key == SYZYGY_MENU_KEY:
             sub_result = handle_syzygy_menu(menu_manager, log)
             if is_break_result(sub_result):

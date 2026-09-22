@@ -471,9 +471,26 @@
       "deleteConfirm": "Usunąć z tej płyty pobrane pliki baz końcówek?",
       "downloading": "Pobieranie…",
       "failStatus": "Nie udało się odczytać stanu baz końcówek.",
-      "failAction": "Nie udało się zaktualizować baz końcówek."
+      "failAction": "Nie udało się zaktualizować baz końcówek.",
+      "probeLimit": "Limit sondowania (bierki)",
+      "probeLimitHelp": "Największa końcówka, którą silnik sprawdzi. 5 pasuje do zestawu 3–5 bierek.",
+      "probeDepth": "Głębokość sondowania",
+      "probeDepthHelp": "Minimalna pozostała głębokość wyszukiwania przed sondowaniem w trakcie szukania.",
+      "fiftyMove": "Przestrzegać reguły 50 posunięć",
+      "fiftyMoveHelp": "Gdy włączone, wyniki baz respektują remis 50 posunięć. Wyłączone podaje wynik teoretyczny."
     },
-
+    "engineDefaults": {
+      "title": "Wspólne ustawienia silnika",
+      "description": "Hash, wątki i narzut ruchu dotyczą każdego silnika, który je ogłasza. Każdy silnik może odznaczyć Używaj wspólnych ustawień w edytorze profili.",
+      "hash": "Hash (MB)",
+      "hashHelp": "Rozmiar tablicy transpozycji. Większy może wzmocnić grę, ale zużywa więcej RAM.",
+      "threads": "Wątki",
+      "threadsHelp": "Wątki CPU, z którymi każdy silnik szuka.",
+      "moveOverhead": "Narzut ruchu (ms)",
+      "moveOverheadHelp": "Czas zarezerwowany na każdy ruch dla planszy i GUI, aby silnik nie przekroczył limitu.",
+      "failStatus": "Nie udało się odczytać wspólnych ustawień silnika.",
+      "failAction": "Nie udało się zapisać wspólnych ustawień silnika."
+    },
     "system": {
       "title": "Ustawienia systemowe",
       "description": "Stan urządzenia, aktualizacje oprogramowania i konfiguracja systemu",
@@ -1052,6 +1069,9 @@
     "referencePlayerOne": "Profil gracza 1",
     "referencePlayerTwo": "Profil gracza 2",
     "referenceCentaur": "Profil oryginalnego Centaura",
+    "useSharedDefaults": "Używaj wspólnych ustawień",
+    "useSharedResourcesHelp": "Gdy włączone, ten silnik używa Hash, wątków i narzutu ruchu z Silniki szachowe. Wyłącz, aby ustawić je tylko dla tego silnika.",
+    "useSharedSyzygyHelp": "Gdy włączone, ten silnik używa wspólnych ustawień sondowania Syzygy. Wyłącz, aby ustawić je tylko dla tego silnika.",
     "startFailed": "Ten silnik jest zainstalowany, ale nie uruchomił się, więc nie udało się odczytać jego opcji. Spróbuj odinstalować go i zainstalować ponownie z karty Silniki; szczegóły znajdziesz w Dzienniku zdarzeń w sekcji System."
   },
   "connectivity": {

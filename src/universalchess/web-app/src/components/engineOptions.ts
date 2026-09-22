@@ -99,6 +99,11 @@ export interface SchemaResponse {
   profiles: Profile[];
   /** Groups of profile names that differ only by case (legacy twins). */
   case_collisions?: string[][];
+  /** Per-engine Use shared flags and effective Hash/Threads/Syzygy values. */
+  shared?: {
+    resources?: { use_defaults: boolean; values: Record<string, string> };
+    syzygy?: { use_defaults: boolean; values: Record<string, string> };
+  };
   /**
    * Why the editor is unavailable when `editable` is false, as a stable token
    * (see the backend's load-failure reason codes). "binary_missing" means the
@@ -115,9 +120,65 @@ export interface SchemaResponse {
 export const GROUP_ICONS: Record<string, string> = {
   about: 'info',
   strength: 'trending',
+  resources: 'settings',
+  syzygy: 'settings',
   engine: 'settings',
   advanced: 'tune',
 };
+
+export const SHARED_GROUP_IDS = ['resources', 'syzygy'] as const;
+
+export function isSharedGroup(id: string): boolean {
+  return (SHARED_GROUP_IDS as readonly string[]).includes(id);
+}
+
+/** SyzygyPath is owned by the tablebase card, not the per-engine overlay. */
+export function isSyzygyPathField(field: SchemaField): boolean {
+  return field.key.toLowerCase() === 'syzygypath';
+}
+
+/** Look up an advertised option in a Use-shared values map, ignoring spelling case. */
+export function sharedValueForField(
+  field: SchemaField,
+  values: Record<string, string> | undefined,
+): string {
+  if (values) {
+    const folded = field.key.toLowerCase();
+    for (const [key, value] of Object.entries(values)) {
+      if (key.toLowerCase() === folded) return String(value);
+    }
+  }
+  return defaultString(field);
+}
+
+/**
+ * Typed overlay payload for POST /api/engines/<name>/defaults.
+ *
+ * Unlike ``toOverridePayload`` this sends every current overlay value, because
+ * the write lands in the engine's ``[DEFAULT]`` rather than a sparse strength
+ * section. SyzygyPath is omitted: the shared folder still supplies it.
+ */
+export function overlayPayloadFromGroup(
+  group: SchemaGroup,
+  formValues: Record<string, string>,
+): Record<string, number | boolean | string> {
+  const payload: Record<string, number | boolean | string> = {};
+  for (const field of group.fields) {
+    if (field.type === 'info' || isSyzygyPathField(field)) continue;
+    const raw = formValues[field.key] ?? '';
+    if (field.type === 'bool') {
+      payload[field.key] = raw === 'true';
+    } else if (field.type === 'int') {
+      if (raw === '') continue;
+      const num = Number(raw);
+      if (Number.isFinite(num)) payload[field.key] = num;
+    } else {
+      const text = raw.trim();
+      if (text !== '') payload[field.key] = text;
+    }
+  }
+  return payload;
+}
 
 /**
  * Put the About group first when present so engine identity (UCI_EngineAbout)
@@ -142,6 +203,7 @@ export function valuesForProfile(
 ): Record<string, string> {
   const out: Record<string, string> = {};
   for (const group of schema) {
+    if (isSharedGroup(group.id)) continue;
     for (const field of group.fields) {
       if (field.type === 'info') {
         // Display-only: always show the engine default, never a saved override.
@@ -167,6 +229,7 @@ export function toOverridePayload(
 ): Record<string, number | boolean | string> {
   const payload: Record<string, number | boolean | string> = {};
   for (const group of schema) {
+    if (isSharedGroup(group.id)) continue;
     for (const field of group.fields) {
       if (field.type === 'info') continue;
       const raw = formValues[field.key] ?? '';
@@ -196,6 +259,7 @@ export function profileFormIsDirty(
 ): boolean {
   const expected = valuesForProfile(schema, baseline);
   for (const group of schema) {
+    if (isSharedGroup(group.id)) continue;
     for (const field of group.fields) {
       if (field.type === 'info') continue;
       if ((formValues[field.key] ?? '') !== (expected[field.key] ?? '')) {
@@ -245,6 +309,7 @@ export function hasIncompleteEdit(
   formValues: Record<string, string>,
 ): boolean {
   for (const group of schema) {
+    if (isSharedGroup(group.id)) continue;
     for (const field of group.fields) {
       if (field.type !== 'int') continue;
       if ((formValues[field.key] ?? '').trim() === '') return true;

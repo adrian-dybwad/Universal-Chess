@@ -138,7 +138,13 @@ _PROFILE_ID = re.compile(rf"^{PROFILE_ID_PREFIX}[0-9a-f]{{{_PROFILE_ID_DIGITS}}}
 # (the engine player, both Hand+Brain paths, each also filtering the fallback
 # read) all naming ``Description`` alone -- which made adding a metadata key an
 # audit rather than an edit.
-METADATA_KEYS = frozenset({"Description", "Name", "ProfileLabel"})
+METADATA_KEYS = frozenset({
+    "Description",
+    "Name",
+    "ProfileLabel",
+    "UseSharedResources",
+    "UseSharedSyzygy",
+})
 
 # ``[DEFAULT]`` key holding this install's label key selection: which options
 # compose a profile's display label, in order, comma-separated. Stored beside the
@@ -678,15 +684,14 @@ def uci_options_only(values: Mapping[str, str]) -> Dict[str, str]:
 def uci_options_for_section(uci_path: str, section: Optional[str]) -> Dict[str, str]:
     """Return the UCI options to apply for a stored strength ``section``.
 
-    The one reader used at game start by every engine-backed player. Unlike the
-    editor's reads, this one merges the engine-wide ``[DEFAULT]`` (Hash/Threads)
-    into the section, because that is what the engine must receive; and it drops
-    this app's metadata (:func:`uci_options_only`), which is not the engine's to
-    know.
+    The one reader used at game start by every engine-backed player. Shared
+    Hash/Threads/Syzygy probe knobs are merged in (or the engine's overlay when
+    Use shared is off). This app's metadata is dropped, which is not the
+    engine's to know.
 
     ``section`` is resolved through :func:`resolve_section`, so an id, a legacy
     section name and a user-authored name all work. An unresolved reference falls
-    back to the engine-wide defaults alone and logs it: that is a strength nobody
+    back to the shared/engine defaults alone and logs it: that is a strength nobody
     chose, and it used to happen silently -- the caller has already lost the
     user's selection by this point, and inventing a rung here would be worse.
 
@@ -694,21 +699,23 @@ def uci_options_for_section(uci_path: str, section: Optional[str]) -> Dict[str, 
     """
     if not os.path.exists(uci_path):
         return {}
-    # Inheritance ON: a profile's effective options include the engine-wide
-    # [DEFAULT] block, which is exactly what the engine is sent.
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.optionxform = str
-    parser.read(uci_path, encoding="utf-8")
+    from universalchess.services import engine_defaults
 
+    parser = _load(uci_path, None)
     resolved = resolve_section(uci_path, section)
     if resolved is None:
         log.warning(
-            "Strength '%s' not found in %s; using engine-wide defaults only",
+            "Strength '%s' not found in %s; using shared engine defaults only",
             section,
             os.path.basename(uci_path),
         )
-        return uci_options_only(dict(parser.defaults()))
-    return uci_options_only(dict(parser.items(resolved)))
+        local: Dict[str, str] = {}
+    else:
+        local = dict(parser[resolved]) if resolved in parser else {}
+    merged = engine_defaults.merge_options(
+        uci_options_only(local), uci_path=uci_path
+    )
+    return {str(key): str(value) for key, value in merged.items()}
 
 
 def read_label_keys(
@@ -1032,6 +1039,14 @@ def write_profile(
     if not is_valid_profile_name(name):
         raise ProfileValidationError(f"invalid profile name '{name}'")
     coerced = validate_profile_values(groups, values)
+    from universalchess.services.engine_defaults import RESOURCE_NAMES, SYZYGY_NAMES
+
+    shared = RESOURCE_NAMES | SYZYGY_NAMES
+    coerced = {
+        key: value
+        for key, value in coerced.items()
+        if key.casefold() not in shared
+    }
 
     parser = _load(uci_path, defaults_path)
     sections = list(parser.sections())

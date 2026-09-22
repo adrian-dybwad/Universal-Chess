@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button, Card, FormRow, Input, Select } from './ui';
+import { Button, Card, FormRow, Input, Select, Toggle } from './ui';
 import { BoardUnreachableCard } from './BoardUnreachableCard';
 import { useLoginRetry } from './useLoginRetry';
 import { apiFetch } from '../utils/api';
@@ -15,16 +15,25 @@ import {
   PROFILE_REFERENCE_LABEL_KEYS,
   defaultString,
   hasIncompleteEdit,
+  isSharedGroup,
+  isSyzygyPathField,
   mustForkDefault,
   nameForPayload,
   orderSchemaGroups,
+  overlayPayloadFromGroup,
   profileFormIsDirty,
   profileLabel,
   shouldAutoSave,
+  sharedValueForField,
   toOverridePayload,
   valuesForProfile,
 } from './engineOptions';
 import { ProfileGroupHeader, SchemaFieldRow } from './EngineOptionFields';
+
+const SHARED_HELP = {
+  resources: 'engineProfile.useSharedResourcesHelp',
+  syzygy: 'engineProfile.useSharedSyzygyHelp',
+} as const satisfies Record<'resources' | 'syzygy', string>;
 
 /**
  * Full editor for an engine's option profiles (Engines tab). Each profile is a
@@ -43,6 +52,11 @@ import { ProfileGroupHeader, SchemaFieldRow } from './EngineOptionFields';
  * The schema is exactly what the installed binary advertises over UCI (not
  * curated per engine), so every installed engine -- catalog or custom -- is
  * editable with no shipped configuration.
+ *
+ * Hash, Threads, Move Overhead, and Syzygy probe knobs are not profile fields.
+ * Each shared group is its own card with Use shared defaults (on by default);
+ * unchecking writes that group onto the engine's ``[DEFAULT]`` instead of a
+ * strength section.
  *
  * Profiles are kept sparse on save: only fields whose value differs from the
  * engine default are written, so a profile tracks engine defaults for everything
@@ -86,6 +100,7 @@ export function EngineProfileEditor({
   // render "not installed", which contradicted the engine card's badge.
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
   const [schema, setSchema] = useState<SchemaGroup[]>([]);
+  const [shared, setShared] = useState<NonNullable<SchemaResponse['shared']>>({});
   const [profiles, setProfiles] = useState<Profile[]>([]);
 
   // Currently edited profile, by id. Null while composing a new profile, which
@@ -146,6 +161,7 @@ export function EngineProfileEditor({
         setUnavailableReason(data.unavailable_reason ?? null);
         const ordered = orderSchemaGroups(data.schema ?? []);
         setSchema(ordered);
+        setShared(data.shared ?? {});
         setProfiles(data.profiles);
         setCaseCollisions(data.case_collisions ?? []);
 
@@ -261,6 +277,47 @@ export function EngineProfileEditor({
       return t('engineProfile.referencesMoved', { settings, to: rows[0].to });
     },
     [t],
+  );
+
+  const postSharedGroup = useCallback(
+    async (
+      groupId: string,
+      useDefaults: boolean,
+      values?: Record<string, number | boolean | string>,
+    ) => {
+      const submit = async (): Promise<void> => {
+        setActionError(null);
+        const resp = await apiFetch(`/api/engines/${engineName}/defaults`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            group: groupId,
+            use_defaults: useDefaults,
+            ...(values !== undefined ? { values } : {}),
+          }),
+          requiresAuth: true,
+        });
+        if (requireLogin(resp, submit)) return;
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok || data.success === false) {
+          setActionError(data.error || t('engineProfile.saveFailedStatus', { status: resp.status }));
+          return;
+        }
+        if (data.shared && typeof data.shared === 'object') {
+          setShared(data.shared);
+        }
+      };
+      try {
+        await submit();
+      } catch (e) {
+        setActionError(
+          t('engineProfile.saveFailed', {
+            error: e instanceof Error ? e.message : t('engineProfile.unknownError'),
+          }),
+        );
+      }
+    },
+    [engineName, requireLogin, t],
   );
 
   /**
@@ -640,7 +697,68 @@ export function EngineProfileEditor({
             </FormRow>
           </Card>
 
-          {schema.map((group) => (
+          {schema.filter((group) => isSharedGroup(group.id)).map((group) => {
+            const state = shared[group.id as 'resources' | 'syzygy'];
+            const useDefaults = state?.use_defaults !== false;
+            const helpKey = group.id === 'syzygy'
+              ? SHARED_HELP.syzygy
+              : SHARED_HELP.resources;
+            const overlayFields = group.fields.filter((field) => !isSyzygyPathField(field));
+            if (overlayFields.length === 0) return null;
+            const overlayValues: Record<string, string> = {};
+            for (const field of overlayFields) {
+              overlayValues[field.key] = sharedValueForField(field, state?.values);
+            }
+            return (
+              <Card key={group.id} className="mb-6">
+                <ProfileGroupHeader icon={GROUP_ICONS[group.id] ?? 'settings'} label={group.label} />
+                <Toggle
+                  checked={useDefaults}
+                  disabled={saving}
+                  label={t('engineProfile.useSharedDefaults')}
+                  help={t(helpKey)}
+                  onChange={(checked) => {
+                    setShared((prev) => ({
+                      ...prev,
+                      [group.id]: {
+                        use_defaults: checked,
+                        values: prev[group.id as 'resources' | 'syzygy']?.values ?? {},
+                      },
+                    }));
+                    void postSharedGroup(group.id, checked);
+                  }}
+                />
+                {overlayFields.map((field) => (
+                  <SchemaFieldRow
+                    key={field.key}
+                    field={field}
+                    value={overlayValues[field.key] ?? defaultString(field)}
+                    disabled={saving || useDefaults}
+                    onChange={(value) => {
+                      const next = { ...overlayValues, [field.key]: value };
+                      setShared((prev) => ({
+                        ...prev,
+                        [group.id]: {
+                          use_defaults: false,
+                          values: {
+                            ...(prev[group.id as 'resources' | 'syzygy']?.values ?? {}),
+                            [field.key]: value,
+                          },
+                        },
+                      }));
+                      void postSharedGroup(
+                        group.id,
+                        false,
+                        overlayPayloadFromGroup({ ...group, fields: overlayFields }, next),
+                      );
+                    }}
+                  />
+                ))}
+              </Card>
+            );
+          })}
+
+          {schema.filter((group) => !isSharedGroup(group.id)).map((group) => (
             <Card key={group.id} className="mb-6">
               <ProfileGroupHeader icon={GROUP_ICONS[group.id] ?? 'tune'} label={group.label} />
               {group.fields.map((field) => (

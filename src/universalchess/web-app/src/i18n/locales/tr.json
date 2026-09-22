@@ -465,9 +465,26 @@
       "deleteConfirm": "İndirilen tablebase dosyaları bu karttan kaldırılsın mı?",
       "downloading": "İndiriliyor…",
       "failStatus": "Tablebase durumu okunamadı.",
-      "failAction": "Tablebase'ler güncellenemedi."
+      "failAction": "Tablebase'ler güncellenemedi.",
+      "probeLimit": "Sorgulama limiti (taş)",
+      "probeLimitHelp": "Motorun bakacağı en büyük oyunsonu. 5, 3–5 taş setine uyar.",
+      "probeDepth": "Sorgulama derinliği",
+      "probeDepthHelp": "Arama sırasında sorgulamadan önce kalan minimum arama derinliği.",
+      "fiftyMove": "50 hamle kuralına uy",
+      "fiftyMoveHelp": "Açıkken tablebase sonuçları 50 hamle beraberliğini dikkate alır. Kapalı teorik sonucu bildirir."
     },
-
+    "engineDefaults": {
+      "title": "Paylaşılan motor varsayılanları",
+      "description": "Hash, iş parçacığı ve hamle payı bunları bildiren her motora uygulanır. Her motor profil düzenleyicisinde Paylaşılan varsayılanları kullan işaretini kaldırabilir.",
+      "hash": "Hash (MB)",
+      "hashHelp": "Transpozisyon tablosu boyutu. Daha büyük oyunu güçlendirebilir ama daha fazla RAM kullanır.",
+      "threads": "İş parçacığı",
+      "threadsHelp": "Her motorun aradığı CPU iş parçacığı sayısı.",
+      "moveOverhead": "Hamle payı (ms)",
+      "moveOverheadHelp": "Motorun süreyi aşmaması için her hamlede tahta ve arayüze ayrılan süre.",
+      "failStatus": "Paylaşılan motor varsayılanları okunamadı.",
+      "failAction": "Paylaşılan motor varsayılanları kaydedilemedi."
+    },
     "system": {
       "title": "Sistem ayarları",
       "description": "Cihaz durumu, yazılım güncellemeleri ve sistem yapılandırması",
@@ -1038,6 +1055,9 @@
     "referencePlayerOne": "Oyuncu 1 profili",
     "referencePlayerTwo": "Oyuncu 2 profili",
     "referenceCentaur": "Orijinal Centaur profili",
+    "useSharedDefaults": "Paylaşılan varsayılanları kullan",
+    "useSharedResourcesHelp": "Açıkken bu motor Satranç motorları Hash, iş parçacığı ve hamle payını kullanır. Yalnızca bu motor için ayarlamak üzere kapatın.",
+    "useSharedSyzygyHelp": "Açıkken bu motor paylaşılan Syzygy sorgulama ayarlarını kullanır. Yalnızca bu motor için ayarlamak üzere kapatın.",
     "startFailed": "Bu motor kurulu ama başlamadı, bu yüzden seçenekleri okunamadı. Motorlar sekmesinden kaldırıp yeniden kurmayı dene; ayrıntılar Sistem altındaki Olay günlüğünde."
   },
   "connectivity": {

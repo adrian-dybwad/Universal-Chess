@@ -79,11 +79,11 @@ def test_build_config_setoptions_renders_clamps_and_skips_none():
     # clamped to the floor even from config, None skipped. Sorted order makes the
     # injected sequence deterministic.
     options = {"UCI_LimitStrength": True, "UCI_Elo": 1500, "Hash": 999, "Threads": None}
-    assert build_config_setoptions(options) == [
-        f"setoption name Hash value {MEMORY_SAFE_HASH_MAX_MB}",
-        "setoption name UCI_Elo value 1500",
-        "setoption name UCI_LimitStrength value true",
-    ]
+    lines = build_config_setoptions(options)
+    assert f"setoption name Hash value {MEMORY_SAFE_HASH_MAX_MB}" in lines
+    assert "setoption name UCI_Elo value 1500" in lines
+    assert "setoption name UCI_LimitStrength value true" in lines
+    assert "setoption name Threads value 1" in lines
 
 
 def test_build_config_setoptions_injects_syzygy_path(monkeypatch):

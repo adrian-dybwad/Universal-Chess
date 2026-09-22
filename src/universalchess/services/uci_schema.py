@@ -74,8 +74,7 @@ _STRENGTH_NAMES = frozenset(
     {"uci_limitstrength", "uci_elo", "skill level", "strength", "personality"}
 )
 
-# Engine-wide resources written to the shared [DEFAULT] section, not per profile.
-_ENGINE_WIDE_NAMES = frozenset({"hash", "threads"})
+from universalchess.services.engine_defaults import RESOURCE_NAMES, SYZYGY_NAMES
 
 # Informational string options the UCI protocol (and engines) expose for the GUI
 # to display, not edit. ``UCI_EngineAbout`` is the standard; names ending in
@@ -147,11 +146,23 @@ _OPTION_HELP: Dict[str, str] = {
     ),
     "move overhead": (
         "Time buffer (ms) reserved each move for communication and GUI lag, so the "
-        "engine does not overstep on the clock."
+        "engine does not overstep on the clock. Shared across engines unless one "
+        "opts out."
     ),
     "ownbook": "Use the engine's built-in opening book when one is available.",
     "bookfile": "Opening book file the engine plays its first moves from.",
     "syzygypath": "Folder containing Syzygy endgame tablebases for perfect endgame play.",
+    "syzygyprobelimit": (
+        "Largest number of pieces at which the engine probes the shared tablebases. "
+        "5 matches the optional 3–5-piece set."
+    ),
+    "syzygyprobedepth": (
+        "Minimum remaining search depth before the engine probes tablebases during search."
+    ),
+    "syzygy50moverule": (
+        "Honour the 50-move draw rule when probing tablebases. Off reports the "
+        "theoretical result ignoring that limit."
+    ),
     "weightsfile": (
         "Neural network weights file. Different nets play at different strengths "
         "and styles."
@@ -362,8 +373,10 @@ def _group_for(field: ProfileField) -> str:
     # File-backed selectors (Maia nets) are the strength selector for that engine.
     if low in _STRENGTH_NAMES or (field.type == "select" and field.allow_custom):
         return "strength"
-    if low in _ENGINE_WIDE_NAMES:
-        return "engine"
+    if low in RESOURCE_NAMES:
+        return "resources"
+    if low in SYZYGY_NAMES:
+        return "syzygy"
     return "advanced"
 
 
@@ -379,7 +392,7 @@ def build_groups(
         return enumerate_file_choices(engine_name, option, engines_dir)
 
     buckets: Dict[str, List[ProfileField]] = {
-        "strength": [], "engine": [], "advanced": [], "about": [],
+        "strength": [], "resources": [], "syzygy": [], "advanced": [], "about": [],
     }
     for option in options:
         field = option_to_field(
@@ -393,14 +406,15 @@ def build_groups(
 
     labels = {
         "strength": "Strength",
-        "engine": "Engine",
+        "resources": "Resources",
+        "syzygy": "Syzygy",
         "advanced": "Advanced",
         "about": "About",
     }
     groups: List[ProfileGroup] = []
     # About first: informational text (UCI_EngineAbout) should greet the user
     # before strength/tuning knobs, not sit below a long Advanced list.
-    for gid in ("about", "strength", "engine", "advanced"):
+    for gid in ("about", "strength", "resources", "syzygy", "advanced"):
         if buckets[gid]:
             groups.append(ProfileGroup(gid, labels[gid], tuple(buckets[gid])))
     return tuple(groups)
@@ -815,8 +829,9 @@ def seed_config(
     """Generate the writable config for ``engine_name`` if it does not exist.
 
     Idempotent: an existing file is left untouched (so user edits survive). On a
-    fresh install it probes the binary and writes ``[DEFAULT]`` (engine-wide
-    Threads) plus the derived strength sections. Returns the config path.
+    fresh install it probes the binary and writes the derived strength sections.
+    Hash/Threads come from app-wide shared defaults, not from this file.
+    Returns the config path.
 
     Raises :class:`EngineProbeError` if the binary is missing or cannot launch,
     or if ``engine_name`` is empty/escapes the engines config dir (no
@@ -840,7 +855,7 @@ def seed_config(
 
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str
-    parser["DEFAULT"] = {"Threads": str(threads)}
+    parser["DEFAULT"] = {}
     for name, values in sections:
         parser[name] = dict(values)
 

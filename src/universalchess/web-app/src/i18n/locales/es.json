@@ -468,9 +468,26 @@
       "deleteConfirm": "¿Quitar de esta placa los archivos de tablas descargados?",
       "downloading": "Descargando…",
       "failStatus": "No se pudo leer el estado de las tablas.",
-      "failAction": "No se pudieron actualizar las tablas."
+      "failAction": "No se pudieron actualizar las tablas.",
+      "probeLimit": "Límite de sondeo (piezas)",
+      "probeLimitHelp": "El final más grande que el motor consultará. 5 coincide con el conjunto de 3–5 piezas.",
+      "probeDepth": "Profundidad de sondeo",
+      "probeDepthHelp": "Profundidad restante mínima de búsqueda antes de sondear durante la búsqueda.",
+      "fiftyMove": "Respetar la regla de 50 movimientos",
+      "fiftyMoveHelp": "Si está activado, los resultados de las tablas respetan las tablas de 50 movimientos. Desactivado informa el resultado teórico."
     },
-
+    "engineDefaults": {
+      "title": "Valores compartidos del motor",
+      "description": "Hash, hilos y margen de jugada se aplican a todo motor que los anuncie. Cada motor puede desmarcar Usar valores compartidos en su editor de perfiles.",
+      "hash": "Hash (MB)",
+      "hashHelp": "Tamaño de la tabla de transposición. Más grande puede fortalecer el juego, pero usa más RAM.",
+      "threads": "Hilos",
+      "threadsHelp": "Hilos de CPU con los que busca cada motor.",
+      "moveOverhead": "Margen de jugada (ms)",
+      "moveOverheadHelp": "Tiempo reservado en cada jugada para el tablero y la interfaz, para que el motor no se pase.",
+      "failStatus": "No se pudieron leer los valores compartidos del motor.",
+      "failAction": "No se pudieron guardar los valores compartidos del motor."
+    },
     "system": {
       "title": "Ajustes del sistema",
       "description": "Estado del dispositivo, actualizaciones de software y configuración del sistema",
@@ -1045,6 +1062,9 @@
     "referencePlayerOne": "Perfil del jugador 1",
     "referencePlayerTwo": "Perfil del jugador 2",
     "referenceCentaur": "Perfil de Centaur original",
+    "useSharedDefaults": "Usar valores compartidos",
+    "useSharedResourcesHelp": "Cuando está activado, este motor usa el Hash, los hilos y el margen de jugada de Motores de ajedrez. Desactívalo para fijarlos solo para este motor.",
+    "useSharedSyzygyHelp": "Cuando está activado, este motor usa los ajustes de sondeo Syzygy compartidos. Desactívalo para fijarlos solo para este motor.",
     "startFailed": "Este motor está instalado pero no se inició, así que no se pudieron leer sus opciones. Prueba a desinstalarlo y volver a instalarlo desde la pestaña Motores; el Registro de eventos en Sistema tiene los detalles."
   },
   "connectivity": {

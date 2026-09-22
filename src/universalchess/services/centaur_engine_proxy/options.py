@@ -231,8 +231,9 @@ def build_config_setoptions(options: dict) -> list:
     are installed and enabled, ``SyzygyPath`` is added unless the caller
     already set one.
     """
-    from universalchess.services import syzygy
+    from universalchess.services import engine_defaults, syzygy
 
+    options = engine_defaults.merge_options(options, overwrite=False)
     options = syzygy.merge_path(options, list(options) + ["SyzygyPath"])
     lines = []
     for name in sorted(options):

@@ -5278,11 +5278,15 @@ def api_get_engine_uci_schema(engine_name):
             "case_collisions": [],
             "unavailable_reason": sanitize_reason_code(probe_error.reason_code),
         })
+    from universalchess.services import engine_defaults
+
+    advertised = [field.key for group in groups for field in group.fields]
     return jsonify({
         "engine": engine_name,
         "editable": True,
         "unavailable_reason": None,
         "schema": engine_profiles.schema_to_json(groups),
+        "shared": engine_defaults.engine_shared_state(config_path, advertised),
         # Enrich with the same display labels the Elo picker uses
         # (Default (Unlimited) / Default (1500 ELO)) so the profile editor list
         # never drifts from Players/board strength rows.
@@ -6531,6 +6535,78 @@ def api_syzygy_update():
     else:
         return jsonify({"success": False, "error": "Unknown action."}), 400
     return jsonify({"success": True, **syzygy.status()})
+
+
+@app.route("/api/engine-defaults", methods=["GET"])
+def api_engine_defaults_status():
+    """App-wide Hash/Threads/Syzygy probe knobs for the Engines UI.
+
+    Unauthenticated like engine-install status: the page polls it, and the
+    payload has no secrets.
+    """
+    from universalchess.services import engine_defaults
+
+    return jsonify(engine_defaults.status())
+
+
+@app.route("/api/engine-defaults", methods=["POST"])
+@requires_auth
+def api_engine_defaults_update():
+    """Persist shared Hash, Threads, Move Overhead, or Syzygy probe knobs."""
+    from universalchess.services import engine_defaults
+
+    body = request.get_json(silent=True) or {}
+    if not engine_defaults.set_values(body):
+        return jsonify({"success": False, "error": "Could not save the setting."}), 500
+    return jsonify({"success": True, **engine_defaults.status()})
+
+
+@app.route("/api/engines/<engine_name>/defaults", methods=["POST"])
+@requires_auth
+def api_engine_shared_defaults(engine_name):
+    """Per-engine Use shared defaults toggle and local overlay values.
+
+    Body: ``{"group": "resources"|"syzygy", "use_defaults": bool, "values"?}``.
+    Unchecking snapshots the current shared set into the engine's ``[DEFAULT]``
+    so the local editors open on what the engine was already playing.
+    """
+    from universalchess.services import engine_defaults
+
+    config_path = _config_uci_path(engine_name)
+    if config_path is None:
+        return jsonify({"success": False, "error": "Invalid engine"}), 400
+    body = request.get_json(silent=True) or {}
+    group = body.get("group")
+    if group not in {
+        engine_defaults.GROUP_RESOURCES,
+        engine_defaults.GROUP_SYZYGY,
+    }:
+        return jsonify({"success": False, "error": "Unknown group."}), 400
+    use_defaults = body.get("use_defaults")
+    if not isinstance(use_defaults, bool):
+        return jsonify({"success": False, "error": "use_defaults must be a boolean."}), 400
+    engine_defaults.set_use_shared(config_path, group, use_defaults)
+    values = body.get("values")
+    if not use_defaults and isinstance(values, dict):
+        engine_defaults.set_engine_group_values(config_path, group, values)
+    advertised = []
+    try:
+        schema_groups = _seed_and_probe_schema(engine_name, config_path)
+        advertised = [
+            field.key for schema_group in schema_groups for field in schema_group.fields
+        ]
+    except uci_schema.EngineProbeError as probe_error:
+        # Toggle still saved; advertised stays empty so the response omits
+        # unadvertised names instead of failing the write.
+        app.logger.warning(
+            "Shared defaults saved for %s but schema probe failed: %s",
+            engine_name,
+            probe_error,
+        )
+    return jsonify({
+        "success": True,
+        "shared": engine_defaults.engine_shared_state(config_path, advertised),
+    })
 
 
 @app.route("/api/engines/status", methods=["GET"])

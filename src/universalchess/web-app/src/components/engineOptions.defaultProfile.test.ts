@@ -139,6 +139,30 @@ describe('info fields in form helpers', () => {
   })
 })
 
+describe('shared groups stay out of profile saves', () => {
+  it('omits Hash from a strength-section payload even when the form holds it', () => {
+    // Why: Hash belongs to shared engine defaults; writing it into a profile
+    // would pin RAM per strength rung. Failure: payload contains Hash.
+    const schema: SchemaGroup[] = [
+      {
+        id: 'strength',
+        label: 'Strength',
+        fields: [
+          { key: 'UCI_Elo', label: 'Elo', type: 'int', default: 1500, min: 1000, max: 3000 },
+        ],
+      },
+      {
+        id: 'resources',
+        label: 'Resources',
+        fields: [{ key: 'Hash', label: 'Hash', type: 'int', default: 16, min: 1, max: 1024 }],
+      },
+    ]
+    expect(
+      toOverridePayload(schema, { UCI_Elo: '1800', Hash: '64' }),
+    ).toEqual({ UCI_Elo: 1800 })
+  })
+})
+
 describe('orderSchemaGroups', () => {
   it('moves About ahead of other groups without reordering the rest', () => {
     // Why: About (UCI_EngineAbout) must greet at the top of the editor.

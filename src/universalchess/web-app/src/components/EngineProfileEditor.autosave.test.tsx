@@ -37,8 +37,8 @@ vi.mock('./LoginDialog', () => ({
 
 const ENGINE = 'berserk';
 const PROFILE_ID = 'Profile-a1b2c3';
-const HASH_DEFAULT = 16;
-const HASH_STORED = '64';
+const CONTEMPT_DEFAULT = 24;
+const CONTEMPT_STORED = '10';
 
 const DEFAULT_PROFILE = {
   id: DEFAULT_PROFILE_ID,
@@ -50,7 +50,7 @@ const DEFAULT_PROFILE = {
 const CUSTOM_PROFILE = {
   id: PROFILE_ID,
   label: '1400 ELO',
-  values: { UCI_LimitStrength: 'true', UCI_Elo: '1400', Hash: HASH_STORED },
+  values: { UCI_LimitStrength: 'true', UCI_Elo: '1400', Contempt: CONTEMPT_STORED },
 };
 
 const SCHEMA_RESPONSE = {
@@ -67,11 +67,12 @@ const SCHEMA_RESPONSE = {
       ],
     },
     {
-      id: 'engine',
-      label: 'Engine',
+      id: 'advanced',
+      label: 'Advanced',
       // Unbounded, so it renders as a number input that can be emptied. This is
-      // the field the cleared-value transient is about.
-      fields: [{ key: 'Hash', label: 'Hash', type: 'int', default: HASH_DEFAULT }],
+      // the field the cleared-value transient is about. Hash used to live here
+      // and would have been written into a strength section.
+      fields: [{ key: 'Contempt', label: 'Contempt', type: 'int', default: CONTEMPT_DEFAULT }],
     },
   ],
   profiles: [DEFAULT_PROFILE, CUSTOM_PROFILE],
@@ -112,10 +113,11 @@ function eloSlider(): HTMLElement {
 }
 
 /**
- * The Hash box. Two number inputs are on screen -- the Elo slider carries its
- * own, in the strength card above -- so Hash is the second in document order.
+ * The Contempt box. Two number inputs are on screen -- the Elo slider carries
+ * its own, in the strength card above -- so Contempt is the second in document
+ * order.
  */
-function hashInput(): HTMLElement {
+function contemptInput(): HTMLElement {
   return screen.getAllByRole('spinbutton')[1];
 }
 
@@ -123,7 +125,7 @@ async function renderEditorOnCustomProfile() {
   render(<EngineProfileEditor engineName={ENGINE} displayName="Berserk" onBack={() => {}} />);
   const picker = await screen.findByRole('combobox');
   fireEvent.change(picker, { target: { value: PROFILE_ID } });
-  await waitFor(() => expect(hashInput()).toHaveValue(Number(HASH_STORED)));
+  await waitFor(() => expect(contemptInput()).toHaveValue(Number(CONTEMPT_STORED)));
 }
 
 describe('EngineProfileEditor auto-save', () => {
@@ -157,7 +159,7 @@ describe('EngineProfileEditor auto-save', () => {
     expect(posts).toHaveLength(1);
     expect(posts[0].url).toBe(`/api/engines/${ENGINE}/profiles/${PROFILE_ID}`);
     expect(posts[0].body).toEqual({
-      values: { UCI_LimitStrength: true, UCI_Elo: 1700, Hash: Number(HASH_STORED) },
+      values: { UCI_LimitStrength: true, UCI_Elo: 1700, Contempt: Number(CONTEMPT_STORED) },
     });
     expect(window.confirm).not.toHaveBeenCalled();
   });
@@ -168,17 +170,17 @@ describe('EngineProfileEditor auto-save', () => {
 
     // Clearing the box to type a new number is the transient: the form now says
     // "no override", which is a real value the user did not ask for.
-    fireEvent.change(hashInput(), { target: { value: '' } });
+    fireEvent.change(contemptInput(), { target: { value: '' } });
     await settle();
     expect(posts).toHaveLength(0);
 
-    fireEvent.change(hashInput(), { target: { value: '40' } });
+    fireEvent.change(contemptInput(), { target: { value: '40' } });
 
     await waitFor(() => expect(posts).toHaveLength(1));
-    // 40 is written, and Hash is present: had the cleared state been saved, the
-    // key would have been absent and the engine would have used its own 16.
+    // 40 is written, and Contempt is present: had the cleared state been saved,
+    // the key would have been absent and the engine would have used its own 24.
     expect(posts[0].body).toEqual({
-      values: { UCI_LimitStrength: true, UCI_Elo: 1400, Hash: 40 },
+      values: { UCI_LimitStrength: true, UCI_Elo: 1400, Contempt: 40 },
     });
   });
 

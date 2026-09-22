@@ -305,12 +305,12 @@ def test_override_registry_enumerates_when_default_is_not_a_path(tmp_path):
 
 
 def test_build_groups_orders_and_buckets_fields(tmp_path):
-    """Strength knobs, engine-wide, then advanced -- each field in its bucket.
+    """Strength knobs, shared resources, then advanced -- each field in its bucket.
 
-    The strength group must come first (primary UX), Hash/Threads go to the
-    engine group (they are written to [DEFAULT], not per profile), everything
-    else is advanced. A regression that mis-buckets would bury the ELO slider or
-    expose engine-wide settings as per-profile.
+    The strength group must come first (primary UX). Hash/Threads/Move Overhead
+    go to resources (app-wide defaults, not per profile). Everything else is
+    advanced. A regression that mis-buckets would bury the ELO slider or expose
+    shared settings as per-profile.
     """
     options = [
         FakeOption("Contempt", "spin", 0, -100, 100),
@@ -318,14 +318,37 @@ def test_build_groups_orders_and_buckets_fields(tmp_path):
         FakeOption("Threads", "spin", 1, 1, 32),
         FakeOption("UCI_LimitStrength", "check", False),
         FakeOption("Hash", "spin", 16, 1, 1024),
+        FakeOption("Move Overhead", "spin", 10, 0, 5000),
         FakeOption("Clear Hash", "button"),  # skipped
     ]
     groups = us.build_groups(options, engine_name="eng", engines_dir=str(tmp_path))
     layout = {g.id: [f.key for f in g.fields] for g in groups}
 
-    assert [g.id for g in groups] == ["strength", "engine", "advanced"]
+    assert [g.id for g in groups] == ["strength", "resources", "advanced"]
     assert layout["strength"] == ["UCI_Elo", "UCI_LimitStrength"]
-    assert layout["engine"] == ["Threads", "Hash"]
+    assert layout["resources"] == ["Threads", "Hash", "Move Overhead"]
+    assert layout["advanced"] == ["Contempt"]
+
+
+def test_build_groups_puts_syzygy_options_in_the_syzygy_group(tmp_path):
+    """Syzygy Path/probe knobs are a shared tablebase group, not Advanced.
+
+    Why this test exists: HIARCS-style Use shared defaults is per group.
+    Mixing SyzygyPath into resources (Hash/Threads) would opt an engine out of
+    RAM budget and tablebase policy together. Leaving them in Advanced would
+    make them look per-profile. How a regression manifests: SyzygyPath or
+    SyzygyProbeLimit lands in ``resources`` or ``advanced``.
+    """
+    options = [
+        FakeOption("SyzygyPath", "string", ""),
+        FakeOption("SyzygyProbeLimit", "spin", 7, 0, 7),
+        FakeOption("Hash", "spin", 16, 1, 1024),
+        FakeOption("Contempt", "spin", 0, -100, 100),
+    ]
+    groups = us.build_groups(options, engine_name="eng", engines_dir=str(tmp_path))
+    layout = {g.id: [f.key for f in g.fields] for g in groups}
+    assert layout["resources"] == ["Hash"]
+    assert layout["syzygy"] == ["SyzygyPath", "SyzygyProbeLimit"]
     assert layout["advanced"] == ["Contempt"]
 
 
@@ -1135,7 +1158,7 @@ def test_has_seeded_profiles_false_when_config_absent(tmp_path):
 def test_has_seeded_profiles_false_for_default_only_config(tmp_path):
     """A config carrying only [DEFAULT] is not a usable strength ladder.
 
-    Why this test exists: seed_config always writes [DEFAULT] with Threads, so
+    Why this test exists: seed_config always writes [DEFAULT], so
     file existence alone is not proof of a successful derivation -- a
     Default-only file is the known stuck state that "Reset profiles" exists to
     heal. Treating it as ready would leave the user with no rungs and no warning.
@@ -1196,12 +1219,11 @@ def _profile_values(config_path):
 
 
 def test_seed_config_writes_default_section_and_sections(monkeypatch, tmp_path):
-    """Seeding writes [DEFAULT] Threads plus the derived strength sections.
+    """Seeding writes strength sections; Threads come from shared defaults.
 
-    The seeded file must be exactly what the engine player and pickers read;
-    this asserts the DEFAULT engine-wide block and the ELO ladder land in the
-    file, and that it parses back through the profile reader (excluding DEFAULT).
-    Sections are asserted by their values, because their identities are generated.
+    The seeded file must be exactly what the engine player and pickers read.
+    Hash/Threads are app-wide now, so [DEFAULT] must not pin Threads=1. Sections
+    are asserted by their values, because their identities are generated.
     """
     monkeypatch.setattr(us, "probe_options", lambda path: [
         FakeOption("UCI_LimitStrength", "check", False),
@@ -1216,7 +1238,7 @@ def test_seed_config_writes_default_section_and_sections(monkeypatch, tmp_path):
     raw = configparser.ConfigParser(interpolation=None)
     raw.optionxform = str
     raw.read(str(config))
-    assert raw.defaults() == {"Threads": "1"}
+    assert "Threads" not in raw.defaults()
 
     # The shared profile reader excludes [DEFAULT] and lists the seeded ladder.
     names = ep.read_profile_names(str(config))
