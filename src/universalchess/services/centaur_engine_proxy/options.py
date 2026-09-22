@@ -227,8 +227,13 @@ def build_config_setoptions(options: dict) -> list:
     emitted as UCI's lowercase ``true``/``false``. ``Hash`` and ``MultiPV`` are
     clamped to the memory-safe maxima here too, so a configured value can lower
     but never raise the ceiling. Order is stable (sorted) for deterministic
-    output and tests. None values are skipped.
+    output and tests. None values are skipped. When 3–5-piece Syzygy tables
+    are installed and enabled, ``SyzygyPath`` is added unless the caller
+    already set one.
     """
+    from universalchess.services import syzygy
+
+    options = syzygy.merge_path(options, list(options) + ["SyzygyPath"])
     lines = []
     for name in sorted(options):
         value = options[name]

@@ -449,6 +449,25 @@
       "title": "Schaakmotoren",
       "description": "Schaakmotoren voor partijen en analyse installeren en beheren"
     },
+    "syzygy": {
+      "title": "Eindspeltabellen",
+      "description": "Optionele 3–5-stukken-Syzygy-tabellen voor perfect eindspel. Motoren die ze ondersteunen (Stockfish, Arasan) delen één map. Reckless en Zahak zijn gebouwd zonder probing.",
+      "warning": "De download is ongeveer {{size}} MB. Probing is willekeurige schijf-I/O en gebruikt honderden MB RAM. Op een klein bord (Pi Zero, ~512 MB) zal het swappen en een SD-kaart slijten. Een Pi 5 of CM5 met enkele GB RAM is de beoogde host. De keuze blijft van jou.",
+      "constrained": "Dit bord meldt {{ram}} MB RAM, onder de comfortgrens van 2 GB. Tabellen kunnen nog steeds worden geïnstalleerd; verwacht trager spel en meer geheugendruk.",
+      "useLabel": "Tablebases gebruiken",
+      "useHelp": "Als dit aan staat, worden motoren die SyzygyPath aankondigen naar de gedeelde map gewezen. Heeft geen effect tot de 3–5-stukken-set volledig is geïnstalleerd.",
+      "badgeReady": "Geïnstalleerd",
+      "badgePartial": "Onvolledig ({{present}}/{{expected}})",
+      "badgeMissing": "Niet geïnstalleerd",
+      "download": "3–5-stukken-set downloaden (~{{size}} MB)",
+      "stop": "Download stoppen",
+      "delete": "Tablebases verwijderen",
+      "deleteConfirm": "De gedownloade tablebase-bestanden van dit bord verwijderen?",
+      "downloading": "Downloaden…",
+      "failStatus": "Tablebase-status kon niet worden gelezen.",
+      "failAction": "Tablebases konden niet worden bijgewerkt."
+    },
+
     "system": {
       "title": "Systeeminstellingen",
       "description": "Apparaatstatus, software-updates en systeemconfiguratie",

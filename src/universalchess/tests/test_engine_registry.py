@@ -849,6 +849,44 @@ class TestEngineRegistry:
 
         engine.configure.assert_called_once_with({"Randomness": "50"})
 
+    def test_configure_injects_syzygy_path_when_tables_are_ready(self, monkeypatch):
+        """EngineHandle.configure fills SyzygyPath for engines that advertise it.
+
+        Why this test exists: the shared folder is not written into every .uci
+        file; it is merged at the handle so play, analysis, and hints agree.
+        Reckless does not advertise the option and must not receive it. How a
+        regression manifests: Stockfish is configured without SyzygyPath while
+        tables are on, or a limited engine is sent an option it never declared.
+        """
+        from unittest.mock import MagicMock
+
+        import chess.engine
+
+        from universalchess.services.engine_registry import EngineHandle
+        from universalchess.services import syzygy as syzygy_service
+
+        monkeypatch.setattr(syzygy_service, "is_enabled", lambda: True)
+        monkeypatch.setattr(syzygy_service, "is_ready", lambda directory=None: True)
+        monkeypatch.setattr(syzygy_service, "table_dir", lambda: "/opt/universalchess/syzygy")
+
+        engine = MagicMock()
+        engine.options = chess.engine.UciOptionMap(
+            [("Threads", object()), ("SyzygyPath", object())]
+        )
+        handle = EngineHandle(path="/usr/games/stockfish", engine=engine)
+        handle.configure({"Threads": "1"})
+        engine.configure.assert_called_once_with(
+            {"Threads": "1", "SyzygyPath": "/opt/universalchess/syzygy"}
+        )
+
+        limited = MagicMock()
+        limited.options = chess.engine.UciOptionMap([("Randomness", object())])
+        limited_handle = EngineHandle(
+            path="/opt/universalchess/engines/reckless", engine=limited
+        )
+        limited_handle.configure({"Randomness": "10"})
+        limited.configure.assert_called_once_with({"Randomness": "10"})
+
     def test_configure_forwards_all_when_every_option_is_advertised(self):
         """EngineHandle.configure passes options through unchanged when supported.
 

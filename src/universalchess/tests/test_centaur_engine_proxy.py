@@ -86,6 +86,24 @@ def test_build_config_setoptions_renders_clamps_and_skips_none():
     ]
 
 
+def test_build_config_setoptions_injects_syzygy_path(monkeypatch):
+    """Centaur's injected options include the shared tablebase folder when on.
+
+    Why: Original Centaur talks to the engine through this proxy, not
+    EngineHandle, so play-time merge in the registry would not reach it. How a
+    regression manifests: the forwarded setoptions omit SyzygyPath while tables
+    are enabled and ready.
+    """
+    from universalchess.services import syzygy as syzygy_service
+
+    monkeypatch.setattr(syzygy_service, "is_enabled", lambda: True)
+    monkeypatch.setattr(syzygy_service, "is_ready", lambda directory=None: True)
+    monkeypatch.setattr(syzygy_service, "table_dir", lambda: "/opt/universalchess/syzygy")
+    lines = build_config_setoptions({"Threads": 1})
+    assert "setoption name SyzygyPath value /opt/universalchess/syzygy" in lines
+    assert "setoption name Threads value 1" in lines
+
+
 # ---------------------------------------------------------------------------
 # Position parsing + game reconstruction
 # ---------------------------------------------------------------------------

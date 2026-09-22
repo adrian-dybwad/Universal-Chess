@@ -161,6 +161,40 @@
 }
 
 /* Engines List */
+.syzygy-card-copy {
+  margin: 0 0 var(--space-3);
+}
+
+.syzygy-card-warning,
+.syzygy-card-constrained {
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  font-size: 0.9em;
+  line-height: 1.45;
+}
+
+.syzygy-card-warning {
+  background: var(--color-gray-100);
+}
+
+.syzygy-card-constrained {
+  background: #fff4e5;
+}
+
+.syzygy-card-error {
+  color: var(--color-danger, #b42318);
+  font-size: 0.9em;
+  margin: var(--space-2) 0;
+}
+
+.syzygy-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
 .engines-list {
   display: flex;
   flex-direction: column;

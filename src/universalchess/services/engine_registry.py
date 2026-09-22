@@ -25,6 +25,7 @@ import chess
 import chess.engine
 
 from universalchess.board.logging import log
+from universalchess.services import syzygy
 
 # Stable reason codes for a failed engine launch. Each names a different repair,
 # which is the point: an engine that installed cleanly and then refuses to start
@@ -197,11 +198,15 @@ class EngineHandle:
         generic profile compatible with every engine and covers every caller
         (players, hand/brain, analysis) without each re-implementing the check.
 
+        When 3–5-piece Syzygy tables are installed and enabled, ``SyzygyPath``
+        is filled in for engines that advertise it.
+
         Unknown options are dropped (with a log line) rather than raising: an
         option a given engine does not understand is not an error for the app,
         it simply does not apply to that engine.
         """
         advertised = self.engine.options
+        options = syzygy.merge_path(options, advertised)
         supported = {name: value for name, value in options.items() if name in advertised}
         dropped = [name for name in options if name not in advertised]
         if dropped:
@@ -250,14 +255,14 @@ class EngineHandle:
         
         Options the engine did not advertise are ignored (see
         ``_supported_options``) so a shared profile never fails a limited engine.
-        
+        When 3–5-piece Syzygy tables are installed and enabled, ``SyzygyPath``
+        is merged in for engines that advertise it.
+
         Args:
             options: Dict of UCI option name -> value
         """
-        if not options:
-            return
         with self.lock:
-            supported = self._supported_options(options)
+            supported = self._supported_options(options or {})
             if supported:
                 self.engine.configure(supported)
     
@@ -291,10 +296,9 @@ class EngineHandle:
             PlayResult with best move
         """
         with self.lock:
-            if options:
-                supported = self._supported_options(options)
-                if supported:
-                    self.engine.configure(supported)
+            supported = self._supported_options(options or {})
+            if supported:
+                self.engine.configure(supported)
             return self.engine.play(
                 board, limit, root_moves=root_moves, ponder=ponder, game=game
             )
@@ -328,10 +332,9 @@ class EngineHandle:
             A single InfoDict when multipv is None, else a List[InfoDict].
         """
         with self.lock:
-            if options:
-                supported = self._supported_options(options)
-                if supported:
-                    self.engine.configure(supported)
+            supported = self._supported_options(options or {})
+            if supported:
+                self.engine.configure(supported)
             return self.engine.analyse(board, limit, multipv=multipv)
 
 

@@ -15,6 +15,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Optional 3–5-piece Syzygy tablebases**: Engines that advertise
+  ``SyzygyPath`` (Stockfish from apt, Arasan) can probe a shared folder
+  at ``/opt/universalchess/syzygy`` for perfect play in 5-piece-or-fewer
+  endings. The files are not shipped. Chess Engines on the web (and
+  Tablebases on the board engine list) can download the ~939 MB Lichess
+  set, turn probing on, or remove the files. The control defaults off
+  and states the cost: random disk I/O and hundreds of MB of RAM, which
+  will thrash a Pi Zero / 512 MB board. A Pi 5 or CM5 with several GB of
+  RAM is the intended host; the user can still install on a smaller
+  board. Reckless and Zahak stay built without probing.
+
 - **Display Sprites gains 3D, Fritz, and Modern**: The piece selector
   only shipped Default, Onebit, and Original Mods. Three COLORWAY
   sheets (`chesssprites_3D.png`, `chesssprites_fritz.png`,

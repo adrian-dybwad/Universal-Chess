@@ -452,6 +452,25 @@
       "title": "Motori scacchistici",
       "description": "Installa e gestisci i motori scacchistici per giocare e analizzare"
     },
+    "syzygy": {
+      "title": "Tablebase di finale",
+      "description": "Tablebase Syzygy opzionali da 3–5 pezzi per un finale perfetto. I motori che le supportano (Stockfish, Arasan) condividono una cartella. Reckless e Zahak sono compilati senza interrogazione.",
+      "warning": "Il download è di circa {{size}} MB. L'interrogazione è I/O disco casuale e usa centinaia di MB di RAM. Su una scheda piccola (Pi Zero, ~512 MB) saturerebbe e consumerebbe una scheda SD. Un Pi 5 o CM5 con diversi GB di RAM è l'host previsto. La scelta resta tua.",
+      "constrained": "Questa scheda riporta {{ram}} MB di RAM, sotto la soglia di comfort di 2 GB. Le tabelle si possono comunque installare; attenditi partite più lente e più pressione sulla memoria.",
+      "useLabel": "Usa le tablebase",
+      "useHelp": "Quando è attivo, i motori che annunciano SyzygyPath puntano alla cartella condivisa. Non ha effetto finché il set 3–5 pezzi non è completamente installato.",
+      "badgeReady": "Installato",
+      "badgePartial": "Parziale ({{present}}/{{expected}})",
+      "badgeMissing": "Non installato",
+      "download": "Scarica set 3–5 pezzi (~{{size}} MB)",
+      "stop": "Ferma download",
+      "delete": "Rimuovi tablebase",
+      "deleteConfirm": "Rimuovere da questa scheda i file delle tablebase scaricati?",
+      "downloading": "Download in corso…",
+      "failStatus": "Impossibile leggere lo stato delle tablebase.",
+      "failAction": "Impossibile aggiornare le tablebase."
+    },
+
     "system": {
       "title": "Impostazioni di sistema",
       "description": "Stato del dispositivo, aggiornamenti software e configurazione di sistema",

@@ -449,6 +449,25 @@
       "title": "Schach-Engines",
       "description": "Schach-Engines für Partien und Analyse installieren und verwalten"
     },
+    "syzygy": {
+      "title": "Endspieltabellen",
+      "description": "Optionale 3–5-Steine-Syzygy-Tabellen für perfektes Endspiel. Engines, die sie unterstützen (Stockfish, Arasan), teilen einen Ordner. Reckless und Zahak sind ohne Abfrage gebaut.",
+      "warning": "Der Download ist etwa {{size}} MB. Die Abfrage ist zufällige Festplatten-I/O und braucht hunderte MB RAM. Auf einem kleinen Brett (Pi Zero, ~512 MB) wird es auslagern und eine SD-Karte verschleißen. Ein Pi 5 oder CM5 mit mehreren GB RAM ist der vorgesehene Rechner. Die Wahl bleibt beim Nutzer.",
+      "constrained": "Dieses Brett meldet {{ram}} MB RAM, unter der 2-GB-Komfortgrenze. Tabellen können trotzdem installiert werden; mit langsameren Partien und mehr Speicherdruck ist zu rechnen.",
+      "useLabel": "Tablebases verwenden",
+      "useHelp": "Wenn eingeschaltet, werden Engines mit SyzygyPath auf den gemeinsamen Ordner gezeigt. Wirkt erst, wenn der 3–5-Steine-Satz vollständig installiert ist.",
+      "badgeReady": "Installiert",
+      "badgePartial": "Unvollständig ({{present}}/{{expected}})",
+      "badgeMissing": "Nicht installiert",
+      "download": "3–5-Steine-Satz laden (~{{size}} MB)",
+      "stop": "Download stoppen",
+      "delete": "Tablebases entfernen",
+      "deleteConfirm": "Die heruntergeladenen Tablebase-Dateien von diesem Brett entfernen?",
+      "downloading": "Wird heruntergeladen…",
+      "failStatus": "Tablebase-Status konnte nicht gelesen werden.",
+      "failAction": "Tablebases konnten nicht aktualisiert werden."
+    },
+
     "system": {
       "title": "Systemeinstellungen",
       "description": "Gerätestatus, Software-Updates und Systemkonfiguration",

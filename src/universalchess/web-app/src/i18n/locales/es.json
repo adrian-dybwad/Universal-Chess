@@ -452,6 +452,25 @@
       "title": "Motores de ajedrez",
       "description": "Instala y gestiona motores de ajedrez para jugar y analizar"
     },
+    "syzygy": {
+      "title": "Tablas de finales",
+      "description": "Tablas Syzygy opcionales de 3–5 piezas para un final perfecto. Los motores que las admiten (Stockfish, Arasan) comparten una carpeta. Reckless y Zahak se construyen sin sondeo.",
+      "warning": "La descarga ocupa unos {{size}} MB. El sondeo es E/S aleatoria de disco y usa cientos de MB de RAM. En una placa pequeña (Pi Zero, ~512 MB) saturará y desgastará una tarjeta SD. Un Pi 5 o CM5 con varios GB de RAM es el anfitrión previsto. La elección sigue siendo tuya.",
+      "constrained": "Esta placa informa {{ram}} MB de RAM, por debajo de la línea de confort de 2 GB. Las tablas se pueden instalar igual; espera partidas más lentas y más presión de memoria.",
+      "useLabel": "Usar tablas de finales",
+      "useHelp": "Cuando está activado, los motores que anuncian SyzygyPath apuntan a la carpeta compartida. No tiene efecto hasta que el conjunto de 3–5 piezas esté completamente instalado.",
+      "badgeReady": "Instalado",
+      "badgePartial": "Parcial ({{present}}/{{expected}})",
+      "badgeMissing": "No instalado",
+      "download": "Descargar conjunto de 3–5 piezas (~{{size}} MB)",
+      "stop": "Detener descarga",
+      "delete": "Quitar tablas de finales",
+      "deleteConfirm": "¿Quitar de esta placa los archivos de tablas descargados?",
+      "downloading": "Descargando…",
+      "failStatus": "No se pudo leer el estado de las tablas.",
+      "failAction": "No se pudieron actualizar las tablas."
+    },
+
     "system": {
       "title": "Ajustes del sistema",
       "description": "Estado del dispositivo, actualizaciones de software y configuración del sistema",

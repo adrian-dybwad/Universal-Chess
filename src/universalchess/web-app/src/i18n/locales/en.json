@@ -449,6 +449,25 @@
       "title": "Chess Engines",
       "description": "Install and manage chess engines for play and analysis"
     },
+    "syzygy": {
+      "title": "Endgame tablebases",
+      "description": "Optional 3–5-piece Syzygy tables for perfect endgame play. Engines that support them (Stockfish, Arasan) share one folder. Reckless and Zahak are built without probing.",
+      "warning": "The download is about {{size}} MB. Probing is random disk I/O and uses hundreds of MB of RAM. On a small board (Pi Zero, ~512 MB) it will thrash and wear an SD card. A Pi 5 or CM5 with several GB of RAM is the intended host. This stays your choice.",
+      "constrained": "This board reports {{ram}} MB of RAM, below the 2 GB comfort line. Tables can still be installed; expect slower play and more memory pressure.",
+      "useLabel": "Use tablebases",
+      "useHelp": "When on, engines that advertise SyzygyPath are pointed at the shared folder. Has no effect until the 3–5-piece set is fully installed.",
+      "badgeReady": "Installed",
+      "badgePartial": "Partial ({{present}}/{{expected}})",
+      "badgeMissing": "Not installed",
+      "download": "Download 3–5 piece set (~{{size}} MB)",
+      "stop": "Stop download",
+      "delete": "Remove tablebases",
+      "deleteConfirm": "Remove the downloaded tablebase files from this board?",
+      "downloading": "Downloading…",
+      "failStatus": "Could not read tablebase status.",
+      "failAction": "Could not update tablebases."
+    },
+
     "system": {
       "title": "System Settings",
       "description": "Device status, software updates, and system configuration",

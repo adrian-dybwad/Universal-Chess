@@ -449,6 +449,25 @@
       "title": "Satranç motorları",
       "description": "Oyun ve analiz için satranç motorlarını kur ve yönet"
     },
+    "syzygy": {
+      "title": "Oyunsonu tabloları",
+      "description": "Kusursuz oyunsonu için isteğe bağlı 3–5 taşlık Syzygy tabloları. Destekleyen motorlar (Stockfish, Arasan) tek klasörü paylaşır. Reckless ve Zahak sorgulama olmadan derlenir.",
+      "warning": "İndirme yaklaşık {{size}} MB. Sorgulama rastgele disk G/Ç'sidir ve yüzlerce MB RAM kullanır. Küçük bir kartta (Pi Zero, ~512 MB) takılır ve SD kartı yıpratır. Birkaç GB RAM'li Pi 5 veya CM5 hedeflenen ana makinedir. Seçim sizin.",
+      "constrained": "Bu kart {{ram}} MB RAM bildiriyor, 2 GB konfor çizgisinin altında. Tablolar yine de kurulabilir; daha yavaş oyun ve daha fazla bellek baskısı bekleyin.",
+      "useLabel": "Tablebase kullan",
+      "useHelp": "Açıkken SyzygyPath bildiren motorlar paylaşılan klasöre yönlendirilir. 3–5 taş seti tam kurulana kadar etkisi yoktur.",
+      "badgeReady": "Kurulu",
+      "badgePartial": "Kısmi ({{present}}/{{expected}})",
+      "badgeMissing": "Kurulu değil",
+      "download": "3–5 taş setini indir (~{{size}} MB)",
+      "stop": "İndirmeyi durdur",
+      "delete": "Tablebase'leri kaldır",
+      "deleteConfirm": "İndirilen tablebase dosyaları bu karttan kaldırılsın mı?",
+      "downloading": "İndiriliyor…",
+      "failStatus": "Tablebase durumu okunamadı.",
+      "failAction": "Tablebase'ler güncellenemedi."
+    },
+
     "system": {
       "title": "Sistem ayarları",
       "description": "Cihaz durumu, yazılım güncellemeleri ve sistem yapılandırması",

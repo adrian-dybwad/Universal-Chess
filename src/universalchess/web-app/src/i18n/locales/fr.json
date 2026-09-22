@@ -452,6 +452,25 @@
       "title": "Moteurs d'échecs",
       "description": "Installez et gérez les moteurs d'échecs pour jouer et analyser"
     },
+    "syzygy": {
+      "title": "Tables de finales",
+      "description": "Tables Syzygy optionnelles 3–5 pièces pour un final parfait. Les moteurs qui les prennent en charge (Stockfish, Arasan) partagent un dossier. Reckless et Zahak sont compilés sans sondage.",
+      "warning": "Le téléchargement fait environ {{size}} Mo. Le sondage est des E/S disque aléatoires et utilise des centaines de Mo de RAM. Sur un petit plateau (Pi Zero, ~512 Mo) cela va paginer et user une carte SD. Un Pi 5 ou CM5 avec plusieurs Go de RAM est l'hôte prévu. Le choix reste le vôtre.",
+      "constrained": "Ce plateau signale {{ram}} Mo de RAM, sous le seuil de confort de 2 Go. Les tables peuvent quand même être installées ; attendez-vous à un jeu plus lent et à plus de pression mémoire.",
+      "useLabel": "Utiliser les tables de finales",
+      "useHelp": "Lorsque c'est activé, les moteurs qui annoncent SyzygyPath pointent vers le dossier partagé. Sans effet tant que le jeu 3–5 pièces n'est pas entièrement installé.",
+      "badgeReady": "Installé",
+      "badgePartial": "Partiel ({{present}}/{{expected}})",
+      "badgeMissing": "Non installé",
+      "download": "Télécharger le jeu 3–5 pièces (~{{size}} Mo)",
+      "stop": "Arrêter le téléchargement",
+      "delete": "Retirer les tables de finales",
+      "deleteConfirm": "Retirer de ce plateau les fichiers de tables téléchargés ?",
+      "downloading": "Téléchargement…",
+      "failStatus": "Impossible de lire l'état des tables.",
+      "failAction": "Impossible de mettre à jour les tables."
+    },
+
     "system": {
       "title": "Paramètres système",
       "description": "État de l'appareil, mises à jour logicielles et configuration du système",

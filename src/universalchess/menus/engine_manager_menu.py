@@ -22,7 +22,7 @@ compiler still holds open races the build instead of reclaiming finished work.
 import os
 import time
 from concurrent.futures import TimeoutError as RenderTimeoutError
-from typing import Any, Callable, Optional, List, Dict
+from typing import Any, Callable, Optional, List, Dict, Tuple
 
 from universalchess.epaper.icon_menu import IconMenuEntry
 from universalchess.i18n import t
@@ -62,6 +62,156 @@ TIER_HEADING_KEYS = {
 # Operator-added engines get their own heading rather than joining a strength
 # band: they carry no rating, so no band describes them.
 CUSTOM_HEADING = "Custom"
+
+# First row on the engine list: the shared 3–5-piece Syzygy folder. Kept out of
+# the catalog view so an engine named "syzygy" cannot collide with it.
+SYZYGY_MENU_KEY = "syzygy"
+
+
+def tablebases_list_entry(snapshot: Optional[Dict[str, Any]] = None) -> IconMenuEntry:
+    """Engine-list row for the shared tablebase folder.
+
+    The subtitle is presence, not the toggle: whether the files are on disk is
+    what a user scanning the list needs, and the detail screen holds Use /
+    Download / Remove.
+    """
+    from universalchess.services import syzygy
+
+    status = snapshot if snapshot is not None else syzygy.status()
+    if status["ready"]:
+        detail = t("engine.syzygy_ready")
+    elif status["present"]:
+        detail = t(
+            "engine.syzygy_partial",
+            present=status["present"],
+            expected=status["expected"],
+        )
+    else:
+        detail = t("engine.syzygy_missing")
+    return IconMenuEntry(
+        key=SYZYGY_MENU_KEY,
+        label=f"{t('engine.syzygy')}\n{detail}",
+        icon_name="engine",
+        enabled=True,
+        selectable=True,
+        height_ratio=0.8,
+        layout="horizontal",
+        font_size=12,
+    )
+
+
+def handle_syzygy_menu(
+    menu_manager,
+    log,
+    *,
+    read_status: Optional[Callable[[], Dict[str, Any]]] = None,
+    set_enabled: Optional[Callable[[bool], bool]] = None,
+    start_download: Optional[Callable[[], Tuple[bool, str]]] = None,
+    cancel_download: Optional[Callable[[], None]] = None,
+    delete_tables: Optional[Callable[[], int]] = None,
+) -> Optional[MenuSelection]:
+    """Detail screen: warning, use toggle, download/remove.
+
+    Download runs in this process (the web card is the other starter). Progress
+    is polled from the in-process status the service already exposes.
+    """
+    from universalchess.services import syzygy
+
+    read_status = read_status or syzygy.status
+    set_enabled = set_enabled or syzygy.set_enabled
+    start_download = start_download or syzygy.start_download
+    cancel_download = cancel_download or syzygy.cancel_download
+    delete_tables = delete_tables or syzygy.delete_tables
+
+    def build_entries():
+        status = read_status()
+        warning = t("engine.syzygy_warning")
+        if status.get("constrained"):
+            warning = t("engine.syzygy_constrained", ram=status.get("ram_mb") or 0)
+        use_value = t("common.enabled") if status["enabled"] else t("common.disabled")
+        entries = [
+            IconMenuEntry(
+                key="warning",
+                label=warning,
+                icon_name="info",
+                enabled=True,
+                selectable=False,
+                height_ratio=1.2,
+                layout="horizontal",
+                font_size=11,
+            ),
+            IconMenuEntry(
+                key="use",
+                label=t("engine.syzygy_use", value=use_value),
+                icon_name="settings",
+                enabled=True,
+                selectable=True,
+                height_ratio=0.8,
+                layout="horizontal",
+                font_size=12,
+            ),
+        ]
+        if status["downloading"]:
+            entries.append(
+                IconMenuEntry(
+                    key="stop",
+                    label=t("engine.syzygy_stop"),
+                    icon_name="engine",
+                    enabled=True,
+                    selectable=True,
+                    height_ratio=0.8,
+                    layout="horizontal",
+                    font_size=12,
+                )
+            )
+        elif not status["ready"]:
+            entries.append(
+                IconMenuEntry(
+                    key="download",
+                    label=t("engine.syzygy_download"),
+                    icon_name="engine",
+                    enabled=True,
+                    selectable=True,
+                    height_ratio=0.8,
+                    layout="horizontal",
+                    font_size=12,
+                )
+            )
+        if status["present"] > 0 and not status["downloading"]:
+            entries.append(
+                IconMenuEntry(
+                    key="delete",
+                    label=t("engine.syzygy_delete"),
+                    icon_name="engine",
+                    enabled=True,
+                    selectable=True,
+                    height_ratio=0.8,
+                    layout="horizontal",
+                    font_size=12,
+                )
+            )
+        return entries
+
+    def handle_selection(result: MenuSelection):
+        status = read_status()
+        if result.key == "use":
+            set_enabled(not status["enabled"])
+            return None
+        if result.key == "download":
+            accepted, message = start_download()
+            if not accepted:
+                log.warning("[syzygy] download refused: %s", message)
+            return None
+        if result.key == "stop":
+            cancel_download()
+            return None
+        if result.key == "delete":
+            delete_tables()
+            return None
+        return None
+
+    return menu_manager.run_menu_loop(build_entries, handle_selection, initial_index=1)
+
 
 # Teaser length for the description shown under a row.
 _TEASER_CHARS = 60
@@ -790,9 +940,16 @@ def handle_engine_manager_menu(
     read_rows = read_rows if read_rows is not None else board_engine_rows
 
     def build_entries():
-        return build_engine_list_entries(read_rows())
+        return [
+            tablebases_list_entry(),
+        ] + build_engine_list_entries(read_rows())
 
     def handle_selection(result: MenuSelection):
+        if result.key == SYZYGY_MENU_KEY:
+            sub_result = handle_syzygy_menu(menu_manager, log)
+            if is_break_result(sub_result):
+                return sub_result
+            return None
         # Re-read rather than close over the rows the screen was drawn from: an
         # install running in the web process can finish while this list is open,
         # and the detail screen must open on what is true now.

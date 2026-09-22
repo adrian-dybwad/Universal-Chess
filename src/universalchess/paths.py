@@ -41,6 +41,10 @@ BASE_DIR = "/opt/universalchess"
 DB_DIR = f"{BASE_DIR}/db"
 CONFIG_DIR = f"{BASE_DIR}/config"
 ENGINES_DIR = f"{BASE_DIR}/engines"
+# Shared 3–5-piece Syzygy endgame tablebases. Empty until the user downloads
+# or copies files here; engines that advertise SyzygyPath are pointed at it
+# when the optional setting is on. See services.syzygy.
+SYZYGY_DIR = f"{BASE_DIR}/syzygy"
 TMP_DIR = f"{BASE_DIR}/tmp"  # noqa: S108  # nosec B108 - app subdir under BASE_DIR, not world-writable /tmp
 WEB_DIR = f"{BASE_DIR}/web"
 WEB_STATIC_DIR = f"{WEB_DIR}/static"

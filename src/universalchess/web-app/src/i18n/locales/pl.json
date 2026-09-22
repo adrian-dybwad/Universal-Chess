@@ -455,6 +455,25 @@
       "title": "Silniki szachowe",
       "description": "Instaluj silniki szachowe do gry i analizy oraz zarządzaj nimi"
     },
+    "syzygy": {
+      "title": "Bazy końcówek",
+      "description": "Opcjonalne tabele Syzygy 3–5 figur do idealnej gry w końcówce. Silniki, które je obsługują (Stockfish, Arasan), współdzielą jeden folder. Reckless i Zahak są budowane bez odpytywania.",
+      "warning": "Pobranie zajmuje około {{size}} MB. Odpytywanie to losowe I/O dysku i setki MB RAM. Na małej płycie (Pi Zero, ~512 MB) będzie swapować i zużywać kartę SD. Pi 5 lub CM5 z kilkoma GB RAM to zamierzony host. Wybór nadal należy do Ciebie.",
+      "constrained": "Ta płyta zgłasza {{ram}} MB RAM, poniżej komfortowej granicy 2 GB. Tabele nadal można zainstalować; spodziewaj się wolniejszej gry i większego obciążenia pamięci.",
+      "useLabel": "Używaj baz końcówek",
+      "useHelp": "Gdy włączone, silniki zgłaszające SyzygyPath wskazują wspólny folder. Nie działa, dopóki zestaw 3–5 figur nie jest w pełni zainstalowany.",
+      "badgeReady": "Zainstalowano",
+      "badgePartial": "Częściowo ({{present}}/{{expected}})",
+      "badgeMissing": "Nie zainstalowano",
+      "download": "Pobierz zestaw 3–5 figur (~{{size}} MB)",
+      "stop": "Zatrzymaj pobieranie",
+      "delete": "Usuń bazy końcówek",
+      "deleteConfirm": "Usunąć z tej płyty pobrane pliki baz końcówek?",
+      "downloading": "Pobieranie…",
+      "failStatus": "Nie udało się odczytać stanu baz końcówek.",
+      "failAction": "Nie udało się zaktualizować baz końcówek."
+    },
+
     "system": {
       "title": "Ustawienia systemowe",
       "description": "Stan urządzenia, aktualizacje oprogramowania i konfiguracja systemu",

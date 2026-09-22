@@ -6480,6 +6480,59 @@ def api_uninstall_engine():
         return _internal_error(e)
 
 
+@app.route("/api/syzygy", methods=["GET"])
+def api_syzygy_status():
+    """Shared 3–5-piece Syzygy tablebase status for the Engines UI.
+
+    Unauthenticated like engine-install status: the page polls it, and the
+    payload has no secrets -- only presence, RAM/disk hints, and download
+    progress. Mutations are the POST routes below.
+    """
+    from universalchess.services import syzygy
+
+    return jsonify(syzygy.status())
+
+
+@app.route("/api/syzygy", methods=["POST"])
+@requires_auth
+def api_syzygy_update():
+    """Enable probing, start/cancel a download, or delete the shared files.
+
+    Body is JSON with an ``action`` of ``enable``, ``disable``, ``download``,
+    ``cancel``, or ``delete``. Enable is stored even when files are missing so
+    a download that finishes later is used without a second toggle.
+    """
+    from universalchess.services import syzygy
+
+    body = request.get_json(silent=True) or {}
+    action = body.get("action")
+    if action == "enable":
+        if not syzygy.set_enabled(True):
+            return jsonify({"success": False, "error": "Could not save the setting."}), 500
+    elif action == "disable":
+        if not syzygy.set_enabled(False):
+            return jsonify({"success": False, "error": "Could not save the setting."}), 500
+    elif action == "download":
+        accepted, message = syzygy.start_download()
+        if not accepted:
+            payload = dict(syzygy.status())
+            payload["success"] = False
+            payload["error"] = message
+            return jsonify(payload), 409
+        payload = dict(syzygy.status())
+        payload["success"] = True
+        payload["message"] = message
+        return jsonify(payload)
+    elif action == "cancel":
+        syzygy.cancel_download()
+    elif action == "delete":
+        syzygy.cancel_download()
+        syzygy.delete_tables()
+    else:
+        return jsonify({"success": False, "error": "Unknown action."}), 400
+    return jsonify({"success": True, **syzygy.status()})
+
+
 @app.route("/api/engines/status", methods=["GET"])
 def api_engine_status():
     """Get current engine installation status.
