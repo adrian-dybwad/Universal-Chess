@@ -304,7 +304,13 @@ class ChessBoardWidget(Widget):
     
     Subscribes to ChessGameState and updates automatically when position changes.
     Chess sprites can be provided directly via constructor or set at module level.
+
+    ``eager_refresh`` is set because a timed game otherwise holds a new position
+    until the clock's next one-second tick. The flush is still the coalesced one,
+    so the move list and analysis that the same move updates ride along with it.
     """
+
+    eager_refresh = True
     
     def __init__(self, x: int, y: int, update_callback, 
                  game_state: 'ChessGameState', flip: bool,

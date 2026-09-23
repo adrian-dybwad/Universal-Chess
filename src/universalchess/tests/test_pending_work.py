@@ -18,6 +18,7 @@ locked operation here, and every flag goes through it.
 """
 
 import threading
+import time
 
 import pytest
 
@@ -326,6 +327,61 @@ def test_the_application_keeps_no_deferred_flag_of_its_own():
                 if name.startswith("_pending_") or name == "_cancel_game_start"]
 
     assert deferred == []
+
+
+def test_a_request_ends_the_idle_wait():
+    """A web move must not sit through the game loop's idle timeout.
+
+    Why: the loop slept a fixed half second whenever nothing was pending, so a
+    move from the web waited that long before the board applied it and asked
+    the panel to draw it. How a regression manifests: idle(5) is still waiting
+    half a second after the request.
+    """
+    pending = PendingWork()
+    started = time.monotonic()
+
+    def request_soon():
+        time.sleep(0.05)
+        pending.board_command.request({"command": "make_move"})
+
+    threading.Thread(target=request_soon, daemon=True).start()
+    pending.idle(5)
+
+    assert time.monotonic() - started < 0.5
+    assert pending.board_command.requested() is True
+
+
+def test_idle_waits_out_its_timeout_when_nothing_is_requested():
+    """With no request, the idle cadence is unchanged.
+
+    Why: the timeout is what keeps the loop from spinning the Pi Zero's one
+    core while a game sits still. How a regression manifests: idle returns
+    immediately and the loop busy-waits.
+    """
+    pending = PendingWork()
+    started = time.monotonic()
+
+    pending.idle(0.05)
+
+    assert time.monotonic() - started >= 0.04
+
+
+def test_idle_consumes_the_wake_so_the_next_wait_blocks():
+    """A consumed wake must not make the following idle return at once.
+
+    Why: the event is level-triggered. Leaving it set after the loop has
+    taken the request would turn every later idle into a spin. How a
+    regression manifests: the second idle returns in well under its timeout.
+    """
+    pending = PendingWork()
+    pending.board_command.request()
+    pending.idle(5)
+    pending.board_command.take()
+
+    started = time.monotonic()
+    pending.idle(0.05)
+
+    assert time.monotonic() - started >= 0.04
 
 
 def test_the_piece_event_queue_is_part_of_the_pending_work():

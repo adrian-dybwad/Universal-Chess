@@ -7839,8 +7839,10 @@ def main():
                         _process_pending_board_command()
 
                     else:
-                        # Stay in game mode - key_callback handles exit via _return_to_menu
-                        time.sleep(0.5)
+                        # Stay in game mode - key_callback handles exit via _return_to_menu.
+                        # A web move (or any other deferred request) ends the wait
+                        # immediately; the timeout is only the idle cadence.
+                        _pending.idle(0.5)
 
                 elif _session.in_settings:
                     # Settings handled by _handle_settings loop

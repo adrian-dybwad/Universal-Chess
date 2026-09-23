@@ -55,6 +55,16 @@ class Slot:
         self.name = name
         self._lock = lock if lock is not None else threading.Lock()
         self._request: Optional[Request] = None
+        self._wake: Optional[threading.Event] = None
+
+    def bind_wake(self, wake: threading.Event) -> None:
+        """Wake ``wake`` whenever this slot is requested.
+
+        The main loop waits on that event between passes. Without it a web move
+        sits until the loop's idle timeout ends before the panel is asked to
+        draw it.
+        """
+        self._wake = wake
 
     def request(self, payload: Any = None) -> None:
         """Ask the main loop to do this work.
@@ -64,6 +74,9 @@ class Slot:
         """
         with self._lock:
             self._request = Request(payload)
+            wake = self._wake
+        if wake is not None:
+            wake.set()
 
     def take(self) -> Optional[Request]:
         """Claim the pending request, if there is one, and empty the slot.
@@ -194,3 +207,36 @@ class PendingWork:
     )
     cancel_game_start: Slot = field(default_factory=lambda: Slot("cancel_game_start"))
     piece_events: PieceEventQueue = field(default_factory=PieceEventQueue)
+
+    def __post_init__(self) -> None:
+        """Share one wake event across every slot the main loop polls.
+
+        A request on any of them ends the loop's idle wait. The piece-event
+        queue is not included: live piece events are handled on the serial
+        thread, not by this wait.
+        """
+        self._wake = threading.Event()
+        for slot in (
+            self.settings_reload,
+            self.player_rebuild,
+            self.lichess_next,
+            self.layout_rebuild,
+            self.board_command,
+            self.display_profile,
+            self.ble_client,
+            self.positions_menu_return,
+            self.switch_to_normal_game,
+            self.cancel_game_start,
+        ):
+            slot.bind_wake(self._wake)
+
+    def idle(self, timeout_seconds: float) -> None:
+        """Wait up to ``timeout_seconds``, returning as soon as a slot is requested.
+
+        The game loop used to sleep a fixed half second whenever nothing was
+        pending, so a move from the web sat for that long before this process
+        applied it and the panel was asked to draw it. The timeout remains the
+        idle cadence when nothing arrives.
+        """
+        self._wake.wait(timeout_seconds)
+        self._wake.clear()

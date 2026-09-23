@@ -361,7 +361,7 @@ class Manager:
             self._attach_widget(StatusBarWidget(0, 0, self.update))
     
     def update(self, full: bool = False, immediate: bool = False,
-               priority: bool = True) -> Future:
+               priority: bool = True, eager: bool = False) -> Future:
         """Update the display with current widget states.
 
         If any widget has is_modal=True, only that widget is rendered.
@@ -373,12 +373,13 @@ class Manager:
         - ``priority=True`` (the default, used by direct/external callers such as
           screen transitions and profile changes, and by the clock's heartbeat
           and time-sensitive overlays) renders and refreshes immediately.
-        - ``priority=False`` (routine widget updates -- board, analysis, status,
-          the clock's turn/state) only marks the framebuffer dirty. While a timed
+        - ``priority=False`` (routine widget updates -- analysis, status, the
+          clock's turn/state) only marks the framebuffer dirty. While a timed
           game's clock is running it rides the next clock tick; otherwise a single
           coalesced flush renders the whole burst once. This is what removes the
           per-event render burst and stops the running clock stuttering when other
-          widgets change.
+          widgets change. ``eager=True`` (a piece move) schedules that flush even
+          while the clock is running, so the position does not wait for the tick.
 
         The synchronous render path still has re-entrancy protection: if a child
         widget calls update() from within draw_on() during a render, that request
@@ -389,6 +390,8 @@ class Manager:
             immediate: If True, wake scheduler immediately to bypass batching delay.
                       Use for time-sensitive UI like menu navigation.
             priority: If True, render now; if False, defer/coalesce per the policy.
+            eager: If True, schedule the coalesced flush even while the clock is
+                the refresher. A piece move. Does not render inside this call.
 
         Returns:
             Future: completes when the refresh finishes (priority path), or a
@@ -407,6 +410,8 @@ class Manager:
 
         # Routine update: record that the framebuffer needs rendering and let the
         # clock tick (clock-driven mode) or a single coalesced flush pick it up.
+        # eager (a piece move) schedules that flush even while the clock is the
+        # refresher, so the position is not held until the next second.
         with self._refresh_state_lock:
             self._dirty = True
             self._dirty_full = self._dirty_full or full
@@ -414,6 +419,7 @@ class Manager:
                 priority=False,
                 defer_to_clock=self._defer_to_clock,
                 flush_scheduled=self._flush_scheduled,
+                eager=eager,
             )
             schedule_flush = action is RefreshAction.SCHEDULE_FLUSH
             if schedule_flush:
@@ -428,14 +434,17 @@ class Manager:
                        immediate: bool = False) -> Future:
         """Per-widget update entry point installed by add_widget().
 
-        Maps a widget's update request onto update()'s ``priority`` flag: a modal
-        or a widget that opts in via ``refresh_priority`` (the clock heartbeat and
-        time-sensitive overlays) refreshes immediately; every other widget's
-        routine change defers/coalesces so one event does not trigger a render
-        per observing widget.
+        Maps a widget's update request onto update()'s flags: a modal or a widget
+        that opts in via ``refresh_priority`` (the clock heartbeat and
+        time-sensitive overlays) refreshes immediately. A widget with
+        ``eager_refresh`` (the chess board) schedules one coalesced flush even
+        while the clock is running. Every other widget's routine change
+        defers/coalesces so one event does not trigger a render per observing
+        widget.
         """
         priority = bool(getattr(widget, "refresh_priority", False)) or widget.is_modal
-        return self.update(full, immediate, priority=priority)
+        eager = bool(getattr(widget, "eager_refresh", False))
+        return self.update(full, immediate, priority=priority, eager=eager)
 
     def _render_now(self, full: bool = False, immediate: bool = False,
                     clock_source: bool = False) -> Future:

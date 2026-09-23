@@ -65,12 +65,17 @@ class Widget(ABC):
 
     # Whether this widget's updates must refresh the panel immediately rather
     # than being deferred/coalesced by the Manager. Default False: routine
-    # widgets (board, analysis, status, the clock's turn/state) defer so one
+    # widgets (analysis, status, the clock's turn/state) defer so one
     # event does not trigger a render per observing widget, and while a timed
     # game runs they ride the clock's tick. Set True for time-sensitive widgets
     # (check/queen/hint alerts, and the clock heartbeat) that must appear at once.
     # Modal widgets are always treated as priority regardless of this flag.
     refresh_priority: bool = False
+    # A piece move. Schedules one coalesced flush even while a timed clock is
+    # the panel's refresher, so the new position is not held until the next
+    # second. Distinct from refresh_priority, which renders inside the call and
+    # would paint before the move's other widgets had updated.
+    eager_refresh: bool = False
     
     def __init__(self, x: int, y: int, width: int, height: int, 
                  update_callback: Callable[[bool, bool], object],

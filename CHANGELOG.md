@@ -1381,6 +1381,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **A move on the web board took a few seconds to appear on the e-paper**:
+  the web request itself returns as soon as the command is sent. The board
+  then waited out a half-second idle poll, and while a clock was running
+  held the new position until the next one-second tick before asking the
+  panel to draw it. The idle wait now ends as soon as the command arrives,
+  and a piece move schedules the same single coalesced refresh the paused
+  clock already used, so the position is not held for that tick. The
+  panel's own refresh still takes as long as its waveform.
+
 - **An update started the board and the web interface twice**: the package
   stops both services before it unpacks, then the install script started
   them again in the middle of configuration and restarted them once more

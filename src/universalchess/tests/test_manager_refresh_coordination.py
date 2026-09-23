@@ -189,9 +189,9 @@ def test_priority_widget_update_renders_now_even_when_clock_driven(manager):
 
 
 def test_routine_widget_update_defers_when_clock_driven(manager):
-    """A non-priority widget (board/analysis) defers to the tick when clock-driven.
+    """A non-priority widget (analysis, status) defers to the tick when clock-driven.
 
-    Regression manifests as the board/analysis update rendering mid-second again
+    Regression manifests as the analysis update rendering mid-second again
     (the stutter): _do_update called or a flush scheduled here.
     """
     widget = _make_widget(manager, refresh_priority=False)
@@ -200,3 +200,43 @@ def test_routine_widget_update_defers_when_clock_driven(manager):
     widget.invalidate_and_update()
     assert manager._test_render_calls == []
     assert manager._test_deferred_callbacks == []
+
+
+def test_eager_widget_schedules_one_flush_while_the_clock_runs(manager):
+    """A piece move schedules one flush and does not paint inside the call.
+
+    Why this test exists: the chess board used to be a routine widget, so a
+    move during a timed game only marked the framebuffer dirty and waited for
+    the next clock second. How a regression manifests: no deferred callback is
+    recorded (the move waits for the tick again), more than one is recorded
+    (each observer starts its own partial), or _do_update runs inside the
+    update (the board paints before the move list and analysis have updated).
+    """
+    widget = _make_widget(manager, refresh_priority=False)
+    widget.eager_refresh = True
+    manager.set_defer_to_clock(True)
+
+    widget.invalidate_and_update()
+    widget.invalidate_and_update()
+
+    assert manager._test_render_calls == []
+    assert len(manager._test_deferred_callbacks) == 1
+
+    manager._test_deferred_callbacks[0]()
+    assert len(manager._test_render_calls) == 1
+
+
+def test_the_chess_board_flushes_eagerly_and_is_not_priority():
+    """The live board opts into the coalesced flush, not an immediate render.
+
+    Why: eager_refresh is what stops a timed-game move waiting for the clock
+    tick, and refresh_priority would paint inside the position observer before
+    the move list and analysis had updated. How a regression manifests: the
+    class flag is missing (the move waits for the tick again) or
+    refresh_priority is set (the board renders on its own, ahead of the rest
+    of the move).
+    """
+    from universalchess.epaper.chess_board import ChessBoardWidget
+
+    assert ChessBoardWidget.eager_refresh is True
+    assert ChessBoardWidget.refresh_priority is False

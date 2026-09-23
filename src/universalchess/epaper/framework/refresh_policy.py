@@ -24,6 +24,9 @@ be tested without any hardware:
 - While the clock is the sole refresher (a timed game running), routine updates
   are deferred: they only mark the framebuffer dirty and ride the clock's next
   tick, which renders the whole stack once (picking up the prepped content).
+  A piece move is the exception: it schedules that same single coalesced flush
+  immediately, so the position does not sit invisible until the next second.
+  Analysis and the other routine widgets still ride the tick.
 - Otherwise (untimed, or the clock paused/stopped) routine updates are coalesced:
   the first schedules a single flush and the rest fold into it, so a burst
   renders once rather than N times.
@@ -52,7 +55,7 @@ class RefreshAction(Enum):
 
 
 def decide_refresh_action(priority: bool, defer_to_clock: bool,
-                          flush_scheduled: bool) -> RefreshAction:
+                          flush_scheduled: bool, eager: bool = False) -> RefreshAction:
     """Decide how a single ``update`` request should refresh the panel.
 
     Args:
@@ -61,17 +64,22 @@ def decide_refresh_action(priority: bool, defer_to_clock: bool,
         defer_to_clock: True while a timed game's clock is running and is the sole
             refresher, so routine updates ride the next tick instead of refreshing.
         flush_scheduled: True when a coalesced flush has already been scheduled for
-            the current burst of routine updates (only meaningful when
-            ``defer_to_clock`` is False).
+            the current burst of routine updates.
+        eager: True for a piece move. Schedules the coalesced flush even while the
+            clock is the refresher, so the position is not held until the next
+            tick. Still one flush per burst: a second eager update folds in.
 
     Returns:
         The :class:`RefreshAction` the Manager should perform. Priority always
-        renders now. Otherwise, in clock-driven mode the update defers to the
-        tick; in normal mode the first update of a burst schedules the flush and
-        subsequent ones defer into it.
+        renders now. An eager update schedules one coalesced flush (or folds into
+        one already scheduled). Otherwise, in clock-driven mode the update defers
+        to the tick; in normal mode the first update of a burst schedules the
+        flush and subsequent ones defer into it.
     """
     if priority:
         return RefreshAction.RENDER_NOW
+    if eager:
+        return RefreshAction.DEFER if flush_scheduled else RefreshAction.SCHEDULE_FLUSH
     if defer_to_clock:
         return RefreshAction.DEFER_TO_CLOCK
     if flush_scheduled:
