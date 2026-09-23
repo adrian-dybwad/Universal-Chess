@@ -1381,6 +1381,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **An update started the board and the web interface twice**: the package
+  stops both services before it unpacks, then the install script started
+  them again in the middle of configuration and restarted them once more
+  at the end. The board beeped and painted its startup screen twice, and
+  the web page dropped offline, came back, and dropped offline again. On
+  an upgrade that mid-script start is skipped. The restart at the end of
+  configuration, after bytecode, permissions, and nginx, is the only one.
+
 - **Shared Hash / Threads sliders only moved one step**: each drag
   fired a save that disabled the control, so the pointer stopped after
   one megabyte (or one thread) and the number box lagged behind. The

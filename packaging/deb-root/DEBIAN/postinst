@@ -504,10 +504,10 @@ echo -e "::: Setup services"
     echo -e "::: Enabling Wi-Fi radio preference restore"
     systemctl enable universal-chess-wifi-radio.service 2>/dev/null || true
 
-    # Clear any pending-update marker BEFORE starting services. This install
-    # is that pending update, so the freshly started web/board services must
-    # not load a stale "update pending" from update-state.json. Doing it here
-    # (rather than only in the updater's install script, which runs after this
+    # Clear any pending-update marker BEFORE either service is started. This
+    # install is that pending update, so the web/board services must not load
+    # a stale "update pending" from update-state.json. Doing it here (rather
+    # than only in the updater's install script, which runs after this
     # postinst completes) closes a race where the restarted web service caches
     # the stale pending value in memory.
     STATE_FILE="${DGTCM_PATH}/update-state.json"
@@ -527,9 +527,16 @@ except Exception:
 PYEOF
     fi
 
-    echo -e "::: Starting services"
-    systemctl start universal-chess-web.service || true
-    systemctl start universal-chess.service || true
+    # Fresh install only. prerm has already stopped both units on an upgrade;
+    # starting them here and restarting them again at the end of configure
+    # runs the board's startup twice (two beeps, two splash screens) and
+    # drops the web client offline twice. Leave them stopped until that
+    # single restart, which is after bytecode, permissions, and nginx.
+    if [ -z "${2:-}" ]; then
+        echo -e "::: Starting services"
+        systemctl start universal-chess-web.service || true
+        systemctl start universal-chess.service || true
+    fi
 
 #    systemctl enable ntp
     systemctl enable var-run-sdp.path
@@ -1371,7 +1378,10 @@ systemctl reboot
             echo -e "::: A reboot is recommended to apply group and service changes."
         fi
     else
-        # Upgrade: reload and restart services without rebooting.
+        # Upgrade: one restart, after the rest of configure. This is the only
+        # time these two units are brought back; the mid-script start above is
+        # fresh-install only, so the board does not boot twice and the web
+        # client drops offline once.
         echo -e "::: Upgrade from $2 -- restarting services..."
         systemctl daemon-reload
         systemctl restart universal-chess.service universal-chess-web.service 2>/dev/null || true

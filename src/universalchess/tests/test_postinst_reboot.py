@@ -279,3 +279,32 @@ class TestRebootWaitsOutTheTransaction:
         }
         assert DPKG_FRONTEND_LOCK in checked
         assert DPKG_LOCK in checked
+
+
+def test_upgrade_brings_board_and_web_up_once(postinst_text):
+    """An upgrade starts the board and the web service once, at the end.
+
+    Why this test exists: prerm stops both units, then postinst started them
+    again in the middle of configure and restarted them at the end. The board
+    beeped and painted its startup screen twice, and the web client dropped
+    offline, came back, and dropped offline again.
+
+    How the regression manifests: ``systemctl start universal-chess.service``
+    is not inside the fresh-install guard (``$2`` empty), so an upgrade runs
+    that start and then the later ``systemctl restart`` as well.
+    """
+    board_start = postinst_text.index("systemctl start universal-chess.service")
+    web_start = postinst_text.index("systemctl start universal-chess-web.service")
+    # The pending-state clear sits immediately above this start. 500 characters
+    # reaches that clear and, once the start is guarded, the fresh-install
+    # test -- and does not reach the upgrade branch half a script later.
+    for start_at in (board_start, web_start):
+        window = postinst_text[max(0, start_at - 500):start_at]
+        assert 'if [ -z "${2:-}" ]' in window
+
+    upgrade_at = postinst_text.index("Upgrade from")
+    upgrade = postinst_text[upgrade_at:postinst_text.index("esac", upgrade_at)]
+    assert upgrade.count(
+        "systemctl restart universal-chess.service universal-chess-web.service"
+    ) == 1
+    assert "systemctl start universal-chess" not in upgrade
