@@ -298,10 +298,29 @@ def apply_security_headers(response):
 
 # Path prefixes whose filenames change when the file contents change. The Vite
 # build hashes every file it emits under ``/assets/`` (scripts, stylesheets,
-# fonts). Icons, the service worker, the manifest, and the HTML shell keep
-# stable names, so they are not in this list: a year-long cache of those would
-# keep the previous version until the year ended.
+# fonts). The service worker, the manifest, and the HTML shell keep stable
+# names, so they are not in this list: a year-long cache of those would keep
+# the previous version until the year ended.
 STATIC_ASSET_PREFIXES = ('/assets/',)
+
+# Packaged images keep their filenames. The build appends ``?v=<content hash>``
+# and the browser's cache key includes that query, so a replaced file is a new
+# address. The header cannot see the query; only a request that carries ``v``
+# is immutable. A bare URL still revalidates, and so does anything that is not
+# an image (the SPA shell falls through to these paths when the file is
+# missing). ``/screen.jpg`` is not here: the board rewrites it in place.
+_PACKAGED_IMAGE_PREFIXES = ('/icons/', '/images/')
+_PACKAGED_IMAGE_PATHS = frozenset({'/logo'})
+
+
+def _is_versioned_packaged_image(path, response):
+    """True when this response is a packaged image addressed by its content hash."""
+    if not request.args.get('v'):
+        return False
+    if path not in _PACKAGED_IMAGE_PATHS and not path.startswith(_PACKAGED_IMAGE_PREFIXES):
+        return False
+    content_type = response.content_type or ''
+    return content_type.startswith('image/')
 
 
 @app.after_request
@@ -313,14 +332,16 @@ def add_cache_headers(response):
 
     path = request.path
 
-    # Hashed build output. This runs before the "header already set" return
-    # because send_file marks every file ``no-cache`` (Flask's default max-age
-    # is unset). Leaving that header in place made the browser revalidate the
-    # bundle on every load, which is a full download whenever it has no
-    # validator. The filename changes with the bytes, so a stored copy is the
-    # right version until the next build points the shell at a new name.
+    # Hashed build output, and a packaged image whose URL carries ?v=<hash>.
+    # This runs before the "header already set" return because send_file marks
+    # every file ``no-cache`` (Flask's default max-age is unset). Leaving that
+    # header in place made the browser revalidate the file on every load.
+    # The URL changes with the bytes, so a stored copy is the right version
+    # until the next build points the shell at a new name.
     # A non-200 is not cached: a transient 404 must not stick for a year.
-    if response.status_code == 200 and path.startswith(STATIC_ASSET_PREFIXES):
+    if response.status_code == 200 and (
+        path.startswith(STATIC_ASSET_PREFIXES) or _is_versioned_packaged_image(path, response)
+    ):
         response.headers['Cache-Control'] = IMMUTABLE_CACHE_CONTROL
         return response
 

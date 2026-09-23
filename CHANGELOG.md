@@ -1386,10 +1386,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   to let the browser keep those files. Flask's file sender marks every file
   ``no-cache`` first, and the cache policy left any existing Cache-Control
   header alone, so that rule never applied. A file under ``/assets/`` is now
-  cached for a year and marked immutable. The page shell, the service
-  worker, and the icons keep stable names, so those still revalidate. The
-  service worker serves a hashed file it has already stored without asking
-  the network again.
+  cached for a year and marked immutable. Packaged images (the icons, the
+  pictures under ``/images/``, and ``/logo``) keep their filenames, so the
+  build puts a hash of the file in the URL and caches that address the same
+  way; a replaced picture is a new address and the old copy is left unused.
+  A request without that hash still revalidates. The page shell and the
+  service worker keep stable names, so those still revalidate. The live
+  board picture (``/screen.jpg``) is not part of this, because the board
+  rewrites it in place. The service worker serves a stored copy of a hashed
+  file or a packaged image without asking the network again.
 
 - **A move on the web board took a few seconds to appear on the e-paper**:
   the web request itself returns as soon as the command is sent. The board

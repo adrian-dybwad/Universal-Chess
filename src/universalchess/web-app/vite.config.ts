@@ -1,8 +1,14 @@
 /// <reference types="vitest/config" />
-import { readFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
+import {
+  STATIC_IMAGE_HASH_LENGTH,
+  applyQuotedStaticVersions,
+} from './src/staticImageUrl.ts'
 
 // Bundle the repository README (which leads with the Acknowledgments section)
 // into the web app as `virtual:readme`, so the About page can render it from a
@@ -10,6 +16,64 @@ import react from '@vitejs/plugin-react'
 // cross-root `?raw` import) avoids Vite's `server.fs.allow` sandbox, which would
 // otherwise reject the README that lives above the web-app root -- and it works
 // identically for dev, production build, and vitest since all share this config.
+// Packaged images keep their filenames across builds. Hash the bytes so the
+// URL the client requests changes when the file does, which is the cache key
+// for the year-long immutable response. /screen.jpg is not in this set: the
+// board rewrites it in place.
+function packagedImageVersions(): Record<string, string> {
+  const publicDir = fileURLToPath(new URL('./public', import.meta.url))
+  const versions: Record<string, string> = {}
+  for (const folder of ['icons', 'images']) {
+    const directory = join(publicDir, folder)
+    for (const name of readdirSync(directory)) {
+      const fullPath = join(directory, name)
+      if (!statSync(fullPath).isFile()) continue
+      versions[`/${folder}/${name}`] = createHash('sha256')
+        .update(readFileSync(fullPath))
+        .digest('hex')
+        .slice(0, STATIC_IMAGE_HASH_LENGTH)
+    }
+  }
+  const logoPath = fileURLToPath(new URL('../resources/knight_logo.png', import.meta.url))
+  versions['/logo'] = createHash('sha256')
+    .update(readFileSync(logoPath))
+    .digest('hex')
+    .slice(0, STATIC_IMAGE_HASH_LENGTH)
+  return versions
+}
+
+function versionStaticImages(versions: Record<string, string>): Plugin {
+  const virtualId = 'virtual:static-image-versions'
+  const resolvedId = `\0${virtualId}`
+  let outDir = ''
+  return {
+    name: 'version-static-images',
+    configResolved(config) {
+      outDir = join(config.root, config.build.outDir)
+    },
+    resolveId(id) {
+      return id === virtualId ? resolvedId : null
+    },
+    load(id) {
+      if (id !== resolvedId) return null
+      return `export const staticImageVersions = ${JSON.stringify(versions)};`
+    },
+    transformIndexHtml(html) {
+      return applyQuotedStaticVersions(html, versions)
+    },
+    // manifest.json and sw.js are copied from public/ unchanged. Rewrite them
+    // after that copy so the precache list and the installed PWA icons request
+    // the same versioned URLs the page does.
+    closeBundle() {
+      for (const name of ['manifest.json', 'sw.js']) {
+        const filePath = join(outDir, name)
+        if (!existsSync(filePath)) continue
+        writeFileSync(filePath, applyQuotedStaticVersions(readFileSync(filePath, 'utf-8'), versions))
+      }
+    },
+  }
+}
+
 function bundleReadme(): Plugin {
   const virtualId = 'virtual:readme'
   const resolvedId = `\0${virtualId}`
@@ -47,7 +111,7 @@ export default defineConfig(({ mode }) => {
   }
   
   return {
-    plugins: [react(), bundleReadme()],
+    plugins: [react(), bundleReadme(), versionStaticImages(packagedImageVersions())],
     define: {
       // Make the API target available to the client at runtime
       '__API_TARGET__': JSON.stringify(apiTarget),

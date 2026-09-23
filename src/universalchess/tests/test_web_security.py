@@ -177,15 +177,14 @@ def test_asset_route_serves_a_hashed_file_as_immutable(client, monkeypatch, tmp_
     assert response.headers["Cache-Control"] == webapp.IMMUTABLE_CACHE_CONTROL
 
 
-def test_icon_route_revalidates_because_the_filename_does_not_change(
-    client, monkeypatch, tmp_path,
-):
-    """An icon keeps its name across builds, so it must not be stored immutable.
+def test_icon_without_a_content_hash_still_revalidates(client, monkeypatch, tmp_path):
+    """A packaged image with no ?v= must not be stored immutable.
 
-    Why this test exists: favicon.ico and the PWA icons are not content-hashed.
-    Caching them for a year would keep a replaced icon until that year ended.
-    How a regression manifests: the icon response is `immutable` or carries the
-    hashed-asset max-age.
+    Why this test exists: the filename does not change when the picture does.
+    Only the content-hash query makes a year-long cache safe. A bare URL has
+    to keep revalidating, or a replaced favicon stays on screen for a year.
+    How a regression manifests: /icons/favicon.ico with no query is `immutable`
+    or carries the year-long max-age.
     """
     icons = tmp_path / "icons"
     icons.mkdir()
@@ -199,6 +198,106 @@ def test_icon_route_revalidates_because_the_filename_does_not_change(
     assert "immutable" not in cache_control
     assert "31536000" not in cache_control
     assert "no-cache" in cache_control
+
+
+def test_versioned_icon_is_cached_until_its_url_changes(client, monkeypatch, tmp_path):
+    """An icon addressed by its content hash is cached for a year.
+
+    Why this test exists: send_file marks the file no-cache, and the filename
+    itself never changes. The page requests ?v=<hash>, and that response has
+    to be immutable or the browser downloads the logo on every load.
+    How a regression manifests: Cache-Control stays no-cache.
+    """
+    icons = tmp_path / "icons"
+    icons.mkdir()
+    (icons / "favicon.ico").write_bytes(b"\x00\x00")
+    monkeypatch.setattr(webapp, "get_react_app_dir", lambda: tmp_path)
+
+    response = client.get("/icons/favicon.ico?v=abc123")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == webapp.IMMUTABLE_CACHE_CONTROL
+
+
+def test_versioned_public_image_is_cached_until_its_url_changes(client, monkeypatch, tmp_path):
+    """A file under /images/ with a content hash is cached like a build asset.
+
+    Why this test exists: /images/ is not under /assets/, so the hashed-bundle
+    rule does not cover it, and the catch-all still sends the file no-cache.
+    How a regression manifests: board-and-web.jpg comes back no-cache.
+    """
+    images = tmp_path / "images"
+    images.mkdir()
+    (images / "board-and-web.jpg").write_bytes(b"\xff\xd8\xff\xd9")
+    monkeypatch.setattr(webapp, "get_react_app_dir", lambda: tmp_path)
+
+    response = client.get("/images/board-and-web.jpg?v=abc123")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == webapp.IMMUTABLE_CACHE_CONTROL
+
+
+def test_versioned_logo_is_cached_until_its_url_changes():
+    """The knight logo at /logo is cached once the URL carries its hash.
+
+    Why this test exists: /logo is a Flask file response, not a Vite asset,
+    so send_file's no-cache would otherwise stick. How a regression manifests:
+    the header stays no-cache and the About page downloads the logo every time.
+    """
+    cc = _cache_control_for(
+        "/logo?v=abc123",
+        mimetype="image/png",
+        preset="no-cache",
+    )
+    assert cc == webapp.IMMUTABLE_CACHE_CONTROL
+
+
+def test_html_fallback_at_an_image_path_is_not_immutable():
+    """The SPA shell served for a missing image path must not be cached for a year.
+
+    Why this test exists: an unknown /images/ path falls through to index.html
+    with status 200. Treating every /images/ response as an immutable image
+    would pin that shell. How a regression manifests: text/html at that path
+    is `immutable`.
+    """
+    cc = _cache_control_for(
+        "/images/missing.png?v=abc123",
+        mimetype="text/html",
+        preset="no-cache",
+    )
+    assert cc == "no-cache"
+    assert "immutable" not in cc
+
+
+def test_live_screen_snapshot_is_not_cached():
+    """The e-paper snapshot stays uncached even though it is a JPEG.
+
+    Why this test exists: the board rewrites /screen.jpg in place. A packaged-
+    image rule keyed only on the extension would freeze the live picture.
+    How a regression manifests: the snapshot is `immutable` or loses `no-store`.
+    """
+    cc = _cache_control_for(
+        "/screen.jpg?v=abc123",
+        mimetype="image/jpeg",
+        preset="no-cache, no-store, must-revalidate",
+    )
+    assert "no-store" in cc
+    assert "immutable" not in cc
+
+
+def test_sprite_preview_is_not_cached_as_a_packaged_image():
+    """A sprite-sheet preview is generated, so it must not be immutable.
+
+    Why this test exists: the sheet name does not change when the user
+    replaces the file, and there is no content hash on that URL. How a
+    regression manifests: /api/sprites/default/image is cached for a year.
+    """
+    cc = _cache_control_for(
+        "/api/sprites/default/image",
+        mimetype="image/png",
+        preset="no-cache",
+    )
+    assert cc == "no-cache"
 
 
 def test_an_explicit_no_cache_outside_the_hashed_assets_is_left_alone():

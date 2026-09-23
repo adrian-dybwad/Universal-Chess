@@ -9,6 +9,8 @@ import { MenuIcon } from './MenuIcon';
 import { UpdateIndicator } from './UpdateIndicator';
 import { BoardControlPanel } from './BoardControlPanel';
 import { PRIMARY_NAV } from '../config/navigation';
+import { versionedStaticUrl } from '../staticImageUrl';
+import { staticImageVersions } from 'virtual:static-image-versions';
 import './Navbar.css';
 
 /**
@@ -48,7 +50,7 @@ export function Navbar() {
       <div className="navbar-top">
         <div className="navbar-brand">
           <Link to="/" className="navbar-item navbar-logo-item">
-            <img src="/icons/logo-full.png" alt="" className="navbar-logo-img" />
+            <img src={versionedStaticUrl('/icons/logo-full.png', staticImageVersions)} alt="" className="navbar-logo-img" />
             <div className="brand-text">
               <span className="brand-title">{t('nav.appName')}</span>
               <span className="brand-tagline">{t('brand.tagline')}</span>

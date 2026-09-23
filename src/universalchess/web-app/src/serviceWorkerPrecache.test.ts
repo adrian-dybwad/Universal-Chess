@@ -71,14 +71,18 @@ describe('service worker precache', () => {
 describe('service worker hashed assets', () => {
   const source = readFileSync(swPath, 'utf-8');
 
-  it('serves /assets/ from the cache before hitting the network', () => {
-    // Why: the Vite bundle is named for its contents. A network-first handler
-    // downloads it on every page load even when a copy is already stored.
-    // How a regression manifests: the /assets/ branch calls fetch before
-    // caches.match, or the branch is gone and those URLs fall through to the
-    // network-first handler.
-    const branch = source.split("pathname.startsWith('/assets/')")[1] ?? '';
-    expect(branch).toMatch(/event\.respondWith\(cacheFirstHashedAsset\(request\)\)/);
+  it('serves hashed files and packaged images from the cache before the network', () => {
+    // Why: the worker handles these requests. A network-first handler downloads
+    // the bundle and the logo on every page load even when a copy is stored
+    // and the HTTP cache says immutable. How a regression manifests: /assets/,
+    // /icons/, /images/, or /logo is missing from the cache-first condition,
+    // or that function calls fetch before caches.match.
+    const fetchHandler = source.split("addEventListener('fetch'")[1]?.split('function cacheFirstHashedAsset')[0] ?? '';
+    expect(fetchHandler).toContain("pathname.startsWith('/assets/')");
+    expect(fetchHandler).toContain("pathname.startsWith('/icons/')");
+    expect(fetchHandler).toContain("pathname.startsWith('/images/')");
+    expect(fetchHandler).toContain("pathname === '/logo'");
+    expect(fetchHandler).toMatch(/event\.respondWith\(cacheFirstHashedAsset\(request\)\)/);
     const fn = source.split('function cacheFirstHashedAsset')[1] ?? '';
     const matchAt = fn.indexOf('caches.match');
     const fetchAt = fn.indexOf('fetch(request)');

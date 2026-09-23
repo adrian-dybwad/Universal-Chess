@@ -57,8 +57,11 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch event. Hashed /assets/ files are cache-first. Everything else that this
-// worker handles is network-first, with the cache as the offline fallback.
+// Fetch event. Hashed /assets/ files, and packaged images whose URL carries a
+// content hash (?v=), are cache-first. Everything else that this worker handles
+// is network-first, with the cache as the offline fallback. The live board
+// snapshot (/screen.jpg) is not in the cache-first set: its name does not
+// change when the panel does.
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -78,11 +81,18 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Hashed build output. The URL changes when the file does, so a stored copy
-  // is the right bytes until the shell points at a new name. Network-first
-  // would re-download the bundle on every load even after the HTTP cache said
-  // it was immutable, because this worker handles the request.
-  if (url.pathname.startsWith('/assets/')) {
+  // Hashed build output, and packaged images addressed by a content hash.
+  // The URL changes when the file does, so a stored copy is the right bytes
+  // until the shell points at a new name. Network-first would re-download the
+  // file on every load even after the HTTP cache said it was immutable,
+  // because this worker handles the request. /logo is an exact path so a
+  // longer path is not pulled in with it.
+  if (
+    url.pathname.startsWith('/assets/') ||
+    url.pathname.startsWith('/icons/') ||
+    url.pathname.startsWith('/images/') ||
+    url.pathname === '/logo'
+  ) {
     event.respondWith(cacheFirstHashedAsset(request));
     return;
   }

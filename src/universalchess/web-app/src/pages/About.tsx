@@ -3,6 +3,8 @@ import { Link } from 'react-router';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import readme from 'virtual:readme';
+import { staticImageVersions } from 'virtual:static-image-versions';
+import { versionedStaticUrl } from '../staticImageUrl';
 import './About.css';
 
 // The README uses repo-relative image paths so it renders on GitHub, but those
@@ -11,14 +13,16 @@ import './About.css';
 //      Flask `/logo` route the rest of the UI already uses.
 //   2. Any asset under web-app/public/ -> its served path (everything after
 //      `/public`), since Vite serves the public dir at the site root.
-const README_LOGO_SRC = '/logo';
+const README_LOGO_SRC = versionedStaticUrl('/logo', staticImageVersions);
 const PUBLIC_DIR_MARKER = '/public/';
 
 function resolveReadmeImageSrc(src: string | undefined): string | undefined {
   if (!src) return src;
   if (src.endsWith('knight_logo.png')) return README_LOGO_SRC;
   const publicIndex = src.indexOf(PUBLIC_DIR_MARKER);
-  if (publicIndex !== -1) return src.slice(publicIndex + PUBLIC_DIR_MARKER.length - 1);
+  if (publicIndex !== -1) {
+    return versionedStaticUrl(src.slice(publicIndex + PUBLIC_DIR_MARKER.length - 1), staticImageVersions);
+  }
   return src;
 }
 
@@ -58,7 +62,7 @@ const resourceLinks: ResourceLink[] = [
   },
   {
     // Served by Flask (same route the navbar logo uses); proxied in dev.
-    image: '/logo',
+    image: versionedStaticUrl('/logo', staticImageVersions),
     key: 'github',
     url: 'https://github.com/adrian-dybwad/Universal-Chess',
   },
