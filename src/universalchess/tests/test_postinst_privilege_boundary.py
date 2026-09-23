@@ -66,6 +66,7 @@ RUNTIME_WRITABLE_DIRS = [
         paths.CONFIG_DIR,      # centaur.ini + atomic temp siblings, engine .uci profiles, JSON stores
         paths.DB_DIR,          # SQLite game database and its journal
         paths.ENGINES_DIR,     # engine binaries, weights, launcher shims, stockfish symlink
+        paths.SYZYGY_DIR,      # optional 3–5-piece tablebases the web process downloads
         paths.TMP_DIR,         # runtime scratch: state files, build trees, import staging
         paths.WEB_STATIC_DIR,  # epaper.jpg, rewritten on every panel refresh
         us.PENDING_DEB_DIR,    # staged OTA .deb downloads

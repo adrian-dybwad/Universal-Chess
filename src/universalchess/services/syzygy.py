@@ -50,6 +50,7 @@ __all__ = [
     "cancel_download",
     "delete_tables",
     "download_tables",
+    "WRITE_REFUSED",
 ]
 
 SETTING_SECTION = "engines"
@@ -70,6 +71,7 @@ DTZ_BASE_URL = "https://tablebase.lichess.ovh/tables/standard/3-4-5-dtz/"
 
 _USER_AGENT = "universalchess-syzygy"
 _FETCH_TIMEOUT_SECONDS = 60
+WRITE_REFUSED = "Cannot write tablebases to the shared folder."
 
 # In-process download status. The files on disk are the durable record; this
 # only describes a fetch that is running in this process.
@@ -254,6 +256,27 @@ def _mem_total_mb() -> Optional[int]:
     return None
 
 
+def _ensure_writable(directory: str) -> bool:
+    """True when this process can create files in ``directory``.
+
+    The install root is root-owned. A missing ``syzygy/`` then fails mkdir
+    with EACCES, which previously became a generic Download failed after the
+    UI had already accepted the job.
+    """
+    folder = Path(directory)
+    probe = folder / ".write-probe"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        probe.write_bytes(b"")
+    except OSError:
+        return False
+    try:
+        probe.unlink()
+    except OSError as exc:
+        log.debug("Could not remove tablebase write probe %s: %s", probe.name, exc)
+    return True
+
+
 def _free_bytes(directory: str) -> Optional[int]:
     """Free bytes on the filesystem that will hold ``directory``."""
     probe = directory
@@ -402,12 +425,15 @@ def start_download(directory: Optional[str] = None) -> Tuple[bool, str]:
     """Start a background download if one is not already running.
 
     Returns ``(accepted, message)``. Refusal is information the UI cannot work
-    out itself: another download is running, or there is not enough free disk.
+    out itself: another download is running, the folder is not writable, or
+    there is not enough free disk.
     """
     folder = directory if directory is not None else table_dir()
     with _download_lock:
         if _download_state["active"]:
             return False, "A tablebase download is already running."
+        if not _ensure_writable(folder):
+            return False, WRITE_REFUSED
         free = _free_bytes(folder)
         if free is not None and free < MIN_FREE_BYTES and not is_ready(folder):
             return False, "Not enough free disk for the 3–5-piece tablebases."
@@ -433,6 +459,9 @@ def start_download(directory: Optional[str] = None) -> Tuple[bool, str]:
                 _set_download_state(percent=100, message="Installed")
             else:
                 _set_download_state(error="Download did not finish.", message="Failed")
+        except PermissionError:
+            log.warning("Syzygy download cannot write to %s", folder)
+            _set_download_state(error=WRITE_REFUSED, message="Failed")
         except Exception as exc:
             log.warning("Syzygy download failed: %s", exc)
             _set_download_state(error="Download failed.", message="Failed")

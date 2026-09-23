@@ -126,10 +126,16 @@ RSYNC_ARCHIVE=(-rlptD)
 # runtime, far from the deploy that caused it.
 #
 # This is the subset of postinst's RUNTIME_WRITABLE_DIRS that exists in the
-# source tree (config, engines, tmp and pending-updates are runtime-only, so the
-# sync never touches them). postinst remains the source of truth; deliberately
-# NOT widened to the install root, which must stay root-owned.
+# source tree (config, engines, tmp, syzygy and pending-updates are runtime-only,
+# so the sync never touches them). postinst remains the source of truth;
+# deliberately NOT widened to the install root, which must stay root-owned.
 RUNTIME_WRITABLE_DIRS=(db web/static)
+
+# Runtime-only dirs postinst mkdir+chowns that are not in the source tree. A
+# board that received a new writable folder via deploy (not a .deb) never ran
+# that mkdir, and the service user cannot create it under the root-owned install
+# root. Download of optional tablebases failed with EACCES until syzygy/ existed.
+RUNTIME_CREATED_DIRS=(syzygy)
 
 # Source dir resolved relative to this script, so it works from any CWD.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -332,6 +338,9 @@ if [[ $ELEVATE_VIA_TTY -eq 1 ]]; then
 	for dir in "${RUNTIME_WRITABLE_DIRS[@]}"; do
 		apply+=" && sudo chown -R ${SERVICE_USER}:${SERVICE_USER} '${REMOTE_PATH%/}/${dir}'"
 	done
+	for dir in "${RUNTIME_CREATED_DIRS[@]}"; do
+		apply+=" && sudo mkdir -p '${REMOTE_PATH%/}/${dir}' && sudo chown -R ${SERVICE_USER}:${SERVICE_USER} '${REMOTE_PATH%/}/${dir}'"
+	done
 	echo "Installing staged tree into ${REMOTE_PATH} (sudo may ask for a password) ..."
 	ssh -t -o ConnectTimeout=10 "$HOST" "$apply"
 else
@@ -359,6 +368,9 @@ if [[ $ELEVATE -eq 1 && $ELEVATE_VIA_TTY -eq 0 ]]; then
 	regrant=""
 	for dir in "${RUNTIME_WRITABLE_DIRS[@]}"; do
 		regrant+="sudo chown -R ${SERVICE_USER}:${SERVICE_USER} '${REMOTE_PATH%/}/${dir}'; "
+	done
+	for dir in "${RUNTIME_CREATED_DIRS[@]}"; do
+		regrant+="sudo mkdir -p '${REMOTE_PATH%/}/${dir}'; sudo chown -R ${SERVICE_USER}:${SERVICE_USER} '${REMOTE_PATH%/}/${dir}'; "
 	done
 	$SSH_OPTS "$HOST" "$regrant true"
 fi

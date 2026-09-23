@@ -258,6 +258,25 @@ def test_start_download_refuses_when_disk_is_short(tmp_path, monkeypatch):
     assert syzygy.status(str(tmp_path))["downloading"] is False
 
 
+def test_start_download_refuses_when_folder_is_not_writable(tmp_path):
+    """The web process cannot mkdir under a root-owned install tree.
+
+    Why: postinst leaves ``/opt/universalchess`` root:root, and a deploy that
+    does not create ``syzygy/`` leaves Download as EACCES after the UI already
+    showed Starting. How a regression manifests: ``start_download`` returns
+    accepted True for a 0555 folder, or the refusal message is the generic
+    ``Download failed.`` that hid the permission error on dgt-32.
+    """
+    tmp_path.chmod(0o555)
+    try:
+        accepted, message = syzygy.start_download(str(tmp_path / "syzygy"))
+    finally:
+        tmp_path.chmod(0o755)
+    assert accepted is False
+    assert message == syzygy.WRITE_REFUSED
+    assert syzygy.status(str(tmp_path / "syzygy"))["downloading"] is False
+
+
 def test_delete_removes_only_expected_stems(tmp_path):
     """Delete must not sweep unrelated files in the shared folder.
 

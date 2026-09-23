@@ -1372,6 +1372,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Tablebase download failed with a generic error on a deployed board**:
+  the optional Syzygy folder is ``/opt/universalchess/syzygy``, but the
+  install root stays root-owned so the web process cannot create it.
+  postinst never listed that directory among the runtime-writable paths,
+  and a ``deploy-to-pi.sh`` board never ran that mkdir. Download then
+  died with EACCES on the first file and the UI said only "Download
+  failed." postinst and deploy now mkdir+chown ``syzygy/`` for the
+  service user, and a folder that is still unwritable is refused with
+  that reason instead of accepting the job.
+
 - **The coach remark stays on screen while analysing on a phone**: the
   web review and live-board layouts nested the coach inside the Analysis
   box in the right-hand column. On a narrow viewport that column stacks

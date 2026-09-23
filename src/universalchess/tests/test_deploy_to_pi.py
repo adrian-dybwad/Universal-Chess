@@ -345,6 +345,8 @@ class TestRuntimeOwnershipIsRestored:
     # The subset of postinst's RUNTIME_WRITABLE_DIRS that the sync can actually
     # create files in; the others do not exist in the source tree.
     _SHIPPED_WRITABLE_DIRS = ("db", "web/static")
+    # Runtime-only dirs postinst mkdir+chowns that the sync never ships.
+    _CREATED_WRITABLE_DIRS = ("syzygy",)
 
     def test_runtime_dirs_are_regranted_after_an_elevated_sync(self, deploy):
         # Regression: a newly shipped file under db/ or web/static/ stays
@@ -353,6 +355,21 @@ class TestRuntimeOwnershipIsRestored:
         remote = " ".join(a for c in ssh_calls for a in c)
         assert "chown" in remote, remote
         for directory in self._SHIPPED_WRITABLE_DIRS:
+            assert directory in remote, (directory, remote)
+
+    def test_syzygy_dir_is_created_for_the_service_user(self, deploy):
+        """Deploy must mkdir syzygy/, not only chown dirs the sync already shipped.
+
+        Why: the install root is root:root, so the web process cannot create
+        ``/opt/universalchess/syzygy``. A board that received the tablebase
+        feature via deploy (not a .deb postinst) then failed Download with
+        EACCES. How a regression manifests: the remote command never mkdir's
+        syzygy, or chown's it without creating it first.
+        """
+        _, _, ssh_calls = deploy()
+        remote = " ".join(a for c in ssh_calls for a in c)
+        assert "mkdir" in remote, remote
+        for directory in self._CREATED_WRITABLE_DIRS:
             assert directory in remote, (directory, remote)
 
     def test_regrant_targets_only_the_runtime_dirs(self, deploy):
@@ -376,6 +393,7 @@ class TestRuntimeOwnershipIsRestored:
         _, _, ssh_calls = deploy("--no-elevate", "--no-restart")
         remote = " ".join(a for c in ssh_calls for a in c)
         assert "chown" not in remote, remote
+        assert "mkdir" not in remote, remote
 
     def test_no_regrant_when_nothing_was_transferred(self, deploy):
         # A dry run changes no ownership, so it must not mutate the board.
