@@ -88,10 +88,10 @@ _download_state: Dict[str, Any] = {
 def table_names() -> Tuple[str, ...]:
     """Canonical 3–5-piece Syzygy table names (no extension).
 
-    Filenames put the side with more pieces first, and the lexicographically
-    smaller KQRBNP string first when the counts match, matching the files
-    Lichess hosts. The set is 145 names: 5 three-piece, 30 four-piece, 110
-    five-piece.
+    Filenames put the side with more pieces first, and the stronger extras
+    first when the counts match (Q>R>B>N>P), matching the files Lichess
+    hosts. ASCII order is not that order: KBvKQ 404s, KQvKB exists. The set
+    is 145 names: 5 three-piece, 30 four-piece, 110 five-piece.
     """
     extras = "QRBNP"
     names = set()
@@ -106,7 +106,8 @@ def table_names() -> Tuple[str, ...]:
                 if white_name == "K" and black_name == "K":
                     continue
                 if len(white_name) < len(black_name) or (
-                    len(white_name) == len(black_name) and white_name > black_name
+                    len(white_name) == len(black_name)
+                    and _material_key(white_name) > _material_key(black_name)
                 ):
                     white_name, black_name = black_name, white_name
                 names.add(f"{white_name}v{black_name}")
@@ -117,6 +118,12 @@ def _sorted_side(chars: Iterable[str]) -> str:
     extras = [piece for piece in chars if piece != "K"]
     extras.sort(key="QRBNP".find)
     return "K" + "".join(extras)
+
+
+def _material_key(name: str) -> Tuple[int, ...]:
+    """Piece-value order for an equal-count Syzygy side string (Q>R>B>N>P)."""
+    extras = name[1:] if name.startswith("K") else name
+    return tuple("QRBNP".find(piece) for piece in extras)
 
 
 def table_dir() -> str:

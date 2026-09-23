@@ -1372,6 +1372,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Tablebase download 404'd on KBvKQ**: the 3–5-piece filename generator
+  used ASCII order when both sides had the same number of pieces, so it
+  asked Lichess for ``KBvKQ.rtbw`` (and five similar stems). Those files
+  are named with the stronger extras first (Q>R>B>N>P): ``KQvKB``. The
+  other 139 names already matched. A retry after this skip continues from
+  the files already on disk.
+
 - **Tablebase download failed with a generic error on a deployed board**:
   the optional Syzygy folder is ``/opt/universalchess/syzygy``, but the
   install root stays root-owned so the web process cannot create it.

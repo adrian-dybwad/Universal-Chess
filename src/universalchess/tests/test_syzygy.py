@@ -38,7 +38,8 @@ def test_table_names_are_the_lichess_3_4_5_set():
     Why: the download URL is ``.../3-4-5-wdl/{name}.rtbw``. A renamed or extra
     stem 404s; a missing stem leaves ``is_ready`` false forever. How a
     regression manifests: the count leaves 145, or KQvK / KPvKP / KBBNvK (the
-    3-, 4-, and 5-piece shapes) drop out of the set.
+    3-, 4-, and 5-piece shapes) drop out of the set, or KBvKQ appears instead
+    of KQvKB and the download 404s.
     """
     names = syzygy.table_names()
     assert len(names) == syzygy.EXPECTED_TABLES
@@ -52,6 +53,16 @@ def test_table_names_are_the_lichess_3_4_5_set():
     assert "KPvKP" in names
     assert "KBBNvK" in names
     assert "KQPvKN" in names
+    # Equal-count endings put the stronger material first (Q>R>B>N>P), the
+    # Lichess filenames. ASCII order produced KBvKQ and 404'd the download.
+    assert "KQvKB" in names
+    assert "KQvKN" in names
+    assert "KQvKP" in names
+    assert "KRvKB" in names
+    assert "KRvKN" in names
+    assert "KRvKP" in names
+    assert "KBvKQ" not in names
+    assert "KQvKR" in names
 
 
 def test_file_jobs_are_https_wdl_and_dtz_pairs():
