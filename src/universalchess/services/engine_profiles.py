@@ -213,7 +213,15 @@ class ProfileGroup:
 
 
 def schema_to_json(groups: Tuple[ProfileGroup, ...]) -> List[dict]:
-    """Serialize a schema to JSON-friendly dicts for the frontend form."""
+    """Serialize a schema to JSON-friendly dicts for the frontend form.
+
+    Hash, Threads, and Move Overhead use the same device slider ceilings as
+    Shared engine defaults, not the engine's advertised spin max. A 512 MB
+    board would otherwise render Hash on a 2048 track next to a 16 MB shared
+    card.
+    """
+    from universalchess.services.engine_defaults import slider_cap
+
     out: List[dict] = []
     for group in groups:
         fields = []
@@ -227,7 +235,11 @@ def schema_to_json(groups: Tuple[ProfileGroup, ...]) -> List[dict]:
             }
             if f.minimum is not None:
                 entry["min"] = f.minimum
-            if f.maximum is not None:
+            cap = slider_cap(f.key) if f.type == "int" else None
+            if cap is not None:
+                advertised = f.maximum
+                entry["max"] = cap if advertised is None else min(int(advertised), cap)
+            elif f.maximum is not None:
                 entry["max"] = f.maximum
             if f.options is not None:
                 entry["options"] = [

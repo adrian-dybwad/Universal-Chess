@@ -241,4 +241,70 @@ def test_status_includes_hash_max_and_values(monkeypatch):
     assert snapshot["move_overhead"] == ed.DEFAULT_MOVE_OVERHEAD_MS
     assert snapshot["syzygy_probe_limit"] == ed.DEFAULT_SYZYGY_PROBE_LIMIT
     assert snapshot["hash_max_mb"] == 1024
+    assert snapshot["threads_max"] == ed.THREADS_SLIDER_MAX
+    assert snapshot["move_overhead_max"] == ed.MOVE_OVERHEAD_SLIDER_MAX_MS
     assert snapshot["constrained"] is False
+
+
+def test_schema_json_caps_resource_sliders_to_the_device(monkeypatch):
+    """Per-engine Hash/Threads tracks must match Shared engine defaults.
+
+    Why: Stockfish advertises Hash 2048 / Threads 1024, so the overlay
+    slider sat on a different range than the shared card. How a
+    regression manifests: schema JSON still reports Hash max 2048.
+    """
+    from universalchess.services.engine_profiles import ProfileField, ProfileGroup, schema_to_json
+
+    monkeypatch.setattr(ed, "hash_max_mb", lambda ram_mb=None: 16)
+    groups = (
+        ProfileGroup(
+            "resources",
+            "Resources",
+            (
+                ProfileField("Hash", "Hash", "int", 16, minimum=1, maximum=2048),
+                ProfileField("Threads", "Threads", "int", 1, minimum=1, maximum=1024),
+                ProfileField(
+                    "Move Overhead", "Move Overhead", "int", 100, minimum=0, maximum=5000
+                ),
+                ProfileField("UCI_Elo", "ELO", "int", 1500, minimum=800, maximum=2800),
+            ),
+        ),
+    )
+    by_key = {field["key"]: field for group in schema_to_json(groups) for field in group["fields"]}
+    assert by_key["Hash"]["max"] == 16
+    assert by_key["Threads"]["max"] == ed.THREADS_SLIDER_MAX
+    assert by_key["Move Overhead"]["max"] == ed.MOVE_OVERHEAD_SLIDER_MAX_MS
+    assert by_key["UCI_Elo"]["max"] == 2800
+
+
+def test_set_values_rejects_threads_above_the_slider_cap(monkeypatch):
+    """A crafted POST must not store more threads than the shared slider allows.
+
+    Why: set_values used to clamp Threads at 256 while the card tops out at 8.
+    How a regression manifests: threads 64 is stored as 64.
+    """
+    stored = {}
+
+    def fake_save(section, key, value, **kwargs):
+        if section == ed.SETTING_SECTION:
+            stored[key] = value
+        return True
+
+    monkeypatch.setattr(ed, "save_setting", fake_save)
+    assert ed.set_values({"threads": 64, "move_overhead": 5000}) is True
+    assert stored["threads"] == ed.THREADS_SLIDER_MAX
+    assert stored["move_overhead"] == ed.MOVE_OVERHEAD_SLIDER_MAX_MS
+
+
+def test_engine_overlay_hash_is_clamped_to_the_device(tmp_path, monkeypatch):
+    """Unchecking Use shared must not write Stockfish's advertised Hash max.
+
+    Why: the overlay POST used to store whatever the engine advertised.
+    How a regression manifests: [DEFAULT] Hash = 2048 on a 16 MB board.
+    """
+    monkeypatch.setattr(ed, "hash_max_mb", lambda ram_mb=None: 16)
+    uci = _write_uci(tmp_path / "eng.uci", "[DEFAULT]\nUseSharedResources = false\n")
+    ed.set_engine_group_values(uci, ed.GROUP_RESOURCES, {"Hash": 2048, "Threads": 64})
+    text = Path(uci).read_text(encoding="utf-8")
+    assert "Hash = 16" in text
+    assert "Threads = 8" in text

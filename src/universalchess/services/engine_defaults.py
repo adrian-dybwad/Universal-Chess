@@ -34,6 +34,11 @@ DEFAULT_SYZYGY_50_MOVE_RULE = True
 CONSTRAINED_HASH_MAX_MB = 16
 UNCONSTRAINED_HASH_CAP_MB = 1024
 LOW_RAM_MB = 2048
+# Shared and per-engine overlay sliders share these ceilings. Stockfish
+# advertises Threads 1024 and Move Overhead 5000; those tracks do not fit
+# a board and made the overlay look like a different setting.
+THREADS_SLIDER_MAX = 8
+MOVE_OVERHEAD_SLIDER_MAX_MS = 1000
 
 # Folded UCI names that belong to each shared group.
 RESOURCE_NAMES = frozenset({"hash", "threads", "move overhead"})
@@ -66,6 +71,9 @@ __all__ = [
     "values",
     "status",
     "hash_max_mb",
+    "slider_cap",
+    "THREADS_SLIDER_MAX",
+    "MOVE_OVERHEAD_SLIDER_MAX_MS",
     "merge_options",
     "set_use_shared",
     "set_values",
@@ -98,6 +106,39 @@ def hash_max_mb(ram_mb: Optional[int] = None) -> int:
     if ram < LOW_RAM_MB:
         return CONSTRAINED_HASH_MAX_MB
     return max(CONSTRAINED_HASH_MAX_MB, min(UNCONSTRAINED_HASH_CAP_MB, ram // 8))
+
+
+def slider_cap(name: str) -> Optional[int]:
+    """Device slider ceiling for Hash, Threads, or Move Overhead.
+
+    Other option names return None so their advertised UCI max is left alone.
+    Hash follows :func:`hash_max_mb`; Threads and Move Overhead are the same
+    caps the Shared engine defaults card uses.
+    """
+    folded = name.casefold()
+    if folded == "hash":
+        return hash_max_mb()
+    if folded == "threads":
+        return THREADS_SLIDER_MAX
+    if folded == "move overhead":
+        return MOVE_OVERHEAD_SLIDER_MAX_MS
+    return None
+
+
+def clamp_shared_int(name: str, value: int) -> int:
+    """Clamp a shared or overlay integer to the device slider range."""
+    folded = name.casefold()
+    if folded == "hash":
+        return max(1, min(hash_max_mb(), value))
+    if folded == "threads":
+        return max(1, min(THREADS_SLIDER_MAX, value))
+    if folded == "move overhead":
+        return max(0, min(MOVE_OVERHEAD_SLIDER_MAX_MS, value))
+    if folded == "syzygyprobelimit":
+        return max(0, min(7, value))
+    if folded == "syzygyprobedepth":
+        return max(1, min(100, value))
+    return value
 
 
 def values() -> Dict[str, str]:
@@ -133,9 +174,20 @@ def status() -> Dict[str, object]:
         "syzygy_probe_depth": int(current["SyzygyProbeDepth"]),
         "syzygy_50_move_rule": current["Syzygy50MoveRule"] == "true",
         "hash_max_mb": hash_max_mb(ram),
+        "threads_max": THREADS_SLIDER_MAX,
+        "move_overhead_max": MOVE_OVERHEAD_SLIDER_MAX_MS,
         "ram_mb": ram,
         "constrained": ram is not None and ram < LOW_RAM_MB,
     }
+
+
+_STORED_TO_UCI = {
+    "hash": "Hash",
+    "threads": "Threads",
+    "move_overhead": "Move Overhead",
+    "syzygy_probe_limit": "SyzygyProbeLimit",
+    "syzygy_probe_depth": "SyzygyProbeDepth",
+}
 
 
 def set_values(payload: Mapping[str, object]) -> bool:
@@ -161,16 +213,7 @@ def set_values(payload: Mapping[str, object]) -> bool:
             except (TypeError, ValueError):
                 ok = False
                 continue
-            if stored == "hash":
-                value = max(1, min(hash_max_mb(), value))
-            elif stored == "threads":
-                value = max(1, min(256, value))
-            elif stored == "move_overhead":
-                value = max(0, min(10000, value))
-            elif stored == "syzygy_probe_limit":
-                value = max(0, min(7, value))
-            elif stored == "syzygy_probe_depth":
-                value = max(1, min(100, value))
+            value = clamp_shared_int(_STORED_TO_UCI[stored], value)
         if not save_setting(SETTING_SECTION, stored, value):
             ok = False
     return ok
@@ -330,8 +373,13 @@ def set_engine_group_values(
             continue
         if isinstance(value, bool):
             section[str(key)] = "true" if value else "false"
-        else:
+            continue
+        try:
+            number = int(value)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
             section[str(key)] = str(value)
+        else:
+            section[str(key)] = str(clamp_shared_int(str(key), number))
     parser["DEFAULT"] = section
     ep.atomic_write_config(parser, uci_path)
 

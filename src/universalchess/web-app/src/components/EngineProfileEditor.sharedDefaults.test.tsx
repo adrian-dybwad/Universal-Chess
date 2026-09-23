@@ -9,12 +9,14 @@ import { AUTO_SAVE_DEBOUNCE_MS, DEFAULT_PROFILE_ID } from './engineOptions';
  * Guards Use shared defaults on the per-engine profile editor.
  *
  * Why these tests exist: Hash used to save into a strength profile, so
- * changing RAM on one rung overwrote another. Use shared on must disable the
+ * changing RAM on one rung overwrote another. Use shared on must hide the
  * resource fields and keep Hash out of the profile POST. Unchecking must POST
- * the engine defaults endpoint, not a profile section.
+ * the engine defaults endpoint, not a profile section. Overlay Hash max is
+ * the device cap from the schema, not Stockfish's advertised 2048.
  *
- * How a regression manifests: Hash is an enabled profile field, the profile
- * POST contains Hash, or unchecking Use shared never hits /defaults.
+ * How a regression manifests: Hash is still on screen while Use shared is
+ * on, the profile POST contains Hash, unchecking Use shared never hits
+ * /defaults, or the Hash slider max is 1024.
  */
 
 vi.mock('./LoginDialog', () => ({
@@ -40,7 +42,7 @@ const SCHEMA_RESPONSE = {
       id: 'resources',
       label: 'Resources',
       fields: [
-        { key: 'Hash', label: 'Hash', type: 'int', default: 16, min: 1, max: 1024 },
+        { key: 'Hash', label: 'Hash', type: 'int', default: 16, min: 1, max: 16 },
       ],
     },
   ],
@@ -110,15 +112,35 @@ afterEach(() => {
 });
 
 describe('EngineProfileEditor Use shared defaults', () => {
-  it('disables Hash while Use shared defaults is on', async () => {
+  it('hides Hash while Use shared defaults is on', async () => {
+    // Why: a disabled Hash slider on Stockfish's 2048 track looked like a
+    // different setting than Shared engine defaults. How a regression
+    // manifests: a Hash slider is still in the document while the toggle is on.
     mockFetch();
     render(<EngineProfileEditor engineName={ENGINE} displayName="Stockfish" onBack={() => {}} />);
     expect(await screen.findByRole('heading', { name: 'Resources' })).toBeInTheDocument();
     const toggle = screen.getByRole('switch', { name: 'Use shared defaults' });
     expect(toggle).toHaveAttribute('aria-checked', 'true');
-    const hashSlider = screen.getAllByRole('slider').find((el) => (el as HTMLInputElement).max === '1024');
-    expect(hashSlider).toBeDefined();
-    expect(hashSlider).toBeDisabled();
+    expect(screen.queryByText('Hash')).not.toBeInTheDocument();
+    const hashSlider = screen.queryAllByRole('slider').find((el) => (el as HTMLInputElement).max === '16');
+    expect(hashSlider).toBeUndefined();
+  });
+
+  it('shows a device-capped Hash slider after Use shared is unchecked', async () => {
+    // Why: the overlay must use the same Hash ceiling as Shared engine
+    // defaults (16 MB on a constrained board). How a regression manifests:
+    // unchecking never reveals Hash, or the slider max is still 1024.
+    mockFetch();
+    render(<EngineProfileEditor engineName={ENGINE} displayName="Stockfish" onBack={() => {}} />);
+    const toggle = await screen.findByRole('switch', { name: 'Use shared defaults' });
+    fireEvent.click(toggle);
+    const hashSlider = await waitFor(() => {
+      const slider = screen.getAllByRole('slider').find((el) => (el as HTMLInputElement).max === '16');
+      expect(slider).toBeDefined();
+      return slider as HTMLElement;
+    });
+    expect(hashSlider).not.toBeDisabled();
+    expect(screen.getByText('Hash')).toBeInTheDocument();
   });
 
   it('POSTs the engine defaults endpoint when Use shared is unchecked', async () => {

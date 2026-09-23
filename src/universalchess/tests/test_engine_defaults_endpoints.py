@@ -46,6 +46,8 @@ def test_get_engine_defaults_is_unauthenticated(monkeypatch):
     assert body["hash"] == 16
     assert body["threads"] == 1
     assert "hash_max_mb" in body
+    assert body["threads_max"] == 8
+    assert body["move_overhead_max"] == 1000
 
 
 def test_post_engine_defaults_requires_auth(monkeypatch):

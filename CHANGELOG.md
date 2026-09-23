@@ -1321,6 +1321,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Changed
 
+- **Per-engine Hash / Threads stay hidden while Use shared defaults is
+  on, and share the device slider caps**: the overlay used Stockfish's
+  advertised range (Hash 2048, Threads 1024) next to Shared engine
+  defaults on a 16 MB / 8-thread track, and showed those controls
+  disabled when the engine was inheriting the shared set. The overlay
+  sliders now use the same Hash / Threads / Move Overhead ceilings as
+  the shared card, and they are shown only after Use shared defaults is
+  turned off.
+
 - **Player engine choice is Profile, not ELO / Style**: The Players
   picker (and Original Centaur's matching control) listed engine
   profiles as "ELO / Style" or "Strength", so a Rodent personality and
@@ -1371,6 +1380,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   was also a stray way to power the board off.
 
 ### Fixed
+
+- **Shared Hash / Threads sliders only moved one step**: each drag
+  fired a save that disabled the control, so the pointer stopped after
+  one megabyte (or one thread) and the number box lagged behind. The
+  thumb now follows the drag, the compact number next to it is the live
+  value (still typed for an exact figure), and the POST runs only when
+  the pointer is released.
 
 - **Tablebase download 404'd on KBvKQ**: the 3–5-piece filename generator
   used ASCII order when both sides had the same number of pieces, so it

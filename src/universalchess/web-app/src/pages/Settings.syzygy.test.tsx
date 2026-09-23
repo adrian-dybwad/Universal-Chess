@@ -177,6 +177,9 @@ describe('Syzygy tablebase card', () => {
   });
 
   it('POSTs probe limit from the Syzygy card', async () => {
+    // Why: probe knobs share the Hash slider control. Saving on every input
+    // event posted mid-drag. How a regression manifests: change to 4 POSTs
+    // before release, or release never POSTs.
     mockFetch();
     renderEnginesTab();
     await screen.findByRole('heading', { name: 'Endgame tablebases' });
@@ -185,6 +188,8 @@ describe('Syzygy tablebase card', () => {
     );
     expect(probeSlider).toBeDefined();
     fireEvent.change(probeSlider as HTMLElement, { target: { value: '4' } });
+    expect(lastSyzygyPost).toBeNull();
+    fireEvent.pointerUp(probeSlider as HTMLElement);
     await waitFor(() => {
       expect(lastSyzygyPost).toEqual({ syzygy_probe_limit: 4 });
     });

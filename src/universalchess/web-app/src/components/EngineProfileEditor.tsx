@@ -54,8 +54,10 @@ const SHARED_HELP = {
  * editable with no shipped configuration.
  *
  * Hash, Threads, Move Overhead, and Syzygy probe knobs are not profile fields.
- * Each shared group is its own card with Use shared defaults (on by default);
- * unchecking writes that group onto the engine's ``[DEFAULT]`` instead of a
+ * Each shared group is its own card with Use shared defaults (on by default).
+ * Overlay Hash / Threads / probe sliders stay hidden until that toggle is
+ * off; their ranges are the device caps, not the engine's advertised max.
+ * Unchecking writes that group onto the engine's ``[DEFAULT]`` instead of a
  * strength section.
  *
  * Profiles are kept sparse on save: only fields whose value differs from the
@@ -728,12 +730,12 @@ export function EngineProfileEditor({
                     void postSharedGroup(group.id, checked);
                   }}
                 />
-                {overlayFields.map((field) => (
+                {!useDefaults && overlayFields.map((field) => (
                   <SchemaFieldRow
                     key={field.key}
                     field={field}
                     value={overlayValues[field.key] ?? defaultString(field)}
-                    disabled={saving || useDefaults}
+                    disabled={saving}
                     onChange={(value) => {
                       const next = { ...overlayValues, [field.key]: value };
                       setShared((prev) => ({

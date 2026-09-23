@@ -170,6 +170,9 @@ export function SyzygyCard() {
           max={7}
           disabled={busy}
           onChange={(value) => {
+            setDefaults((current) => ({ ...current, syzygy_probe_limit: value }));
+          }}
+          onCommit={(value) => {
             void postEngineDefaults({ syzygy_probe_limit: value }).then(setDefaults).catch(() => {
               setError(t('settingsPage.engineDefaults.failAction'));
             });
@@ -183,6 +186,9 @@ export function SyzygyCard() {
           max={20}
           disabled={busy}
           onChange={(value) => {
+            setDefaults((current) => ({ ...current, syzygy_probe_depth: value }));
+          }}
+          onCommit={(value) => {
             void postEngineDefaults({ syzygy_probe_depth: value }).then(setDefaults).catch(() => {
               setError(t('settingsPage.engineDefaults.failAction'));
             });

@@ -4,6 +4,7 @@ import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/re
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
+import { AUTO_SAVE_DEBOUNCE_MS } from '../components/engineOptions';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
 import { makeEngine } from '../test/fixtures/engine';
 
@@ -132,14 +133,50 @@ describe('Shared engine defaults card', () => {
     expect(screen.getByText('Move overhead (ms)')).toBeInTheDocument();
   });
 
-  it('POSTs hash when the Hash slider is moved', async () => {
+  it('does not POST Hash until the slider is released', async () => {
+    // Why: posting on every input event saved mid-drag and, when the save
+    // disabled the control, aborted the pointer after one megabyte. How a
+    // regression manifests: moving 16 → 8 POSTs before pointerup, or pointerup
+    // never POSTs.
     mockFetch();
     renderEnginesTab();
     await screen.findByRole('heading', { name: 'Shared engine defaults' });
     const hashSlider = screen.getAllByRole('slider')[0];
+    const hashNumber = screen.getAllByRole('spinbutton')[0];
     fireEvent.change(hashSlider, { target: { value: '8' } });
+    expect(hashSlider).not.toBeDisabled();
+    expect(hashNumber).toHaveValue(8);
+    expect(lastDefaultsPost).toBeNull();
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, AUTO_SAVE_DEBOUNCE_MS + 50);
+    });
+    expect(lastDefaultsPost).toBeNull();
+    fireEvent.pointerUp(hashSlider);
     await waitFor(() => {
       expect(lastDefaultsPost).toEqual({ hash: 8 });
+    });
+  });
+
+  it('lets a Hash drag move more than one megabyte without disabling the control', async () => {
+    // Why: save() used to set busy and disable the slider on the first
+    // onChange, so a drag aborted after one step and the thumb snapped back.
+    // How a regression manifests: after changing 16 → 8 the slider is
+    // disabled, the number box still shows 16, or release POSTs 8 instead of 3.
+    mockFetch();
+    renderEnginesTab();
+    await screen.findByRole('heading', { name: 'Shared engine defaults' });
+    const hashSlider = screen.getAllByRole('slider')[0];
+    const hashNumber = screen.getAllByRole('spinbutton')[0];
+    fireEvent.change(hashSlider, { target: { value: '8' } });
+    expect(hashSlider).not.toBeDisabled();
+    expect(hashNumber).toHaveValue(8);
+    fireEvent.change(hashSlider, { target: { value: '3' } });
+    expect(hashNumber).toHaveValue(3);
+    expect(hashSlider).not.toBeDisabled();
+    expect(lastDefaultsPost).toBeNull();
+    fireEvent.pointerUp(hashSlider);
+    await waitFor(() => {
+      expect(lastDefaultsPost).toEqual({ hash: 3 });
     });
   });
 });

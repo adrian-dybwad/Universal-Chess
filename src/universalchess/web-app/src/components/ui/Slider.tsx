@@ -7,11 +7,15 @@ interface SliderProps {
   step?: number;
   disabled?: boolean;
   onChange: (value: number) => void;
+  /** Fired when the thumb is released, a key commits, or the number box blurs. */
+  onCommit?: (value: number) => void;
 }
 
 /**
  * Range slider paired with a numeric input for precise entry. The track gives
  * quick, tactile adjustment while the number box allows typing an exact value.
+ * ``onChange`` follows the thumb; ``onCommit`` (when passed) fires on pointer
+ * up, arrow-key release, or number-box blur so a parent can persist once.
  *
  * The number box uses a nullable draft: while the user is editing (draft !==
  * null) it shows their raw text -- so partial input like "-" or an empty box
@@ -21,15 +25,29 @@ interface SliderProps {
  * effect. Used by the engine profile editor for the many bounded integer
  * parameters (e.g. Rodent IV evaluation weights), replacing bare number inputs.
  */
-export function Slider({ value, min, max, step = 1, disabled = false, onChange }: SliderProps) {
+export function Slider({
+  value,
+  min,
+  max,
+  step = 1,
+  disabled = false,
+  onChange,
+  onCommit,
+}: SliderProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const display = draft ?? String(value);
   const trackValue = Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : min;
 
-  const commit = (raw: string) => {
-    if (raw.trim() === '') return; // hold off until there is a real number
+  const live = (raw: string) => {
+    if (raw.trim() === '') return;
     const next = Number(raw);
     if (Number.isFinite(next)) onChange(next);
+  };
+
+  const finish = (raw: string) => {
+    if (raw.trim() === '') return;
+    const next = Number(raw);
+    if (Number.isFinite(next)) onCommit?.(next);
   };
 
   return (
@@ -46,6 +64,21 @@ export function Slider({ value, min, max, step = 1, disabled = false, onChange }
           setDraft(null);
           onChange(Number(e.target.value));
         }}
+        onPointerUp={(e) => finish((e.target as HTMLInputElement).value)}
+        onKeyUp={(e) => {
+          if (
+            e.key === 'ArrowLeft'
+            || e.key === 'ArrowRight'
+            || e.key === 'ArrowUp'
+            || e.key === 'ArrowDown'
+            || e.key === 'Home'
+            || e.key === 'End'
+            || e.key === 'PageUp'
+            || e.key === 'PageDown'
+          ) {
+            finish((e.target as HTMLInputElement).value);
+          }
+        }}
       />
       <input
         type="number"
@@ -54,12 +87,16 @@ export function Slider({ value, min, max, step = 1, disabled = false, onChange }
         max={max}
         step={step}
         value={display}
+        inputMode="numeric"
         disabled={disabled}
         onChange={(e) => {
           setDraft(e.target.value);
-          commit(e.target.value);
+          live(e.target.value);
         }}
-        onBlur={() => setDraft(null)}
+        onBlur={() => {
+          finish(draft ?? String(value));
+          setDraft(null);
+        }}
       />
     </div>
   );
