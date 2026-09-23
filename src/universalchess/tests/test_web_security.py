@@ -285,12 +285,13 @@ def test_live_screen_snapshot_is_not_cached():
     assert "immutable" not in cc
 
 
-def test_sprite_preview_is_not_cached_as_a_packaged_image():
-    """A sprite-sheet preview is generated, so it must not be immutable.
+def test_sprite_preview_without_a_hash_is_not_cached():
+    """A sprite preview with no ?v= must not be stored immutable.
 
-    Why this test exists: the sheet name does not change when the user
-    replaces the file, and there is no content hash on that URL. How a
-    regression manifests: /api/sprites/default/image is cached for a year.
+    Why this test exists: the sheet id does not change when the file does.
+    Caching the bare URL for a year would keep a replaced sheet on screen.
+    How a regression manifests: /api/sprites/default/image with no query is
+    `immutable`.
     """
     cc = _cache_control_for(
         "/api/sprites/default/image",
@@ -298,6 +299,54 @@ def test_sprite_preview_is_not_cached_as_a_packaged_image():
         preset="no-cache",
     )
     assert cc == "no-cache"
+    assert "immutable" not in cc
+
+
+def test_versioned_sprite_preview_is_cached_until_its_url_changes():
+    """A sprite preview addressed by its content hash is cached for a year.
+
+    Why this test exists: the display page requests each sheet as
+    /api/sprites/<id>/image?v=<hash>, and send_file marks that PNG no-cache.
+    How a regression manifests: the header stays no-cache and every visit
+    downloads the six previews again.
+    """
+    cc = _cache_control_for(
+        "/api/sprites/default/image?v=abc123",
+        mimetype="image/png",
+        preset="no-cache",
+    )
+    assert cc == webapp.IMMUTABLE_CACHE_CONTROL
+
+
+def test_sprite_catalog_version_changes_when_the_sheet_bytes_change(tmp_path):
+    """The preview hash follows the file the loader would actually open.
+
+    Why this test exists: the display page caches each preview for a year
+    under that hash. A user override, or a replaced file, has to produce a
+    different hash or the browser keeps the old picture. How a regression
+    manifests: the two catalogs share a version, or the user file is ignored
+    in favour of the system file.
+    """
+    from universalchess.resources import ResourceLoader
+
+    system = tmp_path / "system"
+    user = tmp_path / "user"
+    system.mkdir()
+    user.mkdir()
+    system_sheet = system / "chesssprites_default.png"
+    system_sheet.write_bytes(b"system-art")
+    user_sheet = user / "chesssprites_default.png"
+    user_sheet.write_bytes(b"user-art")
+
+    shipped = webapp.sprite_catalog(ResourceLoader(str(system)))
+    system_sheet.write_bytes(b"system-art-replaced")
+    replaced = webapp.sprite_catalog(ResourceLoader(str(system)))
+    overridden = webapp.sprite_catalog(ResourceLoader(str(system), str(user)))
+
+    assert shipped == [{"id": "default", "version": shipped[0]["version"]}]
+    assert shipped[0]["version"]
+    assert replaced[0]["version"] != shipped[0]["version"]
+    assert overridden[0]["version"] != replaced[0]["version"]
 
 
 def test_an_explicit_no_cache_outside_the_hashed_assets_is_left_alone():

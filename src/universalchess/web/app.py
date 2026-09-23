@@ -44,6 +44,7 @@ from sqlalchemy.sql import func
 from sqlalchemy import select
 from sqlalchemy import delete
 from typing import Callable, Optional
+import hashlib
 import os
 import re
 import time
@@ -323,6 +324,22 @@ def _is_versioned_packaged_image(path, response):
     return content_type.startswith('image/')
 
 
+# Sprite previews are generated, and the sheet id in the path does not change
+# when the file does. The list endpoint puts a hash of that file in ``?v=``.
+# Only a request that carries it is immutable. ``/screen.jpg`` is unrelated.
+_SPRITE_PREVIEW_PATH = re.compile(r'^/api/sprites/[^/]+/image$')
+
+
+def _is_versioned_sprite_preview(path, response):
+    """True when this response is a sprite preview addressed by its content hash."""
+    if not request.args.get('v'):
+        return False
+    if _SPRITE_PREVIEW_PATH.match(path) is None:
+        return False
+    content_type = response.content_type or ''
+    return content_type.startswith('image/')
+
+
 @app.after_request
 def add_cache_headers(response):
     """Add security headers (always) and cache headers (by content/path)."""
@@ -340,7 +357,9 @@ def add_cache_headers(response):
     # until the next build points the shell at a new name.
     # A non-200 is not cached: a transient 404 must not stick for a year.
     if response.status_code == 200 and (
-        path.startswith(STATIC_ASSET_PREFIXES) or _is_versioned_packaged_image(path, response)
+        path.startswith(STATIC_ASSET_PREFIXES)
+        or _is_versioned_packaged_image(path, response)
+        or _is_versioned_sprite_preview(path, response)
     ):
         response.headers['Cache-Control'] = IMMUTABLE_CACHE_CONTROL
         return response
@@ -3334,27 +3353,66 @@ def api_coach_statement(gameid, ply):
     return jsonify({"statement": None, "cached": False, "error": "not_generated"})
 
 
+# Upscale factor for the sprite-sheet preview. The native sheet is 16px-per-cell
+# pixel art; nearest-neighbour scaling keeps it crisp at a web-visible size.
+SPRITE_PREVIEW_SCALE = 5
+# Bump when the preview compositor changes without the sheet file changing.
+# The preview URL includes this, so a stale year-long copy is not served.
+SPRITE_PREVIEW_REVISION = 1
+
+
+def sprite_preview_version(loader, sheet: str) -> str:
+    """Content hash for the preview URL of ``sheet``, or '' when it has no file.
+
+    The hash covers the sheet bytes, the preview scale, and
+    ``SPRITE_PREVIEW_REVISION``. A replaced file or a compositor change is a
+    new query string, which is the cache key for the immutable response.
+    """
+    path = loader.chess_sprite_sheet_path(sheet)
+    if not path:
+        return ''
+    digest = hashlib.sha256()
+    digest.update(f'{SPRITE_PREVIEW_SCALE}:{SPRITE_PREVIEW_REVISION}:'.encode())
+    with open(path, 'rb') as handle:
+        digest.update(handle.read())
+    return digest.hexdigest()[:12]
+
+
+def sprite_catalog(loader) -> list[dict[str, str]]:
+    """Sheet ids with the preview hash the display page puts on each image URL.
+
+    An empty discovery falls back to the default id with an empty version, so
+    the selector still renders and that one image revalidates.
+    """
+    from universalchess.resources import ResourceLoader
+
+    sheets = loader.list_chess_sprite_sheets()
+    if not sheets:
+        sheets = [ResourceLoader.DEFAULT_SPRITE_SHEET]
+    return [{'id': sheet, 'version': sprite_preview_version(loader, sheet)} for sheet in sheets]
+
+
 @app.route("/api/sprites", methods=["GET"])
 def api_get_sprites():
-    """List available chess sprite-sheet identifiers for the Sprites selector.
+    """List chess sprite sheets and the preview hash for each.
 
     The board's ResourceLoader singleton is owned by the main process, not this
     web process, so a fresh loader is constructed over the same resource
     directories to reuse its discovery logic (scans for chesssprites_<id>.bmp,
-    user overrides merged over system sheets, 'default' first).
+    user overrides merged over system sheets, 'default' first). Each entry is
+    ``{"id", "version"}``. ``version`` is a hash of the sheet file; the display
+    page appends it to the preview URL so the browser can keep that picture
+    until the file changes.
     """
     try:
         from universalchess.resources import ResourceLoader
         from universalchess.paths import RESOURCES_DIR, USER_RESOURCES_DIR
 
         loader = ResourceLoader(RESOURCES_DIR, USER_RESOURCES_DIR)
-        sheets = loader.list_chess_sprite_sheets()
-        if not sheets:
-            sheets = [ResourceLoader.DEFAULT_SPRITE_SHEET]
-        return jsonify(sheets)
+        return jsonify(sprite_catalog(loader))
     except Exception as e:
         app.logger.warning(f"Failed to list sprite sheets: {e}")
-        return jsonify(["default"])
+        return jsonify([{"id": "default", "version": ""}])
 
 
 @app.route("/api/menu-schema", methods=["GET"])
@@ -5079,11 +5137,6 @@ def api_cast_status():
         return jsonify({"success": bool(sent)})
     except Exception as e:
         return _internal_error(e)
-
-
-# Upscale factor for the sprite-sheet preview. The native sheet is 16px-per-cell
-# pixel art; nearest-neighbour scaling keeps it crisp at a web-visible size.
-SPRITE_PREVIEW_SCALE = 5
 
 
 @app.route("/api/sprites/<sheet>/image", methods=["GET"])

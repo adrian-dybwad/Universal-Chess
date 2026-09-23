@@ -26,6 +26,7 @@ import { apiFetch, buildApiUrl, getStoredCredentials, encodeBasicAuth, storeCred
 import { formatDateTime } from '../utils/datetime';
 import { externalLinkHref } from '../utils/externalLink';
 import { parseConfigBool } from '../utils/configBool';
+import { parseSpriteSheets, spritePreviewPath, type SpriteSheetRef } from '../sprites';
 import type { AccountRecord } from '../types/accounts';
 import { useSettingsStore } from '../stores/settingsStore';
 import { useGameStore } from '../stores/gameStore';
@@ -650,7 +651,7 @@ export function Settings() {
   // "Default (Unlimited)"). The id is opaque, so the label is the only thing
   // here fit to show a user.
   const [engineLevels, setEngineLevels] = useState<{ [key: string]: MenuOption[] }>({});
-  const [spriteSheets, setSpriteSheets] = useState<string[]>(['default']);
+  const [spriteSheets, setSpriteSheets] = useState<SpriteSheetRef[]>([{ id: 'default', version: '' }]);
   // Every registered AI agent (built-in + user modules) from GET /api/agents,
   // with its non-secret config (model/base URL) and whether a key is stored. Backs
   // the Agents tab list and the Game tab's agent selector.
@@ -791,7 +792,7 @@ export function Settings() {
     // engine missing its required files (a Maia awaiting repair) is excluded so
     // it is not selectable until repaired.
     setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed && !e.needs_repair));
-    setSpriteSheets(Array.isArray(spritesData) && spritesData.length > 0 ? spritesData : ['default']);
+    setSpriteSheets(parseSpriteSheets(spritesData));
     await fetchAccounts();
 
     const parsed = parseRawSettings(settingsData);
@@ -1967,13 +1968,13 @@ export function Settings() {
   // catalog (CatalogField picks the image presentation from option.image). The
   // label is the humanized id; the image is the served sheet preview.
   gameMenuCtx.registerProvider('sprite_sheets', () =>
-    spriteSheets.map((id) => ({
-      value: id,
-      label: id
+    spriteSheets.map((sheet) => ({
+      value: sheet.id,
+      label: sheet.id
         .split('_')
         .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
         .join(' '),
-      image: buildApiUrl(`/api/sprites/${id}/image`),
+      image: buildApiUrl(spritePreviewPath(sheet)),
     })),
   );
 

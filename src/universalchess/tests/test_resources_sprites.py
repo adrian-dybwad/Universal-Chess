@@ -98,6 +98,29 @@ def test_list_sheets_discovers_ids_default_first_and_dedupes(tmp_path):
     assert sheets == ["default", "custom", "fen", "retro"]
 
 
+def test_sprite_sheet_path_prefers_bmp_then_the_user_file(tmp_path):
+    """The preview hash must name the same file the board draws.
+
+    Why: get_chess_sprites prefers .bmp over .png and the user directory over
+    the system one. Hashing a different file would cache a preview that is
+    not the sheet on the board.
+    How a regression manifests: the path ends in .png while a .bmp exists,
+    or it stays in the system directory after a user override.
+    """
+    system_dir = tmp_path / "system"
+    user_dir = tmp_path / "user"
+    system_dir.mkdir()
+    user_dir.mkdir()
+    (system_dir / "chesssprites_default.png").write_bytes(b"png")
+    (system_dir / "chesssprites_default.bmp").write_bytes(b"bmp")
+    loader = ResourceLoader(str(system_dir), str(user_dir))
+    assert loader.chess_sprite_sheet_path("default").endswith("chesssprites_default.bmp")
+
+    (user_dir / "chesssprites_default.bmp").write_bytes(b"user-bmp")
+    assert loader.chess_sprite_sheet_path("default").startswith(str(user_dir))
+    assert loader.chess_sprite_sheet_path("missing") is None
+
+
 def test_list_sheets_empty_when_none_present(tmp_path):
     """No chesssprites_ files -> empty list (selector has nothing to cycle).
 

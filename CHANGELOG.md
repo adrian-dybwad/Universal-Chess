@@ -1396,6 +1396,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   rewrites it in place. The service worker serves a stored copy of a hashed
   file or a packaged image without asking the network again.
 
+- **The display page downloaded every piece-sprite preview on each visit**:
+  the six sheet pictures are generated from files whose names do not
+  change, so they were left revalidating. The sprite list now carries a
+  hash of each file, and the preview at that address is cached for a
+  year. Replacing a sheet, including a user override, changes the hash.
+  A preview requested without the hash still revalidates.
+
 - **A move on the web board took a few seconds to appear on the e-paper**:
   the web request itself returns as soon as the command is sent. The board
   then waited out a half-second idle poll, and while a clock was running

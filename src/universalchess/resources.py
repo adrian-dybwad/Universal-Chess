@@ -224,6 +224,22 @@ class ResourceLoader:
             ordered.insert(0, self.DEFAULT_SPRITE_SHEET)
         return ordered
 
+    def chess_sprite_sheet_path(self, name: str) -> Optional[str]:
+        """Path of the file ``get_chess_sprites(name)`` loads, or None.
+
+        ``.bmp`` wins over ``.png``, and the user directory wins over the
+        system directory, the same order ``get_chess_sprites`` uses. The web
+        preview URL is hashed from this path, so a replaced sheet is a new
+        address instead of a year-long copy of the previous picture.
+        """
+        if not name:
+            return None
+        for suffix in self._SPRITE_SHEET_SUFFIXES:
+            path = self.get_resource_path(f"{self._SPRITE_SHEET_PREFIX}{name}{suffix}")
+            if path:
+                return path
+        return None
+
     def get_chess_sprites(self, name: str = DEFAULT_SPRITE_SHEET) -> Optional[Image.Image]:
         """Get a chess piece sprite sheet by identifier.
 
