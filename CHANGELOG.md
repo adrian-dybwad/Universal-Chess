@@ -1381,6 +1381,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **The web app downloaded its script again on every page load**: the Vite
+  bundle's filename changes when its contents change, and the server meant
+  to let the browser keep those files. Flask's file sender marks every file
+  ``no-cache`` first, and the cache policy left any existing Cache-Control
+  header alone, so that rule never applied. A file under ``/assets/`` is now
+  cached for a year and marked immutable. The page shell, the service
+  worker, and the icons keep stable names, so those still revalidate. The
+  service worker serves a hashed file it has already stored without asking
+  the network again.
+
 - **A move on the web board took a few seconds to appear on the e-paper**:
   the web request itself returns as soon as the command is sent. The board
   then waited out a half-second idle poll, and while a clock was running

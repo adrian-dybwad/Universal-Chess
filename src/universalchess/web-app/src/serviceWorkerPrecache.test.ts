@@ -68,6 +68,25 @@ describe('service worker precache', () => {
   });
 });
 
+describe('service worker hashed assets', () => {
+  const source = readFileSync(swPath, 'utf-8');
+
+  it('serves /assets/ from the cache before hitting the network', () => {
+    // Why: the Vite bundle is named for its contents. A network-first handler
+    // downloads it on every page load even when a copy is already stored.
+    // How a regression manifests: the /assets/ branch calls fetch before
+    // caches.match, or the branch is gone and those URLs fall through to the
+    // network-first handler.
+    const branch = source.split("pathname.startsWith('/assets/')")[1] ?? '';
+    expect(branch).toMatch(/event\.respondWith\(cacheFirstHashedAsset\(request\)\)/);
+    const fn = source.split('function cacheFirstHashedAsset')[1] ?? '';
+    const matchAt = fn.indexOf('caches.match');
+    const fetchAt = fn.indexOf('fetch(request)');
+    expect(matchAt).toBeGreaterThanOrEqual(0);
+    expect(fetchAt).toBeGreaterThan(matchAt);
+  });
+});
+
 describe('service worker skipWaiting', () => {
   const source = readFileSync(swPath, 'utf-8');
 

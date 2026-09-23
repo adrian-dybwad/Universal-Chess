@@ -168,10 +168,12 @@ def get_react_app_dir():
         return REACT_DEV_DIR
     return None
 
-# Cache control settings
-CACHE_LONG = 86400 * 7  # 7 days for static assets that rarely change
-CACHE_SHORT = 3600      # 1 hour for assets that may change
-CACHE_NONE = 0          # No caching for dynamic content
+# A year, which is as long as browsers treat a freshness lifetime as meaningful.
+# Paired with ``immutable``: while the entry is fresh the browser does not
+# revalidate, including on reload. Safe only for a URL whose name changes when
+# the bytes change. The Vite build writes every such file under ``/assets/``.
+CACHE_IMMUTABLE_SECONDS = 31536000
+IMMUTABLE_CACHE_CONTROL = f"public, max-age={CACHE_IMMUTABLE_SECONDS}, immutable"
 
 # Origin the opt-in deep-analysis engine is fetched from. Reached only when the
 # game.deep_analysis setting is on, and only by fetch() -- never as a script
@@ -294,30 +296,12 @@ def apply_security_headers(response):
     return response
 
 
-# File extensions that should be cached
-CACHEABLE_EXTENSIONS = {
-    '.js': CACHE_LONG,
-    '.css': CACHE_LONG,
-    '.woff': CACHE_LONG,
-    '.woff2': CACHE_LONG,
-    '.ttf': CACHE_LONG,
-    '.eot': CACHE_LONG,
-    '.png': CACHE_LONG,
-    '.jpg': CACHE_LONG,
-    '.jpeg': CACHE_LONG,
-    '.gif': CACHE_LONG,
-    '.svg': CACHE_LONG,
-    '.ico': CACHE_LONG,
-    '.bmp': CACHE_LONG,
-    '.webp': CACHE_LONG,
-    '.wasm': CACHE_LONG,
-}
-
-# Path prefixes that serve immutable, content-addressed build assets (the Vite
-# bundle and icons). Only responses under these prefixes are eligible for long
-# browser caching; everything else defaults to no-store (see add_cache_headers)
-# so dynamic data is never served stale.
-STATIC_ASSET_PREFIXES = ('/static/', '/assets/', '/icons/')
+# Path prefixes whose filenames change when the file contents change. The Vite
+# build hashes every file it emits under ``/assets/`` (scripts, stylesheets,
+# fonts). Icons, the service worker, the manifest, and the HTML shell keep
+# stable names, so they are not in this list: a year-long cache of those would
+# keep the previous version until the year ended.
+STATIC_ASSET_PREFIXES = ('/assets/',)
 
 
 @app.after_request
@@ -327,21 +311,24 @@ def add_cache_headers(response):
     # below for already-cached or dynamic content.
     apply_security_headers(response)
 
-    # Skip cache handling if Cache-Control already set (e.g., SSE, dynamic).
-    if 'Cache-Control' in response.headers:
-        return response
-
     path = request.path
 
-    # Immutable, content-addressed build assets: cache by extension. Gated on a
-    # successful response so a transient 404/500 for an asset path is never
-    # cached. Only the known static-asset prefixes qualify; a dynamic endpoint
-    # can never accidentally match (e.g. a service worker at /sw.js is a .js but
-    # is NOT under a prefix, so it stays uncached and picks up new builds).
+    # Hashed build output. This runs before the "header already set" return
+    # because send_file marks every file ``no-cache`` (Flask's default max-age
+    # is unset). Leaving that header in place made the browser revalidate the
+    # bundle on every load, which is a full download whenever it has no
+    # validator. The filename changes with the bytes, so a stored copy is the
+    # right version until the next build points the shell at a new name.
+    # A non-200 is not cached: a transient 404 must not stick for a year.
     if response.status_code == 200 and path.startswith(STATIC_ASSET_PREFIXES):
-        ext = os.path.splitext(path)[1].lower()
-        max_age = CACHEABLE_EXTENSIONS.get(ext, CACHE_SHORT)
-        response.headers['Cache-Control'] = f'public, max-age={max_age}'
+        response.headers['Cache-Control'] = IMMUTABLE_CACHE_CONTROL
+        return response
+
+    # A view that chose its own policy (the event stream, the video feed) keeps
+    # it. send_file's ``no-cache`` on everything else is also left as-is: those
+    # names do not change between versions, so the browser may store them but
+    # must revalidate (a conditional GET, not a year-long copy).
+    if 'Cache-Control' in response.headers:
         return response
 
     # HTML pages - always revalidate so a new build/SPA shell is picked up.
@@ -353,8 +340,8 @@ def add_cache_headers(response):
     # endpoints /getgames, /getpgn, ...), SSE, generated media, the service
     # worker and the web manifest. Never cache it.
     #
-    # Defaulting to no-store -- rather than the previous blanket
-    # `public, max-age=CACHE_SHORT` -- is deliberate and fixes a real bug: the
+    # Defaulting to no-store -- rather than a blanket public max-age -- is
+    # deliberate and fixes a real bug: the
     # games list (/getgames) fell through to that default and was cached for an
     # hour, so after deleting a game the list re-fetch was served stale from the
     # browser cache and the deleted row remained on screen (while the game was

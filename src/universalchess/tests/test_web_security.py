@@ -83,17 +83,22 @@ def test_html_response_carries_security_headers(client):
 
 # --- Cache-Control policy -----------------------------------------------------
 
-def _cache_control_for(path, *, status=200, mimetype="application/json"):
+def _cache_control_for(path, *, status=200, mimetype="application/json", preset=None):
     """Run add_cache_headers for a synthetic response at `path`.
 
     Exercises the after_request cache policy deterministically (independent of
     DB/board wiring) by driving it with a crafted response inside a matching
     request context, then returns the resulting Cache-Control header.
+
+    ``preset`` is a Cache-Control value already on the response, the way
+    ``send_file`` puts ``no-cache`` on every file before this hook runs.
     """
     from flask import Response
 
     with webapp.app.test_request_context(path):
         resp = Response("x", status=status, mimetype=mimetype)
+        if preset is not None:
+            resp.headers["Cache-Control"] = preset
         return webapp.add_cache_headers(resp).headers.get("Cache-Control", "")
 
 
@@ -124,19 +129,89 @@ def test_pgn_export_endpoint_is_not_cached():
     assert "no-store" in cc
 
 
-def test_build_asset_is_long_cached():
-    """Content-addressed build assets under /assets/ keep long browser caching.
+def test_build_asset_is_cached_until_its_name_changes():
+    """A hashed file under /assets/ is cached for a year and not revalidated.
 
-    Guards against the fix over-correcting into "never cache anything": the Vite
-    bundle filenames carry a content hash, so caching them long is correct and
-    important for load performance on the board. Regression: the JS bundle comes
-    back no-store (needless re-download every navigation) instead of
-    `public, max-age=<CACHE_LONG>`.
+    The Vite build puts a content hash in every filename under /assets/. The
+    URL changes when the bytes change, so a stored copy cannot be the wrong
+    version. Regression: the bundle comes back no-store, or with a max-age but
+    without immutable, so a reload revalidates and re-downloads it.
     """
     cc = _cache_control_for("/assets/index-abc123.js", mimetype="application/javascript")
-    assert "public" in cc
-    assert f"max-age={webapp.CACHE_LONG}" in cc
-    assert "no-store" not in cc
+    assert cc == webapp.IMMUTABLE_CACHE_CONTROL
+
+
+def test_send_file_no_cache_does_not_keep_a_hashed_asset_uncached():
+    """Flask's file sender marks every file no-cache before the cache policy runs.
+
+    Why this test exists: send_file's default max-age is unset, so the response
+    already carries Cache-Control: no-cache when add_cache_headers sees it. The
+    policy used to leave any existing header alone, and the hashed bundle was
+    revalidated on every page load. How a regression manifests: the header stays
+    exactly no-cache, and the browser fetches the script again on the next load.
+    """
+    cc = _cache_control_for(
+        "/assets/index-1TfpW_AV.js",
+        mimetype="text/javascript",
+        preset="no-cache",
+    )
+    assert cc == webapp.IMMUTABLE_CACHE_CONTROL
+
+
+def test_asset_route_serves_a_hashed_file_as_immutable(client, monkeypatch, tmp_path):
+    """The real /assets/ route must not keep send_file's no-cache.
+
+    Why this test exists: the synthetic policy test can be satisfied while the
+    route still returns whatever send_file set. This drives the route that the
+    browser hits. How a regression manifests: status 200 with Cache-Control
+    no-cache, and the next page load downloads the bundle again.
+    """
+    assets = tmp_path / "assets"
+    assets.mkdir()
+    (assets / "index-abc123.js").write_text("console.log(1)\n", encoding="utf-8")
+    monkeypatch.setattr(webapp, "get_react_app_dir", lambda: tmp_path)
+
+    response = client.get("/assets/index-abc123.js")
+
+    assert response.status_code == 200
+    assert response.headers["Cache-Control"] == webapp.IMMUTABLE_CACHE_CONTROL
+
+
+def test_icon_route_revalidates_because_the_filename_does_not_change(
+    client, monkeypatch, tmp_path,
+):
+    """An icon keeps its name across builds, so it must not be stored immutable.
+
+    Why this test exists: favicon.ico and the PWA icons are not content-hashed.
+    Caching them for a year would keep a replaced icon until that year ended.
+    How a regression manifests: the icon response is `immutable` or carries the
+    hashed-asset max-age.
+    """
+    icons = tmp_path / "icons"
+    icons.mkdir()
+    (icons / "favicon.ico").write_bytes(b"\x00\x00")
+    monkeypatch.setattr(webapp, "get_react_app_dir", lambda: tmp_path)
+
+    response = client.get("/icons/favicon.ico")
+
+    assert response.status_code == 200
+    cache_control = response.headers["Cache-Control"]
+    assert "immutable" not in cache_control
+    assert "31536000" not in cache_control
+    assert "no-cache" in cache_control
+
+
+def test_an_explicit_no_cache_outside_the_hashed_assets_is_left_alone():
+    """A view that set no-cache itself is not rewritten into a year-long cache.
+
+    Why this test exists: the hashed-asset rule has to overwrite send_file's
+    default no-cache, and the same string is what the event stream sets on
+    purpose. Applying the asset rule by header value instead of by path would
+    mark that stream immutable. How a regression manifests: /events is
+    `public` with a year max-age.
+    """
+    cc = _cache_control_for("/events", mimetype="text/event-stream", preset="no-cache")
+    assert cc == "no-cache"
 
 
 def test_service_worker_is_not_long_cached():
@@ -146,7 +221,7 @@ def test_service_worker_is_not_long_cached():
     block app updates from ever reaching users. It is a .js file but is NOT
     under a static-asset prefix, so it must fall through to no-store. Regression:
     if the policy cached by extension regardless of path prefix, /sw.js would
-    get `public, max-age=<CACHE_LONG>` and this assertion fails.
+    get the immutable year-long header and this assertion fails.
     """
     cc = _cache_control_for("/sw.js", mimetype="application/javascript")
     assert "no-store" in cc

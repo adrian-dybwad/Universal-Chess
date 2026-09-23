@@ -57,7 +57,8 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch event - network first, fallback to cache
+// Fetch event. Hashed /assets/ files are cache-first. Everything else that this
+// worker handles is network-first, with the cache as the offline fallback.
 self.addEventListener('fetch', (event) => {
   const { request } = event;
   const url = new URL(request.url);
@@ -74,6 +75,15 @@ self.addEventListener('fetch', (event) => {
 
   // Skip external requests
   if (url.origin !== location.origin) {
+    return;
+  }
+
+  // Hashed build output. The URL changes when the file does, so a stored copy
+  // is the right bytes until the shell points at a new name. Network-first
+  // would re-download the bundle on every load even after the HTTP cache said
+  // it was immutable, because this worker handles the request.
+  if (url.pathname.startsWith('/assets/')) {
+    event.respondWith(cacheFirstHashedAsset(request));
     return;
   }
 
@@ -114,6 +124,24 @@ self.addEventListener('fetch', (event) => {
       })
   );
 });
+
+// A hashed /assets/ file. Serve the stored copy; fetch and store only on a miss.
+function cacheFirstHashedAsset(request) {
+  return caches.match(request).then((cached) => {
+    if (cached) {
+      return cached;
+    }
+    return fetch(request).then((response) => {
+      if (response.ok) {
+        const copy = response.clone();
+        caches.open(CACHE_NAME).then((cache) => {
+          cache.put(request, copy);
+        });
+      }
+      return response;
+    });
+  });
+}
 
 // Determine if a request should be cached
 function shouldCache(pathname) {
