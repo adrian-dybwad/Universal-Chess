@@ -1381,6 +1381,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **The web app polled the board several times every few seconds**: the
+  navbar asked separately for background activity, Wi-Fi, Bluetooth, and
+  update status, and the connectivity and updates pages asked again for
+  the same things. Those snapshots now arrive on the single `/events`
+  connection the page already keeps open. Each source is read once while
+  a browser is connected, and only a change is sent. A board with no
+  radio is not asked about that radio.
+
 - **The web app downloaded its script again on every page load**: the Vite
   bundle's filename changes when its contents change, and the server meant
   to let the browser keep those files. Flask's file sender marks every file

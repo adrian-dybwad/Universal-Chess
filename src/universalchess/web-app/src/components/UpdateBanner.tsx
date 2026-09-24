@@ -1,14 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Button } from './ui';
 import { useAuthedAction } from './useAuthedAction';
-import { apiFetch, buildApiUrl } from '../utils/api';
+import { apiFetch } from '../utils/api';
+import { mergeLiveStatus, useLiveStatus } from '../stores/liveStatusStore';
 import './UpdateBanner.css';
-
-// Poll cadence. A downloaded update is not time-critical, so a slow poll keeps
-// the banner current without loading the (often busy) board with requests.
-const POLL_INTERVAL_MS = 30000;
 
 // Only the fields the banner needs from GET /api/updates/status.
 interface UpdateStatusLite {
@@ -33,25 +30,10 @@ interface UpdateStatusLite {
  */
 export function UpdateBanner() {
   const { t } = useTranslation();
-  const [status, setStatus] = useState<UpdateStatusLite | null>(null);
+  const status = (useLiveStatus()?.updates as UpdateStatusLite | null) ?? null;
   const [installing, setInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { dialog, onUnauthorized } = useAuthedAction();
-
-  const fetchStatus = useCallback(async () => {
-    try {
-      const res = await fetch(buildApiUrl('/api/updates/status'));
-      if (res.ok) setStatus((await res.json()) as UpdateStatusLite);
-    } catch {
-      // Best-effort: keep the last known state until a later poll succeeds.
-    }
-  }, []);
-
-  useEffect(() => {
-    void fetchStatus();
-    const id = setInterval(fetchStatus, POLL_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [fetchStatus]);
 
   const install = useCallback(async function runInstall() {
     setInstalling(true);
@@ -66,13 +48,16 @@ export function UpdateBanner() {
         const data = await res.json().catch(() => ({}));
         setError(data.error || t('update.installFailed'));
       }
-      await fetchStatus();
+      const refreshed = await apiFetch('/api/updates/status');
+      if (refreshed.ok) {
+        mergeLiveStatus({ updates: (await refreshed.json()) as Record<string, unknown> });
+      }
     } catch {
       setError(t('update.networkError'));
     } finally {
       setInstalling(false);
     }
-  }, [fetchStatus, onUnauthorized, t]);
+  }, [onUnauthorized, t]);
 
   const autoOn = Boolean(status?.auto_update);
   const showInstall = autoOn && Boolean(status?.has_pending_update) && !status?.is_installing;

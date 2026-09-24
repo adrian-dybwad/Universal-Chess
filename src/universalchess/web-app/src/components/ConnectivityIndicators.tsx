@@ -1,16 +1,10 @@
-import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Link } from 'react-router';
 import { MenuIcon } from './MenuIcon';
-import { apiFetch } from '../utils/api';
 import { useRadioCapability } from '../hooks/useRadioCapability';
+import { useLiveStatus } from '../stores/liveStatusStore';
 import './ConnectivityIndicators.css';
-
-// How often the navbar re-reads radio status. Matches the Connectivity cards'
-// 10s status poll so the toolbar glyphs and the settings page never disagree by
-// more than one interval.
-const POLL_INTERVAL_MS = 10000;
 
 // Visual tiers, deliberately limited to states the icon can convey honestly:
 //   off       - radio disabled (muted glyph)
@@ -38,42 +32,6 @@ interface BtStatus {
   enabled: boolean;
   link?: BtLink;
   paired?: { connected: boolean }[];
-}
-
-/**
- * Poll a connectivity status endpoint on an interval, seeding once on mount.
- *
- * Status endpoints are unauthenticated reads, so a failure (board unreachable,
- * not yet booted) leaves the value `null` and the caller renders the 'unknown'
- * tier rather than a fabricated state.
- *
- * A `null` path disables the poll entirely: on a board with no radio there is
- * nothing to report, so neither the browser nor the board should spend a request
- * every interval on it.
- */
-function useConnectivityStatus<T>(path: string | null): T | null {
-  const [status, setStatus] = useState<T | null>(null);
-
-  useEffect(() => {
-    if (path === null) return;
-    let active = true;
-    const fetchStatus = async () => {
-      try {
-        const r = await apiFetch(path);
-        if (r.ok && active) setStatus(await r.json());
-      } catch {
-        // Best-effort: keep the last known value (or null) until the next poll.
-      }
-    };
-    void fetchStatus();
-    const interval = setInterval(fetchStatus, POLL_INTERVAL_MS);
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
-  }, [path]);
-
-  return status;
 }
 
 function StatusIndicatorLink({
@@ -212,10 +170,9 @@ export function ConnectivityIndicators() {
   const { hasWifi, hasBluetooth, probed } = useRadioCapability();
   const showWifi = probed && hasWifi;
   const showBluetooth = probed && hasBluetooth;
-  const wifi = useConnectivityStatus<WifiStatus>(showWifi ? '/api/connectivity/wifi/status' : null);
-  const bluetooth = useConnectivityStatus<BtStatus>(
-    showBluetooth ? '/api/connectivity/bluetooth/status' : null,
-  );
+  const live = useLiveStatus();
+  const wifi = showWifi ? (live?.wifi as WifiStatus | null) ?? null : null;
+  const bluetooth = showBluetooth ? (live?.bluetooth as BtStatus | null) ?? null : null;
 
   return (
     <>

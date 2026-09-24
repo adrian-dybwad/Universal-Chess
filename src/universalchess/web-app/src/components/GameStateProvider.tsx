@@ -6,6 +6,7 @@ import type { GameState } from '../types/game';
 import { MoveBanner } from './MoveBanner';
 import { buildApiUrl } from '../utils/api';
 import { publishSseEvent, type SseEventPayload } from '../utils/sseBus';
+import { setLiveStatus, type LiveActivity } from '../stores/liveStatusStore';
 
 /**
  * Global SSE connection manager.
@@ -116,6 +117,21 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
           // non-game events (bt_status, chromecast_state, pairing) are handled
           // by the pages that need them. Only game_state messages carry board
           // state, so anything else must not be written into gameState.
+          // Activity, Wi-Fi, Bluetooth, and update status share this connection
+          // so the navbar does not poll those endpoints on their own timers.
+          if (data.type === 'live_status') {
+            const activity = data.activity as { active?: boolean; activities?: LiveActivity[] } | undefined;
+            setLiveStatus({
+              activity: {
+                active: Boolean(activity?.active),
+                activities: Array.isArray(activity?.activities) ? activity.activities : [],
+              },
+              wifi: (data.wifi as Record<string, unknown> | null) ?? null,
+              bluetooth: (data.bluetooth as Record<string, unknown> | null) ?? null,
+              updates: (data.updates as Record<string, unknown> | null) ?? null,
+            });
+            return;
+          }
           if (data.type === 'battery_status') {
             setBattery({
               battery_level: data.battery_level ?? null,

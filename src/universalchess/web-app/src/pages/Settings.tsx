@@ -29,6 +29,7 @@ import { parseConfigBool } from '../utils/configBool';
 import { parseSpriteSheets, spritePreviewPath, type SpriteSheetRef } from '../sprites';
 import type { AccountRecord } from '../types/accounts';
 import { useSettingsStore } from '../stores/settingsStore';
+import { useLiveStatus } from '../stores/liveStatusStore';
 import { useGameStore } from '../stores/gameStore';
 import './Settings.css';
 
@@ -3349,7 +3350,6 @@ const UPDATE_CHECK_FRESHNESS_MS = 5 * 60 * 1000;
 
 function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
   const { t } = useTranslation();
-  const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   // Informational (non-error) message, e.g. an async install that was started.
   // Kept separate from `error` so it is not rendered as a failure.
@@ -3368,6 +3368,11 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
   // flip the notice to "complete" once the install finishes. The install runs
   // asynchronously and restarts the web service; the poll auto-reconnects.
   const awaitingInstallRef = useRef(false);
+  const [fetchedStatus, setStatus] = useState<UpdateStatus | null>(null);
+  // The stream is the ongoing source. The on-open fetch still writes
+  // fetchedStatus so a page opened before the first sample is not blank.
+  const liveUpdates = useLiveStatus()?.updates as unknown as UpdateStatus | null;
+  const status = liveUpdates ?? fetchedStatus;
 
   const fetchStatus = useCallback(async (): Promise<UpdateStatus | null> => {
     try {
@@ -3426,8 +3431,6 @@ function UpdateManager({ catalog }: { catalog: MenuCatalog }) {
         setChecking(false);
       }
     })();
-    const interval = setInterval(fetchStatus, 10000); // Poll every 10 seconds
-    return () => clearInterval(interval);
   }, [fetchStatus, t]);
 
   // Detect completion of an install started from this session. The install

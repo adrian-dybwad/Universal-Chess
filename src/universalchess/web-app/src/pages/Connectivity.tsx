@@ -11,6 +11,7 @@ import { useRadioCapability } from '../hooks/useRadioCapability';
 import { useRetryOnReconnect } from '../hooks/useRetryOnReconnect';
 import { apiFetch } from '../utils/api';
 import { useSseEvent, type SseEventPayload } from '../utils/sseBus';
+import { useLiveStatus } from '../stores/liveStatusStore';
 import { CAST_STATE_KEYS, type CastDevice, type CastStateName } from '../utils/chromecast';
 import { childrenOf, type AccountType, type MenuCatalog, type MenuNode } from '../types/menuCatalog';
 import type { AccountRecord } from '../types/accounts';
@@ -259,6 +260,7 @@ function WifiCard() {
   const [passwordFor, setPasswordFor] = useState<ScanNetwork | null>(null);
   const [password, setPassword] = useState('');
   const { dialog, onUnauthorized } = useAuthedAction();
+  const liveWifi = useLiveStatus()?.wifi;
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -300,12 +302,16 @@ function WifiCard() {
     void fetchSaved();
   }, [fetchSaved]);
 
+  // One read on open so the card is filled before the first live_status
+  // sample. Later changes arrive on /events; this is not a poll.
   useEffect(() => {
-    fetchStatus();
+    void fetchStatus();
     fetchSaved();
-    const interval = setInterval(fetchStatus, 10000);
-    return () => clearInterval(interval);
   }, [fetchStatus, fetchSaved]);
+
+  useEffect(() => {
+    if (liveWifi) setStatus(liveWifi as unknown as WifiStatus);
+  }, [liveWifi]);
 
   const scan = useCallback(async function runScan() {
     setScanning(true);
@@ -611,6 +617,7 @@ function BluetoothCard() {
   const [incoming, setIncoming] = useState<{ passkey: string | null } | null>(null);
   const [stalePairing, setStalePairing] = useState<{ address: string; name: string } | null>(null);
   const { dialog, onUnauthorized } = useAuthedAction();
+  const liveBluetooth = useLiveStatus()?.bluetooth;
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -622,10 +629,12 @@ function BluetoothCard() {
   }, []);
 
   useEffect(() => {
-    fetchStatus();
-    const interval = setInterval(fetchStatus, 10000);
-    return () => clearInterval(interval);
+    void fetchStatus();
   }, [fetchStatus]);
+
+  useEffect(() => {
+    if (liveBluetooth) setStatus(liveBluetooth as unknown as BtStatus);
+  }, [liveBluetooth]);
 
   // Board -> web Bluetooth events, consumed off the shared app SSE connection
   // (GameStateProvider owns the single EventSource and fans events out on the
@@ -651,8 +660,8 @@ function BluetoothCard() {
       heal?: BtHeal;
     };
     // Merge the engine snapshot (advertising, adv_state, active link/emulator,
-    // devices) into the card, keeping the locally-read radio/paired list until
-    // the next poll refreshes them.
+    // devices) into the card. Identity and the paired list arrive on
+    // live_status; keep the last of those across this faster link push.
     setStatus((prev) => ({
       enabled: prev?.enabled ?? d.enabled ?? false,
       // Identity (host name/MAC) is read locally by the poll, not carried in the
@@ -674,10 +683,7 @@ function BluetoothCard() {
       devices: d.devices,
       heal: d.heal ?? prev?.heal,
     }));
-    // A connect/disconnect changes the paired list's "connected" flags too;
-    // refresh those (and the radio state) without waiting for the poll.
-    setTimeout(fetchStatus, 500);
-  }, [fetchStatus]);
+  }, []);
   useSseEvent('bt_status', onBtStatus, true);
 
   const onBtPasskey = useCallback((data: SseEventPayload) => {

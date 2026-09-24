@@ -7691,6 +7691,20 @@ def _init_game_subscriber():
 _init_game_subscriber()
 
 
+def _publish_live_status(snapshot: dict) -> None:
+    """Put one live_status snapshot on every connected /events client."""
+    broadcast_sse_event("live_status", {key: value for key, value in snapshot.items() if key != "type"})
+
+
+def _configure_live_status() -> None:
+    from universalchess.web.live_status import configure_live_status_pump, sample_live_status
+
+    configure_live_status_pump(sample_live_status, _publish_live_status)
+
+
+_configure_live_status()
+
+
 @app.route("/events")
 def sse_events():
     """Server-Sent Events endpoint for real-time game and status updates.
@@ -7714,7 +7728,9 @@ def sse_events():
         
         with _sse_clients_lock:
             _sse_clients.append(client_queue)
-        
+
+        live_pump = None
+        live_attached = False
         try:
             # Send immediate comment to trigger browser onopen event.
             # Without this, onopen only fires after the first real data arrives,
@@ -7752,7 +7768,21 @@ def sse_events():
                 yield f"data: {json.dumps(last_clock)}\n\n"
             else:
                 request_clock_status_broadcast()
-            
+
+            # Activity, Wi-Fi, Bluetooth, and update status ride this same
+            # connection. Replay the last snapshot so a reconnecting client
+            # does not wait for the next sample, then keep sampling while this
+            # client (and any other) is attached.
+            from universalchess.web.live_status import get_live_status_pump
+
+            live_pump = get_live_status_pump()
+            if live_pump is not None:
+                last_live = live_pump.latest()
+                if last_live:
+                    yield f"data: {json.dumps(last_live)}\n\n"
+                live_pump.attach()
+                live_attached = True
+
             # Stream updates as they arrive
             while True:
                 try:
@@ -7763,6 +7793,8 @@ def sse_events():
                     # Send keepalive comment to detect broken connections
                     yield ": keepalive\n\n"
         finally:
+            if live_attached and live_pump is not None:
+                live_pump.detach()
             # Clean up when client disconnects
             with _sse_clients_lock:
                 if client_queue in _sse_clients:

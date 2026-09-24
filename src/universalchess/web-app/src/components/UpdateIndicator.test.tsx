@@ -4,6 +4,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { UpdateIndicator } from './UpdateIndicator';
+import { __resetLiveStatus, setLiveStatus } from '../stores/liveStatusStore';
 
 /**
  * Guards that the navbar ready-to-install indicator names the staged version.
@@ -14,31 +15,22 @@ import { UpdateIndicator } from './UpdateIndicator';
  * generic label with no 2.5.0.
  */
 
-interface JsonResponseLike {
-  ok: boolean;
-  status: number;
-  json: () => Promise<unknown>;
-}
-
-function jsonResponse(body: unknown): JsonResponseLike {
-  return { ok: true, status: 200, json: async () => body };
-}
-
 beforeEach(() => {
-  vi.stubGlobal('fetch', vi.fn(async (url: string) => {
-    if (url === '/api/updates/status') {
-      return jsonResponse({
-        auto_update: false,
-        has_pending_update: true,
-        available_version: '2.5.0',
-      });
-    }
-    return jsonResponse({});
-  }));
+  setLiveStatus({
+    activity: { active: false, activities: [] },
+    wifi: null,
+    bluetooth: null,
+    updates: {
+      auto_update: false,
+      has_pending_update: true,
+      available_version: '2.5.0',
+    },
+  });
 });
 
 afterEach(() => {
   cleanup();
+  __resetLiveStatus();
   vi.unstubAllGlobals();
 });
 

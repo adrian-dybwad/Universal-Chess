@@ -22,6 +22,7 @@ import sys
 import pytest
 
 from universalchess.tests.webapp_fixture import make_test_client
+from universalchess.web.live_status import get_live_status_pump
 
 pytest.importorskip("flask")
 pytest.importorskip("sqlalchemy")
@@ -70,6 +71,19 @@ class _FakeSubscriber:
 
     def get_last_clock_status(self):
         return self._clock
+
+
+@pytest.fixture(autouse=True)
+def _do_not_sample_live_status(monkeypatch):
+    """The handshake tests must not start the Wi-Fi/Bluetooth sampler thread.
+
+    Attaching a client starts that thread, which shells out. These tests only
+    inspect the frames yielded before the first keepalive.
+    """
+    pump = get_live_status_pump()
+    assert pump is not None
+    monkeypatch.setattr(pump, "attach", lambda: None)
+    monkeypatch.setattr(pump, "detach", lambda: None)
 
 
 @pytest.fixture
@@ -186,3 +200,41 @@ def test_sse_connect_requests_battery_and_clock_rebroadcast_when_uncached(client
     assert clock_pulls == [True]
     assert not any(e.get("type") == "battery_status" for e in events)
     assert not any(e.get("type") == "clock_status" for e in events)
+
+
+def test_sse_connect_replays_cached_live_status(client, monkeypatch):
+    """A cached live_status snapshot is emitted on connect.
+
+    Why: activity, Wi-Fi, Bluetooth, and updates arrive on this connection
+    instead of their own polls. A client that reconnects must see the last
+    snapshot immediately. Regression: the type never appears in the initial
+    frames, so the navbar stays unknown until the next sample.
+    """
+    monkeypatch.setattr(webapp.queue, "Queue", _FastEmptyQueue)
+    monkeypatch.setattr(webapp, "get_subscriber", lambda: _FakeSubscriber())
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.request_game_state_broadcast",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.request_battery_status_broadcast",
+        lambda: True,
+    )
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.request_clock_status_broadcast",
+        lambda: True,
+    )
+    snapshot = {
+        "type": "live_status",
+        "activity": {"active": False, "activities": []},
+        "wifi": {"enabled": True, "connected": False, "ssid": ""},
+        "bluetooth": None,
+        "updates": {"has_pending_update": False},
+    }
+    pump = get_live_status_pump()
+    assert pump is not None
+    pump.prime(snapshot)
+
+    events, _comments = _parse_sse_handshake(client)
+
+    assert snapshot in events

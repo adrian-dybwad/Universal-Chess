@@ -1,14 +1,8 @@
-import { useEffect, useState } from 'react';
 import { Link } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { MenuIcon } from './MenuIcon';
-import { buildApiUrl } from '../utils/api';
+import { useLiveStatus } from '../stores/liveStatusStore';
 import './UpdateIndicator.css';
-
-// Poll cadence for the ready-to-install check. Updates are staged at startup and
-// are not time-critical, so a slow poll keeps the navbar current without
-// hammering the endpoint.
-const POLL_INTERVAL_MS = 60000;
 
 /**
  * Navbar indicator that a software update has been downloaded and is waiting to
@@ -23,34 +17,11 @@ const POLL_INTERVAL_MS = 60000;
  */
 export function UpdateIndicator() {
   const { t } = useTranslation();
-  const [pending, setPending] = useState(false);
-  const [autoUpdate, setAutoUpdate] = useState(false);
-  const [availableVersion, setAvailableVersion] = useState<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    const check = async () => {
-      try {
-        const response = await fetch(buildApiUrl('/api/updates/status'));
-        if (!response.ok) return;
-        const data = await response.json();
-        if (!active) return;
-        setPending(Boolean(data.has_pending_update));
-        setAutoUpdate(Boolean(data.auto_update));
-        setAvailableVersion(
-          typeof data.available_version === 'string' ? data.available_version : null,
-        );
-      } catch {
-        // Best-effort: keep the last known state until a later poll succeeds.
-      }
-    };
-    void check();
-    const interval = setInterval(check, POLL_INTERVAL_MS);
-    return () => {
-      active = false;
-      clearInterval(interval);
-    };
-  }, []);
+  const updates = useLiveStatus()?.updates ?? null;
+  const pending = Boolean(updates?.has_pending_update);
+  const autoUpdate = Boolean(updates?.auto_update);
+  const availableVersion =
+    typeof updates?.available_version === 'string' ? updates.available_version : null;
 
   // Defer to the top banner when auto-download is on (it owns the install CTA).
   if (!pending || autoUpdate) return null;

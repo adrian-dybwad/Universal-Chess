@@ -4,6 +4,7 @@ import { render, screen, cleanup } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { UpdateBanner } from './UpdateBanner';
+import { __resetLiveStatus, setLiveStatus } from '../stores/liveStatusStore';
 
 /**
  * Guards that the top-of-page install banner names the staged version.
@@ -38,6 +39,12 @@ beforeEach(() => {
     is_installing: false,
     available_version: '2.5.0',
   };
+  setLiveStatus({
+    activity: { active: false, activities: [] },
+    wifi: null,
+    bluetooth: null,
+    updates: status,
+  });
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url === '/api/updates/status') return jsonResponse(status);
     return jsonResponse({});
@@ -46,6 +53,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  __resetLiveStatus();
   vi.unstubAllGlobals();
 });
 
