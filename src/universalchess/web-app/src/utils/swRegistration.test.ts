@@ -5,6 +5,8 @@ import {
   applyServiceWorkerUpdate,
   subscribeAutoReloadBlocked,
   getAutoReloadBlocked,
+  getServiceWorkerMissing,
+  getServiceWorkerLoadError,
   __resetServiceWorkerUpdates,
 } from './swRegistration';
 
@@ -281,5 +283,63 @@ describe('startServiceWorkerUpdates', () => {
     expect(onUpdateReady).toHaveBeenCalledTimes(1);
     applyServiceWorkerUpdate({ userInitiated: true });
     expect(installing.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
+  });
+
+  it('records a failed registration so the navbar can warn', async () => {
+    // Why: an untrusted certificate rejects register() with SecurityError
+    // after the page itself has loaded. Nothing else surfaces that, so an
+    // open tab never learns a new build exists. How a regression manifests:
+    // getServiceWorkerMissing stays false after register rejects.
+    const { container } = installServiceWorkerMock();
+    container.register.mockRejectedValue(new Error('An SSL certificate error occurred when fetching the script.'));
+    startServiceWorkerUpdates(vi.fn());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(getServiceWorkerMissing()).toBe(true);
+    expect(getServiceWorkerLoadError()).toBe(
+      'An SSL certificate error occurred when fetching the script.',
+    );
+  });
+
+  it('keeps a worker install error posted to the page', async () => {
+    // Why: cache.addAll rejects after register() has already resolved, and
+    // the page otherwise has no text for that failure. How a regression
+    // manifests: getServiceWorkerLoadError stays null after SW_LOAD_ERROR.
+    const { container } = installServiceWorkerMock({ controller: null });
+    startServiceWorkerUpdates(vi.fn());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(getServiceWorkerLoadError()).toBeNull();
+
+    const onMessage = (
+      container.addEventListener as ReturnType<typeof vi.fn>
+    ).mock.calls.find((call: unknown[]) => call[0] === 'message')?.[1] as
+      | ((event: MessageEvent) => void)
+      | undefined;
+    expect(onMessage).toBeDefined();
+    onMessage!({ data: { type: 'SW_LOAD_ERROR', message: 'Failed to fetch /icons/icon-192.png' } } as MessageEvent);
+    expect(getServiceWorkerLoadError()).toBe('Failed to fetch /icons/icon-192.png');
+  });
+
+  it('records an installing worker that never reaches installed', async () => {
+    // Why: a script that parses but dies in install goes redundant without
+    // rejecting register(). How a regression manifests: the missing flag
+    // stays false after that state change.
+    const listeners: Listener[] = [];
+    const installing = {
+      state: 'installing',
+      addEventListener: vi.fn((type: string, listener: Listener) => {
+        if (type === 'statechange') listeners.push(listener);
+      }),
+    };
+    const { registration } = installServiceWorkerMock({ controller: null });
+    registration.installing = installing as unknown as typeof registration.installing;
+    startServiceWorkerUpdates(vi.fn());
+    await Promise.resolve();
+    await Promise.resolve();
+
+    installing.state = 'redundant';
+    for (const listener of listeners) listenerFn(listener)();
+    expect(getServiceWorkerLoadError()).toBe('The service worker stopped while installing.');
   });
 });

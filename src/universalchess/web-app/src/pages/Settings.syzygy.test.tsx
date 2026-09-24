@@ -78,6 +78,7 @@ function mockFetch(overrides: Partial<typeof idleSyzygy> = {}) {
     wifi: null,
     bluetooth: null,
     updates: null,
+    webClient: null,
   });
   vi.stubGlobal(
     'fetch',
@@ -205,6 +206,7 @@ describe('Syzygy tablebase card', () => {
       wifi: null,
       bluetooth: null,
       updates: null,
+      webClient: null,
     });
     expect(await screen.findByText('40%')).toBeInTheDocument();
   });

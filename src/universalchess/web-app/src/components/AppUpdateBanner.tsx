@@ -9,7 +9,11 @@ import {
   applyServiceWorkerUpdate,
   subscribeAutoReloadBlocked,
   getAutoReloadBlocked,
+  subscribeServiceWorkerMissing,
+  getServiceWorkerMissing,
 } from '../utils/swRegistration';
+import { useLiveStatus } from '../stores/liveStatusStore';
+import { runningWebClient, webClientChanged } from '../utils/webClientBuild';
 // Reuses the deb-update prompt's styling so the two update banners read as one
 // consistent visual language (green "actionable" accent, top-of-page bar).
 import './UpdateBanner.css';
@@ -29,7 +33,10 @@ function isDocumentHidden(): boolean {
  *
  * Detection rides the service worker: each build produces a byte-different
  * `sw.js`, so a redeploy makes the browser download a new worker that waits to
- * activate. Once it is waiting, {@link decideUpdateAction} decides what to do:
+ * activate. When that worker never loads, the same decision uses the module
+ * script src on the `/events` snapshot: it is the bundle on disk, and a
+ * difference from the script this page loaded is a waiting update. Once an
+ * update is waiting, {@link decideUpdateAction} decides what to do:
  * an idle board -- or a backgrounded tab -- reloads automatically, while a live
  * game in the foreground shows this banner so play is never interrupted
  * mid-move. The Reload tap is passed as `userInitiated` so the navigation
@@ -44,7 +51,7 @@ function isDocumentHidden(): boolean {
  */
 export function AppUpdateBanner() {
   const { t } = useTranslation();
-  const [updateReady, setUpdateReady] = useState(false);
+  const [workerUpdateReady, setWorkerUpdateReady] = useState(false);
   const gameState = useGameStore((state) => state.gameState);
   const documentHidden = useSyncExternalStore(subscribeVisibility, isDocumentHidden, () => false);
   const autoReloadBlocked = useSyncExternalStore(
@@ -53,8 +60,17 @@ export function AppUpdateBanner() {
     () => false,
   );
 
+  const workerMissing = useSyncExternalStore(
+    subscribeServiceWorkerMissing,
+    getServiceWorkerMissing,
+    () => false,
+  );
+  const deployedWebClient = useLiveStatus()?.webClient ?? null;
+  const streamUpdateReady = workerMissing && webClientChanged(deployedWebClient, runningWebClient());
+  const updateReady = workerUpdateReady || streamUpdateReady;
+
   useEffect(() => {
-    startServiceWorkerUpdates(() => setUpdateReady(true));
+    startServiceWorkerUpdates(() => setWorkerUpdateReady(true));
   }, []);
 
   const gameInProgress = isGameInProgress(gameState);

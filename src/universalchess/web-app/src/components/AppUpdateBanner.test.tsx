@@ -17,6 +17,7 @@ import type { GameState } from '../types/game';
 const mocks = vi.hoisted(() => ({
   applyServiceWorkerUpdate: vi.fn(() => true),
   blocked: false,
+  workerMissing: false,
   captured: { onUpdateReady: null as null | (() => void) },
 }));
 
@@ -27,10 +28,13 @@ vi.mock('../utils/swRegistration', () => ({
   applyServiceWorkerUpdate: mocks.applyServiceWorkerUpdate,
   subscribeAutoReloadBlocked: () => () => {},
   getAutoReloadBlocked: () => mocks.blocked,
+  subscribeServiceWorkerMissing: () => () => {},
+  getServiceWorkerMissing: () => mocks.workerMissing,
 }));
 
 import { AppUpdateBanner } from './AppUpdateBanner';
 import { useGameStore } from '../stores/gameStore';
+import { setLiveStatus, __resetLiveStatus } from '../stores/liveStatusStore';
 
 function makeGameState(overrides: Partial<GameState> = {}): GameState {
   return {
@@ -77,6 +81,8 @@ beforeEach(() => {
   mocks.applyServiceWorkerUpdate.mockReset();
   mocks.applyServiceWorkerUpdate.mockReturnValue(true);
   mocks.blocked = false;
+  mocks.workerMissing = false;
+  __resetLiveStatus();
   mocks.captured.onUpdateReady = null;
   useGameStore.setState({ gameState: null });
   setVisibility('visible');
@@ -166,6 +172,30 @@ describe('AppUpdateBanner', () => {
     expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
 
     setVisibility('hidden');
+    expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it('reloads from the streamed bundle when the service worker never loaded', () => {
+    // An untrusted certificate rejects the worker, so onUpdateReady never
+    // fires. The /events snapshot still names the script on disk. A regression
+    // leaves that idle tab on the old bundle with no reload.
+    mocks.workerMissing = true;
+    document.body.innerHTML = '<script type="module" src="/assets/index-old.js"></script>';
+    render(<AppUpdateBanner />);
+    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
+
+    act(() => {
+      setLiveStatus({
+        activity: { active: false, activities: [] },
+        engine: null,
+        syzygy: null,
+        engineDefaults: null,
+        wifi: null,
+        bluetooth: null,
+        updates: null,
+        webClient: '/assets/index-new.js',
+      });
+    });
     expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledTimes(1);
   });
 });

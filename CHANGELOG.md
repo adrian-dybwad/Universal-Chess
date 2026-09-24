@@ -15,6 +15,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **A warning when the web app has no service worker**: an untrusted
+  certificate lets the page load after the browser warning, but Chrome
+  refuses to fetch the service worker, so an open tab never notices a new
+  build and never says so. The right end of the status bar now shows a
+  warning icon while that worker is missing, and the icon's label is the
+  browser's own error. The same warning covers a script that fails while
+  installing and an update check that cannot fetch the worker. A tab in
+  that state still notices a new web bundle: the `/events` snapshot names
+  the module script on disk, and a difference from the script this page
+  loaded follows the same reload-or-prompt rule the service worker used.
+
 - **Shared engine defaults (HIARCS-style)**: Hash, Threads, and Move Overhead
   were labelled engine-wide but lived in each engine's ``[DEFAULT]`` and on
   every strength profile, so changing RAM on one rung did not apply to the

@@ -132,6 +132,7 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
               wifi: (data.wifi as Record<string, unknown> | null) ?? null,
               bluetooth: (data.bluetooth as Record<string, unknown> | null) ?? null,
               updates: (data.updates as Record<string, unknown> | null) ?? null,
+              webClient: typeof data.web_client === 'string' ? data.web_client : null,
             });
             return;
           }

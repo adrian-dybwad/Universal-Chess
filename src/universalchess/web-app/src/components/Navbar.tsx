@@ -7,6 +7,7 @@ import { ConnectivityIndicators } from './ConnectivityIndicators';
 import { CastButton } from './CastButton';
 import { MenuIcon } from './MenuIcon';
 import { UpdateIndicator } from './UpdateIndicator';
+import { ServiceWorkerWarning } from './ServiceWorkerWarning';
 import { BoardControlPanel } from './BoardControlPanel';
 import { PRIMARY_NAV } from '../config/navigation';
 import { versionedStaticUrl } from '../staticImageUrl';
@@ -99,6 +100,7 @@ export function Navbar() {
         {boardControl}
         <CastButton />
         <ConnectionStatus />
+        <ServiceWorkerWarning />
       </div>
 
       <BoardControlPanel isOpen={controlOpen} onClose={() => setControlOpen(false)} />

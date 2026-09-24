@@ -14,7 +14,7 @@ Regression manifestation:
   - a source whose interval has not elapsed is read again on the next tick
 """
 
-from universalchess.web.live_status import LiveStatusPump, LiveStatusSchedule
+from universalchess.web.live_status import LiveStatusPump, LiveStatusSchedule, module_script_src
 
 
 class _Capability:
@@ -221,6 +221,62 @@ def test_syzygy_reread_as_soon_as_a_download_starts(monkeypatch):
 
     assert calls == ["syzygy"]
     assert second["syzygy"] == {"downloading": True, "percent": 10}
+
+
+def test_web_client_rides_the_update_cadence():
+    """The deployed module script is sampled with update status, not every tick.
+
+    Why: a tab whose service worker failed to register cannot see a new
+    bundle any other way, and the page already holds /events. Reading
+    index.html on the activity tick would stat the file every few seconds.
+    Regression: the calls list at t=4 includes "web_client", or the t=10
+    snapshot omits the new script src.
+    """
+    calls = []
+    clock = {"now": 0.0}
+    deployed = {"src": "/assets/index-old.js"}
+    schedule = LiveStatusSchedule(
+        read_activity=lambda: calls.append("activity") or {"active": False, "activities": []},
+        read_engine=lambda: {"active": False, "percent": 0},
+        read_syzygy=lambda: {"downloading": False},
+        read_engine_defaults=lambda: {"hash": 16},
+        read_wifi=lambda: {"ssid": "net"},
+        read_bluetooth=lambda: {"enabled": True},
+        read_updates=lambda: {"auto_update": False},
+        read_web_client=lambda: calls.append("web_client") or deployed["src"],
+        read_capability=lambda: _Capability(False, False),
+        clock=lambda: clock["now"],
+        activity_interval_seconds=4,
+        updates_interval_seconds=10,
+    )
+
+    first = schedule.snapshot()
+    assert first["web_client"] == "/assets/index-old.js"
+    calls.clear()
+    clock["now"] = 4.0
+    schedule.snapshot()
+    assert "web_client" not in calls
+
+    deployed["src"] = "/assets/index-new.js"
+    calls.clear()
+    clock["now"] = 10.0
+    second = schedule.snapshot()
+    assert "web_client" in calls
+    assert second["web_client"] == "/assets/index-new.js"
+
+
+def test_module_script_src_reads_either_attribute_order():
+    """Vite emits type then src; the dev index emits src then type.
+
+    Why: the streamed identity is that src. A parser that assumes one order
+    reports no client, and a tab with no service worker never reloads.
+    Regression: either fixture returns None.
+    """
+    vite = '<script type="module" crossorigin src="/assets/index-Ab12.js"></script>'
+    dev = '<script type="module" src="/src/main.tsx"></script>'
+    assert module_script_src(vite) == "/assets/index-Ab12.js"
+    assert module_script_src(dev) == "/src/main.tsx"
+    assert module_script_src("<script src=\"/plain.js\"></script>") is None
 
 
 def test_pump_publishes_only_when_the_snapshot_changes():

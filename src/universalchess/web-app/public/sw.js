@@ -33,12 +33,23 @@ const STATIC_ASSETS = [
 // handler below), driven by the app-update policy in the React app. On a
 // first-ever install there is no active worker to replace, so the browser
 // activates this one right away regardless.
+function reportLoadError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  return self.clients.matchAll({ includeUncontrolled: true }).then((clients) => {
+    for (const client of clients) {
+      client.postMessage({ type: 'SW_LOAD_ERROR', message });
+    }
+  });
+}
+
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       console.log('[SW] Caching static assets');
       return cache.addAll(STATIC_ASSETS);
-    })
+    }).catch((error) => reportLoadError(error).then(() => {
+      throw error;
+    }))
   );
 });
 

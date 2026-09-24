@@ -70,6 +70,7 @@ function mockFetch() {
     wifi: null,
     bluetooth: null,
     updates: null,
+    webClient: null,
   });
   vi.stubGlobal(
     'fetch',
