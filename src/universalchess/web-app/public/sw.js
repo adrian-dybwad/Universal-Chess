@@ -2,6 +2,7 @@
 // Cache version - increment on each release to bust old caches
 // This will be replaced by the build script with a timestamp or build hash
 const CACHE_VERSION = '__BUILD_TIMESTAMP__';
+// Redeploy probe. A byte change here is what a registered worker treats as a new build.
 const CACHE_NAME = `universal-chess-${CACHE_VERSION}`;
 
 // Assets to cache on install.
