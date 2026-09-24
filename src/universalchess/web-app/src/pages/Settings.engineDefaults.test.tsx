@@ -4,6 +4,7 @@ import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/re
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
+import { setLiveStatus } from '../stores/liveStatusStore';
 import { AUTO_SAVE_DEBOUNCE_MS } from '../components/engineOptions';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
 import { makeEngine } from '../test/fixtures/engine';
@@ -61,6 +62,15 @@ let defaultsState = { ...idleDefaults };
 function mockFetch() {
   lastDefaultsPost = null;
   defaultsState = { ...idleDefaults };
+  setLiveStatus({
+    activity: { active: false, activities: [] },
+    engine: null,
+    syzygy: null,
+    engineDefaults: defaultsState as unknown as Record<string, unknown>,
+    wifi: null,
+    bluetooth: null,
+    updates: null,
+  });
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {

@@ -1392,7 +1392,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   while nothing was installing. That dict now rides the same snapshot.
   The bar still moves every two seconds during a build, because the
   percent is computed from the clock when the sample is read; an idle
-  install state does not change, so it is not sent again.
+  install state does not change, so it is not sent again. The Syzygy
+  card was still requesting its own status, and during a download that
+  request also asked for the shared engine defaults every second. Both
+  now ride the same snapshot. The table directory is listed every second
+  only while a download is running; otherwise that listing waits half a
+  minute, and the defaults are read every ten seconds. An unchanged
+  reading is not sent. A download that started during an engine install
+  stayed on the first response: later samples were ignored because their
+  percent no longer matched that response, and the directory was not
+  listed again until the idle wait. A running download is now reread
+  within a second, and the card follows that sample's percent.
 
 - **The web app downloaded its script again on every page load**: the Vite
   bundle's filename changes when its contents change, and the server meant

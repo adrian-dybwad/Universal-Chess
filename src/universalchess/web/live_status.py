@@ -36,6 +36,12 @@ UPDATES_INTERVAL_SECONDS = 10.0
 # cards used while an install was in flight. An idle dict does not change, so
 # the pump does not publish it again.
 ENGINE_INTERVAL_SECONDS = 2.0
+# Shared Hash/Threads/probe knobs change only when someone saves them.
+ENGINE_DEFAULTS_INTERVAL_SECONDS = 10.0
+# status() lists the table directory. While a download is running the
+# percent moves, so the walk is repeated every second. While idle it is not.
+SYZYGY_ACTIVE_INTERVAL_SECONDS = 1.0
+SYZYGY_IDLE_INTERVAL_SECONDS = 30.0
 
 # How often the pump thread wakes to see which sources are due. Shorter than
 # the fastest source interval so a due read is not delayed by a full period.
@@ -45,9 +51,15 @@ PUMP_TICK_SECONDS = 1.0
 class _Source:
     """Last value of one live-status source, refreshed when its interval elapses."""
 
-    def __init__(self, read: Callable[[], object], interval_seconds: float):
+    def __init__(
+        self,
+        read: Callable[[], object],
+        interval_seconds: float,
+        interval_for: Optional[Callable[[object], float]] = None,
+    ):
         self._read = read
         self._interval_seconds = interval_seconds
+        self._interval_for = interval_for
         self._last_read_at: Optional[float] = None
         self.value: object = None
 
@@ -55,12 +67,17 @@ class _Source:
         """Return the cached value, reading again only when the interval has elapsed.
 
         The first call always reads. A clock that jumps backwards reads again
-        rather than waiting out a negative remaining interval.
+        rather than waiting out a negative remaining interval. ``interval_for``
+        picks the wait from the last value, so a source can run faster only
+        while it is active.
         """
+        interval = self._interval_seconds
+        if self._interval_for is not None and self.value is not None:
+            interval = self._interval_for(self.value)
         if (
             self._last_read_at is not None
             and now >= self._last_read_at
-            and now - self._last_read_at < self._interval_seconds
+            and now - self._last_read_at < interval
         ):
             return self.value
         self.value = self._read()
@@ -81,6 +98,8 @@ class LiveStatusSchedule:
         *,
         read_activity: Callable[[], dict],
         read_engine: Callable[[], dict],
+        read_syzygy: Callable[[], dict],
+        read_engine_defaults: Callable[[], dict],
         read_wifi: Callable[[], dict],
         read_bluetooth: Callable[[], dict],
         read_updates: Callable[[], dict],
@@ -88,11 +107,14 @@ class LiveStatusSchedule:
         clock: Callable[[], float] = time.monotonic,
         activity_interval_seconds: float = ACTIVITY_INTERVAL_SECONDS,
         engine_interval_seconds: float = ENGINE_INTERVAL_SECONDS,
+        engine_defaults_interval_seconds: float = ENGINE_DEFAULTS_INTERVAL_SECONDS,
         radio_interval_seconds: float = RADIO_INTERVAL_SECONDS,
         updates_interval_seconds: float = UPDATES_INTERVAL_SECONDS,
     ):
         self._activity = _Source(read_activity, activity_interval_seconds)
         self._engine = _Source(read_engine, engine_interval_seconds)
+        self._syzygy = _Source(read_syzygy, SYZYGY_IDLE_INTERVAL_SECONDS, _syzygy_interval)
+        self._engine_defaults = _Source(read_engine_defaults, engine_defaults_interval_seconds)
         self._wifi = _Source(read_wifi, radio_interval_seconds)
         self._bluetooth = _Source(read_bluetooth, radio_interval_seconds)
         self._updates = _Source(read_updates, updates_interval_seconds)
@@ -107,6 +129,8 @@ class LiveStatusSchedule:
         has_bluetooth = bool(getattr(capability, "has_bluetooth", False))
         activity = self._activity.read_if_due(now)
         engine = self._engine.read_if_due(now)
+        syzygy = self._syzygy.read_if_due(now)
+        engine_defaults = self._engine_defaults.read_if_due(now)
         wifi = self._wifi.read_if_due(now) if has_wifi else None
         bluetooth = self._bluetooth.read_if_due(now) if has_bluetooth else None
         updates = self._updates.read_if_due(now)
@@ -114,6 +138,8 @@ class LiveStatusSchedule:
             "type": EVENT_TYPE,
             "activity": activity,
             "engine": engine,
+            "syzygy": syzygy,
+            "engine_defaults": engine_defaults,
             "wifi": wifi,
             "bluetooth": bluetooth,
             "updates": updates,
@@ -235,6 +261,8 @@ def _default_schedule() -> LiveStatusSchedule:
         _default = LiveStatusSchedule(
             read_activity=_read_activity,
             read_engine=_read_engine,
+            read_syzygy=_read_syzygy,
+            read_engine_defaults=_read_engine_defaults,
             read_wifi=_read_wifi,
             read_bluetooth=_read_bluetooth,
             read_updates=_read_updates,
@@ -256,10 +284,40 @@ def _read_activity() -> dict:
     )
 
 
+def _syzygy_interval(value: object) -> float:
+    """One second while a download is moving files, otherwise the idle wait.
+
+    The last snapshot can still say idle after a download has started. An
+    engine install republishes that stale slice every two seconds, so the
+    in-memory download flag is what shortens the wait. The flag does not
+    list the table directory.
+    """
+    from universalchess.services.syzygy import download_active
+
+    if download_active():
+        return SYZYGY_ACTIVE_INTERVAL_SECONDS
+    downloading = isinstance(value, dict) and bool(value.get("downloading"))
+    if downloading:
+        return SYZYGY_ACTIVE_INTERVAL_SECONDS
+    return SYZYGY_IDLE_INTERVAL_SECONDS
+
+
 def _read_engine() -> dict:
     from universalchess.services.engine_install_state import STORE as engine_store
 
     return engine_store.status_dict()
+
+
+def _read_syzygy() -> dict:
+    from universalchess.services import syzygy
+
+    return syzygy.status()
+
+
+def _read_engine_defaults() -> dict:
+    from universalchess.services import engine_defaults
+
+    return engine_defaults.status()
 
 
 def _read_wifi() -> dict:

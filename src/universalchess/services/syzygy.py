@@ -85,6 +85,12 @@ _download_state: Dict[str, Any] = {
 }
 
 
+def download_active() -> bool:
+    """Whether a tablebase fetch is running. Does not list the table directory."""
+    with _download_lock:
+        return bool(_download_state["active"])
+
+
 def table_names() -> Tuple[str, ...]:
     """Canonical 3–5-piece Syzygy table names (no extension).
 

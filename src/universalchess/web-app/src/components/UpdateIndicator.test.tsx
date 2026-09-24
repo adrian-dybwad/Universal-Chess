@@ -19,6 +19,8 @@ beforeEach(() => {
   setLiveStatus({
     activity: { active: false, activities: [] },
     engine: null,
+    syzygy: null,
+    engineDefaults: null,
     wifi: null,
     bluetooth: null,
     updates: {

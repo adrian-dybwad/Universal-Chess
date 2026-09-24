@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Badge, Button, Card, CardHeader, FormRow, ProgressBar, Slider, Toggle } from './ui';
 import { apiFetch } from '../utils/api';
+import { useLiveStatus } from '../stores/liveStatusStore';
 import {
   parseEngineDefaults,
   postEngineDefaults,
@@ -62,45 +63,42 @@ export function parseSyzygyStatus(raw: unknown): SyzygyStatus {
   };
 }
 
-const POLL_MS = 1000;
-
 export function SyzygyCard() {
   const { t } = useTranslation();
-  const [status, setStatus] = useState<SyzygyStatus>(() => parseSyzygyStatus({}));
-  const [defaults, setDefaults] = useState<EngineDefaultsStatus>(() => parseEngineDefaults({}));
+  const live = useLiveStatus();
+  const streamStatus = live?.syzygy ? parseSyzygyStatus(live.syzygy) : null;
+  const streamDefaults = live?.engineDefaults ? parseEngineDefaults(live.engineDefaults) : null;
+  // The POST response fills the card until a sample agrees the download is
+  // or isn't running. Percent is not part of that check: requiring it to
+  // match left the bar on the POST body for the whole download, because the
+  // percent moves on every later sample. A sample that still says idle does
+  // not win over a POST that started the download.
+  const [posted, setPosted] = useState<SyzygyStatus | null>(null);
+  const [defaultsDraft, setDefaultsDraft] = useState<Partial<EngineDefaultsStatus> | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    const [syzygyResponse, defaultsResponse] = await Promise.all([
-      apiFetch('/api/syzygy'),
-      apiFetch('/api/engine-defaults'),
-    ]);
-    if (!syzygyResponse.ok) {
-      throw new Error('status');
-    }
-    setStatus(parseSyzygyStatus(await syzygyResponse.json()));
-    if (defaultsResponse.ok) {
-      setDefaults(parseEngineDefaults(await defaultsResponse.json()));
-    }
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh().catch(() => {
-      setError(t('settingsPage.syzygy.failStatus'));
-    });
-  }, [refresh, t]);
-
-  useEffect(() => {
-    if (!status.downloading) {
-      return undefined;
-    }
-    const id = window.setInterval(() => {
-      void refresh().catch(() => undefined);
-    }, POLL_MS);
-    return () => window.clearInterval(id);
-  }, [status.downloading, refresh]);
+  if (
+    posted &&
+    streamStatus &&
+    posted.downloading === streamStatus.downloading &&
+    posted.enabled === streamStatus.enabled
+  ) {
+    setPosted(null);
+  }
+  const status = posted ?? streamStatus ?? parseSyzygyStatus({});
+  const shownDefaults = {
+    ...(streamDefaults ?? parseEngineDefaults({})),
+    ...defaultsDraft,
+  };
+  if (
+    defaultsDraft &&
+    streamDefaults &&
+    (['syzygy_probe_limit', 'syzygy_probe_depth', 'syzygy_50_move_rule'] as const).every(
+      (key) => defaultsDraft[key] === undefined || defaultsDraft[key] === streamDefaults[key],
+    )
+  ) {
+    setDefaultsDraft(null);
+  }
 
   async function postAction(action: string): Promise<boolean> {
     setBusy(true);
@@ -118,10 +116,9 @@ export function SyzygyCard() {
         setError(
           typeof record.error === 'string' ? record.error : t('settingsPage.syzygy.failAction'),
         );
-        await refresh().catch(() => undefined);
         return false;
       }
-      setStatus(parseSyzygyStatus(json));
+      setPosted(parseSyzygyStatus(json));
       return true;
     } catch {
       setError(t('settingsPage.syzygy.failAction'));
@@ -165,15 +162,15 @@ export function SyzygyCard() {
 
       <FormRow label={t('settingsPage.syzygy.probeLimit')} help={t('settingsPage.syzygy.probeLimitHelp')}>
         <Slider
-          value={defaults.syzygy_probe_limit}
+          value={shownDefaults.syzygy_probe_limit}
           min={0}
           max={7}
           disabled={busy}
           onChange={(value) => {
-            setDefaults((current) => ({ ...current, syzygy_probe_limit: value }));
+            setDefaultsDraft((current) => ({ ...shownDefaults, ...current, syzygy_probe_limit: value }));
           }}
           onCommit={(value) => {
-            void postEngineDefaults({ syzygy_probe_limit: value }).then(setDefaults).catch(() => {
+            void postEngineDefaults({ syzygy_probe_limit: value }).then(setDefaultsDraft).catch(() => {
               setError(t('settingsPage.engineDefaults.failAction'));
             });
           }}
@@ -181,27 +178,27 @@ export function SyzygyCard() {
       </FormRow>
       <FormRow label={t('settingsPage.syzygy.probeDepth')} help={t('settingsPage.syzygy.probeDepthHelp')}>
         <Slider
-          value={defaults.syzygy_probe_depth}
+          value={shownDefaults.syzygy_probe_depth}
           min={1}
           max={20}
           disabled={busy}
           onChange={(value) => {
-            setDefaults((current) => ({ ...current, syzygy_probe_depth: value }));
+            setDefaultsDraft((current) => ({ ...shownDefaults, ...current, syzygy_probe_depth: value }));
           }}
           onCommit={(value) => {
-            void postEngineDefaults({ syzygy_probe_depth: value }).then(setDefaults).catch(() => {
+            void postEngineDefaults({ syzygy_probe_depth: value }).then(setDefaultsDraft).catch(() => {
               setError(t('settingsPage.engineDefaults.failAction'));
             });
           }}
         />
       </FormRow>
       <Toggle
-        checked={defaults.syzygy_50_move_rule}
+        checked={shownDefaults.syzygy_50_move_rule}
         disabled={busy}
         label={t('settingsPage.syzygy.fiftyMove')}
         help={t('settingsPage.syzygy.fiftyMoveHelp')}
         onChange={(checked) => {
-          void postEngineDefaults({ syzygy_50_move_rule: checked }).then(setDefaults).catch(() => {
+          void postEngineDefaults({ syzygy_50_move_rule: checked }).then(setDefaultsDraft).catch(() => {
             setError(t('settingsPage.engineDefaults.failAction'));
           });
         }}

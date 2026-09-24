@@ -4,6 +4,7 @@ import { render, screen, waitFor, cleanup, fireEvent } from '@testing-library/re
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
+import { setLiveStatus } from '../stores/liveStatusStore';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
 import { makeEngine } from '../test/fixtures/engine';
 
@@ -65,6 +66,19 @@ let syzygyState = { ...idleSyzygy };
 function mockFetch(overrides: Partial<typeof idleSyzygy> = {}) {
   lastSyzygyPost = null;
   syzygyState = { ...idleSyzygy, ...overrides };
+  setLiveStatus({
+    activity: { active: false, activities: [] },
+    engine: null,
+    syzygy: syzygyState as unknown as Record<string, unknown>,
+    engineDefaults: {
+      hash: 16, threads: 1, move_overhead: 100,
+      syzygy_probe_limit: 5, syzygy_probe_depth: 1, syzygy_50_move_rule: true,
+      hash_max_mb: 16, ram_mb: 8192, constrained: false,
+    },
+    wifi: null,
+    bluetooth: null,
+    updates: null,
+  });
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string, init?: RequestInit): Promise<JsonResponseLike> => {
@@ -165,6 +179,34 @@ describe('Syzygy tablebase card', () => {
     await waitFor(() => {
       expect(lastSyzygyPost).toEqual({ action: 'enable' });
     });
+  });
+
+  it('shows a later download percent after the download POST', async () => {
+    // Why: the POST body was kept until percent matched a later sample.
+    // Percent moves on every sample, so the bar stayed at the POST value
+    // for the whole download — obvious while an engine install's own bar
+    // kept moving. Regression: the progressbar is missing or stuck at 0
+    // after the stream reports 40.
+    mockFetch();
+    renderEnginesTab();
+    fireEvent.click(await screen.findByRole('button', { name: /Download 3–5 piece set/ }));
+    await waitFor(() => {
+      expect(lastSyzygyPost).toEqual({ action: 'download' });
+    });
+    setLiveStatus({
+      activity: { active: false, activities: [] },
+      engine: { active: true, percent: 12 },
+      syzygy: { ...syzygyState, downloading: true, percent: 40, message: 'Fetching' },
+      engineDefaults: {
+        hash: 16, threads: 1, move_overhead: 100,
+        syzygy_probe_limit: 5, syzygy_probe_depth: 1, syzygy_50_move_rule: true,
+        hash_max_mb: 16, ram_mb: 8192, constrained: false,
+      },
+      wifi: null,
+      bluetooth: null,
+      updates: null,
+    });
+    expect(await screen.findByText('40%')).toBeInTheDocument();
   });
 
   it('POSTs download from the download button', async () => {

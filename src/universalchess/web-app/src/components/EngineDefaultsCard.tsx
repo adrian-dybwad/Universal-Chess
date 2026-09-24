@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Card, CardHeader, FormRow, Slider } from './ui';
 import { apiFetch } from '../utils/api';
+import { useLiveStatus } from '../stores/liveStatusStore';
 
 /**
  * App-wide Hash / Threads / Move Overhead on Chess Engines.
@@ -68,32 +69,32 @@ export async function postEngineDefaults(
 
 export function EngineDefaultsCard() {
   const { t } = useTranslation();
-  const [status, setStatus] = useState<EngineDefaultsStatus>(() => parseEngineDefaults({}));
+  const liveDefaults = useLiveStatus()?.engineDefaults;
+  const streamStatus = liveDefaults ? parseEngineDefaults(liveDefaults) : null;
+  const [draft, setDraft] = useState<Partial<EngineDefaultsStatus> | null>(null);
   const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    const response = await apiFetch('/api/engine-defaults');
-    if (!response.ok) {
-      throw new Error('status');
-    }
-    setStatus(parseEngineDefaults(await response.json()));
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void refresh().catch(() => {
-      setError(t('settingsPage.engineDefaults.failStatus'));
-    });
-  }, [refresh, t]);
+  if (
+    draft &&
+    streamStatus &&
+    (['hash', 'threads', 'move_overhead'] as const).every(
+      (key) => draft[key] === undefined || draft[key] === streamStatus[key],
+    )
+  ) {
+    setDraft(null);
+  }
+  const status = {
+    ...(streamStatus ?? parseEngineDefaults({})),
+    ...draft,
+  };
 
   function preview(payload: Record<string, number | boolean>): void {
-    setStatus((current) => ({ ...current, ...payload }));
+    setDraft((current) => ({ ...status, ...current, ...payload }));
     setError(null);
   }
 
   function commit(payload: Record<string, number | boolean>): void {
     setError(null);
-    void postEngineDefaults(payload).then(setStatus).catch(() => {
+    void postEngineDefaults(payload).then(setDraft).catch(() => {
       setError(t('settingsPage.engineDefaults.failAction'));
     });
   }

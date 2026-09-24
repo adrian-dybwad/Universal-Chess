@@ -120,6 +120,8 @@ function mockFetch(postStatus: number, status: InstallStatus, engine: EngineDefi
   setLiveStatus({
     activity: { active: false, activities: [] },
     engine: status as unknown as Record<string, unknown>,
+    syzygy: null,
+    engineDefaults: null,
     wifi: null,
     bluetooth: null,
     updates: null,
