@@ -687,7 +687,6 @@ export function Settings() {
   // Full structured status for the install banner/progress bar and the
   // interrupted-install Resume/Cancel controls. Null when nothing relevant is in
   // progress or pending.
-  const [installStatus, setInstallStatus] = useState<EngineInstallStatus | null>(null);
   // The engine whose install this client is actively tracking. Set when an
   // install is observed active (from any client) or started/resumed here; used by
   // the status watcher to detect the active->inactive transition exactly once
@@ -1330,71 +1329,61 @@ export function Settings() {
     return enginesData;
   }, []);
 
-  // Continuously mirror the shared install status onto the engine cards.
-  //
-  // The board installs one engine at a time on a background thread; GET
-  // /api/engines/status is the single source of truth shared by all clients. A
-  // chained-timeout poll (like the background-activity banner) keeps EVERY open
-  // client's cards in sync -- crucially including a client that was already on
-  // this page when an install was started from a different browser, which the
-  // previous one-shot/self-terminating poll never noticed.
-  //
-  // `installTrackRef` records the engine being tracked so the active->inactive
-  // transition refreshes the list and surfaces a failure exactly once; the status
-  // endpoint keeps returning the finished state afterwards, which must not
-  // re-trigger. Polls quickly while an install is in flight and backs off when
-  // idle to limit load on the (often busy) board.
+  // The stream is the ongoing source, shared by every open browser. A local
+  // copy covers the moment after this page starts an install, before the next
+  // sample arrives, and is dropped once the stream reports that engine active.
+  const liveEngine = useLiveStatus()?.engine as unknown as EngineInstallStatus | null;
+  const [optimisticInstall, setOptimisticInstall] = useState<EngineInstallStatus | null>(null);
+  // Cancel clears the card before the next sample drops `interrupted`.
+  const [hideInterrupted, setHideInterrupted] = useState(false);
+  if (
+    optimisticInstall &&
+    liveEngine?.active &&
+    liveEngine.engine === optimisticInstall.engine
+  ) {
+    setOptimisticInstall(null);
+  }
+  if (hideInterrupted && liveEngine && !liveEngine.interrupted) {
+    setHideInterrupted(false);
+  }
+  const installStatus = liveEngine?.active
+    ? liveEngine
+    : hideInterrupted
+      ? null
+      : liveEngine?.interrupted
+        ? liveEngine
+        : optimisticInstall;
+  const shownInstallingEngine =
+    installingEngine ?? (installStatus?.active ? installStatus.engine : null);
+
+  if (liveEngine?.active && liveEngine.engine) {
+    installTrackRef.current = liveEngine.engine;
+  }
+
   useEffect(() => {
-    let cancelled = false;
-    let timer: number | undefined;
-
-    const tick = async () => {
-      try {
-        const status: EngineInstallStatus = await apiFetch('/api/engines/status').then((r) => r.json());
-        if (!cancelled) {
-          if (status.active && status.engine) {
-            installTrackRef.current = status.engine;
-            setInstallingEngine(status.engine);
-            setInstallStatus(status);
-          } else if (installTrackRef.current) {
-            // active -> inactive: the install we were tracking just finished.
-            const finishedEngine = installTrackRef.current;
-            installTrackRef.current = null;
-            const enginesData = await refreshEngines();
-            setInstallingEngine(null);
-            setInstallStatus(null);
-            const result = status.result;
-            if (result && result.success === false) {
-              const label = enginesData.find((e) => e.name === finishedEngine)?.display_name ?? finishedEngine;
-              setEngineError({ engine: finishedEngine, message: `${t('settingsPage.enginesUi.failInstall', { name: label })}${result.error ? ` ${result.error}` : ''}` });
-            } else if (result && result.success) {
-              // Install seeds a fresh .uci; drop any stale /levels cache for this engine.
-              setEngineLevels((prev) => {
-                const next = { ...prev };
-                delete next[finishedEngine];
-                return next;
-              });
-            }
-          } else if (status.interrupted && status.engine) {
-            // An install was running before the last restart; offer Resume/Cancel.
-            setInstallStatus(status);
-          }
-        }
-      } catch (e) {
-        // Best-effort: a failed poll keeps the last known card state and retries.
-        console.error('Failed to poll engine install status:', e);
+    if (!liveEngine || liveEngine.active) return;
+    const engineName = installTrackRef.current;
+    if (!engineName) return;
+    installTrackRef.current = null;
+    void (async () => {
+      const enginesData = await refreshEngines();
+      setInstallingEngine(null);
+      const result = liveEngine.result;
+      if (result && result.success === false) {
+        const label = enginesData.find((e) => e.name === engineName)?.display_name ?? engineName;
+        setEngineError({
+          engine: engineName,
+          message: `${t('settingsPage.enginesUi.failInstall', { name: label })}${result.error ? ` ${result.error}` : ''}`,
+        });
+      } else if (result && result.success) {
+        setEngineLevels((prev) => {
+          const next = { ...prev };
+          delete next[engineName];
+          return next;
+        });
       }
-      if (!cancelled) {
-        timer = window.setTimeout(tick, installTrackRef.current ? 2000 : 5000);
-      }
-    };
-
-    void tick();
-    return () => {
-      cancelled = true;
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  }, [refreshEngines, t]);
+    })();
+  }, [liveEngine, refreshEngines, t]);
 
   // Stop the running install. The build's process group is killed and its tree
   // is preserved, so the engine's card switches to offering Resume. The status
@@ -1447,7 +1436,7 @@ export function Settings() {
         // completion handling; show an immediate optimistic state until it polls.
         installTrackRef.current = engineName;
         setInstallingEngine(engineName);
-        setInstallStatus({
+        setOptimisticInstall({
           active: true,
           installing: true,
           engine: engineName,
@@ -1518,7 +1507,7 @@ export function Settings() {
           }
           return;
         }
-        setInstallStatus(null);
+        setHideInterrupted(true);
       } catch (e) {
         console.error('Failed to cancel engine install:', e);
         if (engineName) {
@@ -1575,7 +1564,7 @@ export function Settings() {
           // optimistic progress state so the initiating client does not wait a full
           // poll interval. The watcher refines it and handles completion/failure.
           installTrackRef.current = engineName;
-          setInstallStatus({
+          setOptimisticInstall({
             active: true,
             installing: true,
             engine: engineName,
@@ -1640,7 +1629,7 @@ export function Settings() {
         }
         // Hand off to the status watcher exactly like an install.
         installTrackRef.current = engineName;
-        setInstallStatus({
+        setOptimisticInstall({
           active: true,
           installing: true,
           engine: engineName,
@@ -1781,7 +1770,7 @@ export function Settings() {
       // Hand off to the status watcher with an immediate optimistic state.
       installTrackRef.current = id;
       setInstallingEngine(id);
-      setInstallStatus({
+      setOptimisticInstall({
         active: true,
         installing: true,
         engine: id,
@@ -2457,7 +2446,7 @@ export function Settings() {
 
                 <EnginesList
                   engines={engines}
-                  installingEngine={installingEngine}
+                  installingEngine={shownInstallingEngine}
                   installStatus={installStatus}
                   engineError={engineError}
                   onToggle={toggleEngine}
@@ -2473,7 +2462,7 @@ export function Settings() {
 
                 <CustomEnginesPanel
                   customEngines={engines.filter((e) => e.is_custom)}
-                  installingEngine={installingEngine}
+                  installingEngine={shownInstallingEngine}
                   busy={customEngineBusy}
                   error={customEngineError}
                   onUpload={uploadCustomEngine}

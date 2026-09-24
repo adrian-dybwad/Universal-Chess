@@ -41,6 +41,7 @@ beforeEach(() => {
   };
   setLiveStatus({
     activity: { active: false, activities: [] },
+    engine: null,
     wifi: null,
     bluetooth: null,
     updates: status,

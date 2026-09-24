@@ -4,6 +4,7 @@ import { render, screen, waitFor, cleanup, within, fireEvent } from '@testing-li
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
+import { __resetLiveStatus, setLiveStatus } from '../stores/liveStatusStore';
 import type { EngineDefinition } from '../types/game';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
 import { installedEngine } from '../test/fixtures/engine';
@@ -116,6 +117,13 @@ const berserkNeedingRepair: EngineDefinition = {
  * Returns the recorded calls so tests can assert method, URL and credentials.
  */
 function mockFetch(postStatus: number, status: InstallStatus, engine: EngineDefinition = berserk) {
+  setLiveStatus({
+    activity: { active: false, activities: [] },
+    engine: status as unknown as Record<string, unknown>,
+    wifi: null,
+    bluetooth: null,
+    updates: null,
+  });
   const calls: RecordedCall[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
@@ -235,6 +243,7 @@ describe('Settings engines tab authentication', () => {
     cleanup();
     vi.unstubAllGlobals();
     localStorage.clear();
+    __resetLiveStatus();
   });
 
   it.each(ACTIONS)('sends stored credentials to $name', async ({ url, status, engine, trigger }) => {

@@ -126,6 +126,7 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
                 active: Boolean(activity?.active),
                 activities: Array.isArray(activity?.activities) ? activity.activities : [],
               },
+              engine: (data.engine as Record<string, unknown> | null) ?? null,
               wifi: (data.wifi as Record<string, unknown> | null) ?? null,
               bluetooth: (data.bluetooth as Record<string, unknown> | null) ?? null,
               updates: (data.updates as Record<string, unknown> | null) ?? null,

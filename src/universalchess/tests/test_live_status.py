@@ -35,6 +35,7 @@ def test_schedule_skips_radios_the_board_does_not_have():
     clock = {"now": 0.0}
     schedule = LiveStatusSchedule(
         read_activity=lambda: calls.append("activity") or {"active": False, "activities": []},
+        read_engine=lambda: calls.append("engine") or {"active": False, "percent": 0},
         read_wifi=lambda: calls.append("wifi") or {"ssid": "net"},
         read_bluetooth=lambda: calls.append("bluetooth") or {"enabled": True},
         read_updates=lambda: calls.append("updates") or {"auto_update": False},
@@ -47,7 +48,7 @@ def test_schedule_skips_radios_the_board_does_not_have():
 
     snapshot = schedule.snapshot()
 
-    assert calls == ["activity", "updates"]
+    assert calls == ["activity", "engine", "updates"]
     assert snapshot["wifi"] is None
     assert snapshot["bluetooth"] is None
     assert snapshot["type"] == "live_status"
@@ -73,6 +74,7 @@ def test_schedule_rereads_only_sources_whose_interval_elapsed():
 
     schedule = LiveStatusSchedule(
         read_activity=reader("activity", {"active": False, "activities": []}),
+        read_engine=reader("engine", {"active": False, "percent": 0}),
         read_wifi=reader("wifi", {"ssid": "net"}),
         read_bluetooth=reader("bluetooth", {"enabled": True}),
         read_updates=reader("updates", {"auto_update": True}),
@@ -88,14 +90,45 @@ def test_schedule_rereads_only_sources_whose_interval_elapsed():
     clock["now"] = 4.0
     second = schedule.snapshot()
 
-    assert calls == ["activity"]
+    assert calls == ["activity", "engine"]
     assert second["wifi"] == {"ssid": "net"}
     assert second["updates"] == {"auto_update": True}
 
     calls.clear()
     clock["now"] = 10.0
     schedule.snapshot()
-    assert calls == ["activity", "wifi", "bluetooth", "updates"]
+    assert calls == ["activity", "engine", "wifi", "bluetooth", "updates"]
+
+
+def test_engine_status_is_reread_every_two_seconds():
+    """The install dict is sampled on its own 2s cadence.
+
+    Why: percent is computed from the clock at read time, so the Settings
+    build bar only moves when this source is read. Activity stays on 4s and
+    must not be pulled forward to match. Regression: the calls list at t=2
+    omits "engine" or includes "activity".
+    """
+    calls = []
+    clock = {"now": 0.0}
+    schedule = LiveStatusSchedule(
+        read_activity=lambda: calls.append("activity") or {"active": False, "activities": []},
+        read_engine=lambda: calls.append("engine") or {"active": True, "percent": 10},
+        read_wifi=lambda: calls.append("wifi") or {"ssid": "net"},
+        read_bluetooth=lambda: {"enabled": True},
+        read_updates=lambda: calls.append("updates") or {"auto_update": False},
+        read_capability=lambda: _Capability(False, False),
+        clock=lambda: clock["now"],
+    )
+
+    first = schedule.snapshot()
+    calls.clear()
+    clock["now"] = 2.0
+    second = schedule.snapshot()
+
+    assert calls == ["engine"]
+    assert first["engine"] == {"active": True, "percent": 10}
+    assert second["engine"] == {"active": True, "percent": 10}
+    assert second["activity"] == {"active": False, "activities": []}
 
 
 def test_pump_publishes_only_when_the_snapshot_changes():

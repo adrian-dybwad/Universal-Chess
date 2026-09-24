@@ -18,6 +18,7 @@ import { __resetLiveStatus, setLiveStatus } from '../stores/liveStatusStore';
 beforeEach(() => {
   setLiveStatus({
     activity: { active: false, activities: [] },
+    engine: null,
     wifi: null,
     bluetooth: null,
     updates: {

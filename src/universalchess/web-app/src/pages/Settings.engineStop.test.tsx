@@ -4,6 +4,7 @@ import { render, screen, waitFor, cleanup, within, fireEvent } from '@testing-li
 import { MemoryRouter, Routes, Route } from 'react-router';
 import '@testing-library/jest-dom/vitest';
 import { Settings } from './Settings';
+import { __resetLiveStatus, setLiveStatus } from '../stores/liveStatusStore';
 import type { EngineDefinition } from '../types/game';
 import menuSchemaFixture from '../test/fixtures/menuSchema';
 import { makeEngine } from '../test/fixtures/engine';
@@ -124,6 +125,15 @@ function mockFetch(
   engines: EngineDefinition[],
   postStatus = 200,
 ) {
+  // Install progress arrives on live_status. Seeding the store is what makes
+  // Stop / Resume reflect `status`; the GET is no longer polled.
+  setLiveStatus({
+    activity: { active: false, activities: [] },
+    engine: status as unknown as Record<string, unknown>,
+    wifi: null,
+    bluetooth: null,
+    updates: null,
+  });
   const calls: RecordedCall[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
     const method = init?.method ?? 'GET';
@@ -199,12 +209,14 @@ describe('stopping a running install', () => {
     localStorage.clear();
     localStorage.setItem(AUTH_STORAGE_KEY, CREDENTIALS);
     vi.stubGlobal('confirm', () => true);
+    __resetLiveStatus();
   });
 
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
     localStorage.clear();
+    __resetLiveStatus();
   });
 
   it('offers Stop while the install is running', async () => {
@@ -252,12 +264,14 @@ describe('resuming and discarding paused installs', () => {
     localStorage.clear();
     localStorage.setItem(AUTH_STORAGE_KEY, CREDENTIALS);
     vi.stubGlobal('confirm', () => true);
+    __resetLiveStatus();
   });
 
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
     localStorage.clear();
+    __resetLiveStatus();
   });
 
   it('shows how far a paused install got', async () => {

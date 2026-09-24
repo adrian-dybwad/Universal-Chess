@@ -1387,7 +1387,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   the same things. Those snapshots now arrive on the single `/events`
   connection the page already keeps open. Each source is read once while
   a browser is connected, and only a change is sent. A board with no
-  radio is not asked about that radio.
+  radio is not asked about that radio. Engine install progress was still
+  a separate poll from every open Settings page, every few seconds even
+  while nothing was installing. That dict now rides the same snapshot.
+  The bar still moves every two seconds during a build, because the
+  percent is computed from the clock when the sample is read; an idle
+  install state does not change, so it is not sent again.
 
 - **The web app downloaded its script again on every page load**: the Vite
   bundle's filename changes when its contents change, and the server meant

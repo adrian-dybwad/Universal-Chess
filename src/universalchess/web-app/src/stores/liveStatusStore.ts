@@ -18,6 +18,7 @@ export interface LiveActivity {
 
 export interface LiveStatusSnapshot {
   activity: { active: boolean; activities: LiveActivity[] };
+  engine: Record<string, unknown> | null;
   wifi: Record<string, unknown> | null;
   bluetooth: Record<string, unknown> | null;
   updates: Record<string, unknown> | null;
@@ -39,6 +40,7 @@ export function setLiveStatus(next: LiveStatusSnapshot): void {
 export function mergeLiveStatus(partial: Partial<LiveStatusSnapshot>): void {
   current = {
     activity: partial.activity ?? current?.activity ?? { active: false, activities: [] },
+    engine: partial.engine !== undefined ? partial.engine : (current?.engine ?? null),
     wifi: partial.wifi !== undefined ? partial.wifi : (current?.wifi ?? null),
     bluetooth: partial.bluetooth !== undefined ? partial.bluetooth : (current?.bluetooth ?? null),
     updates: partial.updates !== undefined ? partial.updates : (current?.updates ?? null),

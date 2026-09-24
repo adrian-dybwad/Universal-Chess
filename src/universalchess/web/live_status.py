@@ -1,11 +1,12 @@
 """One sampler for the browser's persistent ``/events`` connection.
 
-The navbar and the connectivity page each used to poll activity, Wi-Fi,
-Bluetooth, and update status on their own timers. Every open tab repeated
-those requests. This module reads each source once, on its own cadence, while
-at least one browser holds ``/events``, and publishes a single ``live_status``
-event when the combined snapshot changes. The browsers already keep that
-connection open for game, battery, and clock updates.
+The navbar, the connectivity page, and the engine cards each used to poll
+activity, Wi-Fi, Bluetooth, update status, and engine-install status on their
+own timers. Every open tab repeated those requests. This module reads each
+source once, on its own cadence, while at least one browser holds ``/events``,
+and publishes a single ``live_status`` event when the combined snapshot
+changes. The browsers already keep that connection open for game, battery,
+and clock updates.
 """
 
 from __future__ import annotations
@@ -30,6 +31,11 @@ EVENT_TYPE = "live_status"
 ACTIVITY_INTERVAL_SECONDS = 4.0
 RADIO_INTERVAL_SECONDS = 10.0
 UPDATES_INTERVAL_SECONDS = 10.0
+# Install percent is computed from the clock at read time, so the build bar
+# only moves when this source is read. Two seconds is the cadence the Settings
+# cards used while an install was in flight. An idle dict does not change, so
+# the pump does not publish it again.
+ENGINE_INTERVAL_SECONDS = 2.0
 
 # How often the pump thread wakes to see which sources are due. Shorter than
 # the fastest source interval so a due read is not delayed by a full period.
@@ -74,16 +80,19 @@ class LiveStatusSchedule:
         self,
         *,
         read_activity: Callable[[], dict],
+        read_engine: Callable[[], dict],
         read_wifi: Callable[[], dict],
         read_bluetooth: Callable[[], dict],
         read_updates: Callable[[], dict],
         read_capability: Callable[[], object],
         clock: Callable[[], float] = time.monotonic,
         activity_interval_seconds: float = ACTIVITY_INTERVAL_SECONDS,
+        engine_interval_seconds: float = ENGINE_INTERVAL_SECONDS,
         radio_interval_seconds: float = RADIO_INTERVAL_SECONDS,
         updates_interval_seconds: float = UPDATES_INTERVAL_SECONDS,
     ):
         self._activity = _Source(read_activity, activity_interval_seconds)
+        self._engine = _Source(read_engine, engine_interval_seconds)
         self._wifi = _Source(read_wifi, radio_interval_seconds)
         self._bluetooth = _Source(read_bluetooth, radio_interval_seconds)
         self._updates = _Source(read_updates, updates_interval_seconds)
@@ -97,12 +106,14 @@ class LiveStatusSchedule:
         has_wifi = bool(getattr(capability, "has_wifi", False))
         has_bluetooth = bool(getattr(capability, "has_bluetooth", False))
         activity = self._activity.read_if_due(now)
+        engine = self._engine.read_if_due(now)
         wifi = self._wifi.read_if_due(now) if has_wifi else None
         bluetooth = self._bluetooth.read_if_due(now) if has_bluetooth else None
         updates = self._updates.read_if_due(now)
         return {
             "type": EVENT_TYPE,
             "activity": activity,
+            "engine": engine,
             "wifi": wifi,
             "bluetooth": bluetooth,
             "updates": updates,
@@ -223,6 +234,7 @@ def _default_schedule() -> LiveStatusSchedule:
     if _default is None:
         _default = LiveStatusSchedule(
             read_activity=_read_activity,
+            read_engine=_read_engine,
             read_wifi=_read_wifi,
             read_bluetooth=_read_bluetooth,
             read_updates=_read_updates,
@@ -242,6 +254,12 @@ def _read_activity() -> dict:
         read_progress(),
         import_store.status_dict(),
     )
+
+
+def _read_engine() -> dict:
+    from universalchess.services.engine_install_state import STORE as engine_store
+
+    return engine_store.status_dict()
 
 
 def _read_wifi() -> dict:
