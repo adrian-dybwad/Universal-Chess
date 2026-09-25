@@ -24,7 +24,9 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   installing and an update check that cannot fetch the worker. A tab in
   that state still notices a new web bundle: the `/events` snapshot names
   the module script on disk, and a difference from the script this page
-  loaded follows the same reload-or-prompt rule the service worker used.
+  loaded shows the reload banner. The check is that no service worker
+  controls the page, so the banner still appears when registration never
+  reports a failure. Reload refreshes onto the build on disk.
 
 - **Shared engine defaults (HIARCS-style)**: Hash, Threads, and Move Overhead
   were labelled engine-wide but lived in each engine's ``[DEFAULT]`` and on

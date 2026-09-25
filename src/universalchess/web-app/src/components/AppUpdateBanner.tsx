@@ -9,8 +9,6 @@ import {
   applyServiceWorkerUpdate,
   subscribeAutoReloadBlocked,
   getAutoReloadBlocked,
-  subscribeServiceWorkerMissing,
-  getServiceWorkerMissing,
 } from '../utils/swRegistration';
 import { useLiveStatus } from '../stores/liveStatusStore';
 import { runningWebClient, webClientChanged } from '../utils/webClientBuild';
@@ -27,16 +25,29 @@ function isDocumentHidden(): boolean {
   return document.visibilityState === 'hidden';
 }
 
+function subscribeServiceWorkerController(callback: () => void): () => void {
+  if (!('serviceWorker' in navigator)) return () => {};
+  navigator.serviceWorker.addEventListener('controllerchange', callback);
+  return () => navigator.serviceWorker.removeEventListener('controllerchange', callback);
+}
+
+/** True once a worker is controlling this page. A failed register leaves this false. */
+function serviceWorkerControlsPage(): boolean {
+  return Boolean(navigator.serviceWorker?.controller);
+}
+
 /**
  * Notifies the user when a new web-app build has been deployed and lets them
  * (or, when safe, the page itself) reload onto it.
  *
  * Detection rides the service worker: each build produces a byte-different
  * `sw.js`, so a redeploy makes the browser download a new worker that waits to
- * activate. When that worker never loads, the same decision uses the module
- * script src on the `/events` snapshot: it is the bundle on disk, and a
- * difference from the script this page loaded is a waiting update. Once an
- * update is waiting, {@link decideUpdateAction} decides what to do:
+ * activate. When no worker controls the page, the module script src on the
+ * `/events` snapshot is the bundle on disk, and a difference from the script
+ * this page loaded is a waiting update. That path always shows this banner:
+ * an idle auto-reload goes through the service worker, and with no waiting
+ * worker the page never says a new build is here. Once a worker is waiting,
+ * {@link decideUpdateAction} decides what to do:
  * an idle board -- or a backgrounded tab -- reloads automatically, while a live
  * game in the foreground shows this banner so play is never interrupted
  * mid-move. The Reload tap is passed as `userInitiated` so the navigation
@@ -60,13 +71,14 @@ export function AppUpdateBanner() {
     () => false,
   );
 
-  const workerMissing = useSyncExternalStore(
-    subscribeServiceWorkerMissing,
-    getServiceWorkerMissing,
+  const workerControlsPage = useSyncExternalStore(
+    subscribeServiceWorkerController,
+    serviceWorkerControlsPage,
     () => false,
   );
   const deployedWebClient = useLiveStatus()?.webClient ?? null;
-  const streamUpdateReady = workerMissing && webClientChanged(deployedWebClient, runningWebClient());
+  const streamUpdateReady =
+    !workerControlsPage && webClientChanged(deployedWebClient, runningWebClient());
   const updateReady = workerUpdateReady || streamUpdateReady;
 
   useEffect(() => {
@@ -74,7 +86,13 @@ export function AppUpdateBanner() {
   }, []);
 
   const gameInProgress = isGameInProgress(gameState);
-  const action = updateReady ? decideUpdateAction({ gameInProgress, documentHidden }) : null;
+  // A stream-only update has no waiting worker to activate, so auto-reload
+  // never surfaces a notice. The banner is the notice; Reload still refreshes.
+  const action = !updateReady
+    ? null
+    : streamUpdateReady && !workerUpdateReady
+      ? 'prompt'
+      : decideUpdateAction({ gameInProgress, documentHidden });
 
   useEffect(() => {
     if (action === 'reload' && !autoReloadBlocked) {

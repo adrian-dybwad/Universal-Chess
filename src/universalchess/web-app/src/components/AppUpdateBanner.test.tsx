@@ -90,6 +90,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  document.body.innerHTML = '';
+  Reflect.deleteProperty(navigator, 'serviceWorker');
 });
 
 describe('AppUpdateBanner', () => {
@@ -175,14 +177,15 @@ describe('AppUpdateBanner', () => {
     expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledTimes(1);
   });
 
-  it('reloads from the streamed bundle when the service worker never loaded', () => {
-    // An untrusted certificate rejects the worker, so onUpdateReady never
-    // fires. The /events snapshot still names the script on disk. A regression
-    // leaves that idle tab on the old bundle with no reload.
-    mocks.workerMissing = true;
+  it('shows the reload banner when the script on disk changes and no worker controls the page', () => {
+    // An untrusted certificate leaves the page with no controlling worker, so
+    // onUpdateReady never fires. Auto-reload goes through that worker and
+    // shows nothing. The /events script src is the notice: the banner appears
+    // and Reload is what refreshes. A regression leaves the idle tab on the
+    // old bundle with no banner.
     document.body.innerHTML = '<script type="module" src="/assets/index-old.js"></script>';
     render(<AppUpdateBanner />);
-    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
 
     act(() => {
       setLiveStatus({
@@ -196,6 +199,43 @@ describe('AppUpdateBanner', () => {
         webClient: '/assets/index-new.js',
       });
     });
-    expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
+    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
+
+    act(() => {
+      screen.getByRole('button', { name: 'Reload' }).click();
+    });
+    expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledWith({ userInitiated: true });
+  });
+
+  it('ignores a streamed script change while a service worker controls the page', () => {
+    // A controlling worker is the update path. Treating the script src as a
+    // second notice would prompt on every deploy before that worker is waiting.
+    // A regression shows Reload here with applyServiceWorkerUpdate uncalled.
+    const listeners = new Set<() => void>();
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        controller: {},
+        addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
+        removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
+      },
+    });
+    document.body.innerHTML = '<script type="module" src="/assets/index-old.js"></script>';
+    render(<AppUpdateBanner />);
+    act(() => {
+      setLiveStatus({
+        activity: { active: false, activities: [] },
+        engine: null,
+        syzygy: null,
+        engineDefaults: null,
+        wifi: null,
+        bluetooth: null,
+        updates: null,
+        webClient: '/assets/index-new.js',
+      });
+    });
+    expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
   });
 });
