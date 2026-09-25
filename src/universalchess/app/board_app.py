@@ -620,6 +620,22 @@ def _broadcast_clock_status() -> None:
         log.debug(f"[App] Failed to broadcast clock status: {e}")
 
 
+def _persist_ticking_clock() -> None:
+    """Save the thinking side's remaining time with the game.
+
+    The web and the e-paper show the live countdown. The move row does not
+    change until the next move, so without this a resume restores the time at
+    the last move and the side who was thinking gets those seconds back.
+    """
+    try:
+        protocol = getattr(_game, "protocol", None)
+        manager = getattr(protocol, "game_manager", None) if protocol is not None else None
+        if manager is not None:
+            manager.persist_live_clocks()
+    except Exception as e:  # noqa: BLE001 - a failed save must not stop the countdown
+        log.debug(f"[App] Failed to persist the ticking clock: {e}")
+
+
 _gap_filler = None
 
 
@@ -1053,8 +1069,18 @@ def _build_resume_data(models, session, game) -> Optional[dict]:
 
     last_move = moves[-1]
     last_fen = last_move.fen
-    white_clock = getattr(last_move, 'white_clock', None)
-    black_clock = getattr(last_move, 'black_clock', None)
+    # The last move's clocks are the remainders when that move was played. The
+    # side then on move keeps counting, and those seconds are on the game row.
+    # Prefer them so resume does not give that thinking time back. Fall back to
+    # the move row for games stored before the live columns existed.
+    live_white = getattr(game, 'live_white_clock', None)
+    live_black = getattr(game, 'live_black_clock', None)
+    if live_white is not None and live_black is not None:
+        white_clock = live_white
+        black_clock = live_black
+    else:
+        white_clock = getattr(last_move, 'white_clock', None)
+        black_clock = getattr(last_move, 'black_clock', None)
 
     # Skip the empty starting-position row; resume only with actual played moves.
     move_list = [m.move for m in moves if m.move]
@@ -7308,6 +7334,7 @@ def main():
         from universalchess.state import get_chess_clock
         clock_state = get_chess_clock()
         clock_state.on_tick(_broadcast_clock_status)
+        clock_state.on_tick(_persist_ticking_clock)
         clock_state.on_state_change(_broadcast_clock_status)
     except Exception as e:  # noqa: BLE001 - web mirror is optional
         log.debug(f"[Main] Failed to register clock state observer: {e}")

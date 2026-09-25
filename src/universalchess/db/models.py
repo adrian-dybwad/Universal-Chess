@@ -68,6 +68,13 @@ class Game(Base):
     # mode to make the scan match. Cleared when a later move is played on the
     # board. Nullable for games created before this column.
     web_play = Column(Boolean, nullable=True, default=False)
+    # Remaining time while a side is thinking, updated as the clock ticks.
+    # The per-move clock columns are the time after that move (PGN [%clk]).
+    # The side about to move keeps counting after that snapshot, and a resume
+    # that reads only the last move gives them their time back. These hold the
+    # live remainders. NULL until a timed move has been stored.
+    live_white_clock = Column(Integer, nullable=True)
+    live_black_clock = Column(Integer, nullable=True)
     # The game's time control in the PGN standard's TimeControl format ("300",
     # "300+5", "40/5400:1800+30", "-" for untimed, "?" when the two sides differ).
     # See universalchess.services.pgn_time.pgn_time_control_tag.
@@ -148,6 +155,8 @@ _ADDED_COLUMNS = (
     ('game', 'chess960', 'BOOLEAN'),
     ('game', 'time_control', 'VARCHAR(64)'),
     ('game', 'web_play', 'BOOLEAN'),
+    ('game', 'live_white_clock', 'INTEGER'),
+    ('game', 'live_black_clock', 'INTEGER'),
 )
 
 

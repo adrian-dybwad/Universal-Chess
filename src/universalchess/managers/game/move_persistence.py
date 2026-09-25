@@ -196,11 +196,54 @@ def persist_move_and_maybe_create_game(
             existing = session.get(models.Game, game_db_id)
             if existing is not None and bool(existing.web_play) != bool(web_play):
                 existing.web_play = bool(web_play)
+        # The move row keeps the time after this move (PGN). The live columns
+        # start from that same snapshot and are then moved by the ticking clock,
+        # so a resume does not hand the side to move their think-time back.
+        set_live_clocks(session, game_db_id, white_clock, black_clock)
         session.commit()
         log.debug(f"[GameManager.async] Move {move_uci} committed to database")
         return game_db_id, True
 
     return game_db_id, False
+
+
+def set_live_clocks(session, game_db_id: int, white_seconds, black_seconds) -> bool:
+    """Store the clock's current remainders on the game. Does not commit.
+
+    The per-move columns are the time after a move. While the side to move is
+    thinking, those columns stay put and only these fields move, which is what
+    resume restores. ``None`` on either side (an untimed game, or a clock that
+    could not be read) leaves the stored remainders alone.
+    """
+    if session is None or game_db_id is None or game_db_id < 0:
+        return False
+    if white_seconds is None or black_seconds is None:
+        return False
+    models = _get_models()
+    if models is None:
+        return False
+    game = session.get(models.Game, game_db_id)
+    if game is None:
+        return False
+    white_seconds = int(white_seconds)
+    black_seconds = int(black_seconds)
+    if game.live_white_clock == white_seconds and game.live_black_clock == black_seconds:
+        return False
+    game.live_white_clock = white_seconds
+    game.live_black_clock = black_seconds
+    return True
+
+
+def update_live_clocks(session, game_db_id: int, white_seconds, black_seconds) -> bool:
+    """Persist the clock's current remainders and commit.
+
+    Returns False when nothing changed, so a tick that lands on the same whole
+    second does not write.
+    """
+    if not set_live_clocks(session, game_db_id, white_seconds, black_seconds):
+        return False
+    session.commit()
+    return True
 
 
 def create_game_from_moves(

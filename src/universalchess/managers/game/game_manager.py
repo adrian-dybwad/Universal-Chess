@@ -67,7 +67,11 @@ from .database import (
     delete_last_move,
     update_game_result,
 )
-from .move_persistence import persist_move_and_maybe_create_game, update_move_analysis
+from .move_persistence import (
+    persist_move_and_maybe_create_game,
+    update_live_clocks,
+    update_move_analysis,
+)
 from universalchess.services.analysis import get_analysis_service
 from universalchess.services.pgn_time import pgn_time_control_tag
 from .post_move import handle_game_end, validate_physical_board_after_move
@@ -205,6 +209,9 @@ class GameManager:
         # Clock service for time management
         # Used to get/set clock times (for database storage and Lichess sync)
         self._clock_service = get_chess_clock_service()
+        # One live-clock write is enough in flight: the task reads the clock
+        # when it runs, so a tick per second does not queue a write per second.
+        self._live_clock_persist_pending = False
         
         # Player manager reference - manages both white and black players.
         # Must be set via set_player_manager() before game starts.
@@ -321,6 +328,41 @@ class GameManager:
         except Exception as e:
             log.debug(f"[GameManager._get_clock_times_for_db] Error getting clock times: {e}")
             return (None, None)
+
+    def persist_live_clocks(self) -> None:
+        """Save the clock's current remainders for the game in progress.
+
+        The move row is written when a move completes. The side to move keeps
+        counting after that, and those seconds used to exist only in the clock
+        service, so a resume put that side back to the time their last move
+        left them. A tick calls this. The write runs on the session's thread
+        and reads the clock then, so it cannot store a remainder from before a
+        move that has already been saved.
+        """
+        if self._live_clock_persist_pending:
+            return
+        if self.database_session is None or self.game_db_id < 0:
+            return
+        if not self._clock_service.timed_mode:
+            return
+        self._live_clock_persist_pending = True
+        game_db_id = self.game_db_id
+
+        def write() -> None:
+            try:
+                white_seconds, black_seconds = self._clock_service.get_times()
+                update_live_clocks(
+                    self.database_session, game_db_id, white_seconds, black_seconds)
+            except Exception as e:
+                log.debug(f"[GameManager.persist_live_clocks] {e}")
+                try:
+                    self.database_session.rollback()
+                except Exception:  # noqa: S110  # nosec - the write error is already logged
+                    pass
+            finally:
+                self._live_clock_persist_pending = False
+
+        self._task_worker.submit(write)
     
     def _on_position_analysed(self, result) -> None:
         """Backfill the move row for a position whose analysis just finished.
