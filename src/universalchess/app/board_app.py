@@ -1086,6 +1086,7 @@ def _build_resume_data(models, session, game) -> Optional[dict]:
     # row's FEN, which is the game's true start regardless of variant.
     chess960 = bool(getattr(game, 'chess960', False))
     start_fen = getattr(game, 'start_fen', None) or moves[0].fen
+    web_play = bool(getattr(game, 'web_play', False))
     log.info(f"[Resume] Loaded game: id={game.id}, source={game.source}, "
              f"moves={len(move_list)}, result={result}, chess960={chess960}, "
              f"last_fen={last_fen[:30]}...")
@@ -1109,6 +1110,7 @@ def _build_resume_data(models, session, game) -> Optional[dict]:
         'termination': termination,
         'chess960': chess960,
         'start_fen': start_fen,
+        'web_play': web_play,
         'site': getattr(game, 'site', None),
     }
 
@@ -1214,6 +1216,17 @@ def _resolve_resume_target(snapshot) -> Optional[dict]:
     recorded = _get_game_by_id(snapshot.game_db_id) if snapshot.game_db_id > 0 else None
     incomplete = _get_incomplete_game()
     return choose_resume_target(recorded, incomplete)
+
+
+def resume_assumes_saved_position(web_play: bool) -> bool:
+    """Whether resume should take the saved position as already set up.
+
+    A game played from the website board never moved the physical pieces. The
+    saved position already includes the opponent's reply, and correction mode
+    would wait for a scan that does not have those pieces. Resume assumes that
+    position and keeps playing from it.
+    """
+    return bool(web_play)
 
 
 def _resume_game(game_data: dict) -> bool:
@@ -1350,7 +1363,26 @@ def _resume_game(game_data: dict) -> bool:
                 get_analysis_service().analyze_current_position(add_to_history=not eval_scores)
             log.info(f"[Resume] Restored finished game (result={result}, termination={termination})")
             return True
-        
+
+        # Replay paints each ply as it lands. A reply that arrives while the
+        # previous frame is still drawing leaves the panel on the move before
+        # that reply. One more draw of the position replay just reached.
+        board_widget = getattr(_game.display, "chess_board_widget", None) if _game.display else None
+        if board_widget is not None:
+            board_widget.invalidate_and_update()
+
+        def continue_from_saved_position() -> None:
+            if _game.controller and _game.controller.local_controller:
+                _game.controller.local_controller.set_suppress_move_requests(False)
+            log.info(f"[Resume] Triggering {'WHITE' if game_state.turn == chess.WHITE else 'BLACK'} turn")
+            gm._switch_turn_with_event()
+
+        if resume_assumes_saved_position(game_data.get('web_play')):
+            log.info("[Resume] Website board game; assuming the saved position")
+            gm._web_move_mode = True
+            continue_from_saved_position()
+            return True
+
         # Check if physical board matches the resumed position
         current_physical_state = board.getChessState()
         expected_logical_state = game_state.to_piece_presence_state()
@@ -1362,14 +1394,7 @@ def _resume_game(game_data: dict) -> bool:
                 gm._provide_correction_guidance(current_physical_state, expected_logical_state)
             else:
                 log.info("[Resume] Physical board matches resumed position")
-                # Resume is complete - re-enable move requests from LocalController.
-                if _game.controller and _game.controller.local_controller:
-                    _game.controller.local_controller.set_suppress_move_requests(False)
-                # Board is correct - trigger turn event and prompt current player
-                # Uses _switch_turn_with_event which also calls request_move on the player
-                # If engine is still initializing, the request will be queued
-                log.info(f"[Resume] Triggering {'WHITE' if game_state.turn == chess.WHITE else 'BLACK'} turn")
-                gm._switch_turn_with_event()
+                continue_from_saved_position()
         else:
             log.warning("[Resume] Could not validate physical board state")
         

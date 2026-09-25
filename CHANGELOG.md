@@ -1394,6 +1394,8 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **A website-board game resumed a move behind, then waited on the physical pieces**: playing from the board tab applies the opponent's reply without anyone moving a piece. Resume replayed that reply while the panel was still drawing the move before it, stored the unfinished picture, and left the e-paper there. It then entered correction mode because the piece scan did not match. A render that is invalidated while it is still drawing no longer becomes the cached picture, and resume asks for one more draw of the position it reached. A game whose latest stored move was played on the website board resumes at that saved position, reply included, instead of correction mode.
+
 - **The web app polled the board several times every few seconds**: the
   navbar asked separately for background activity, Wi-Fi, Bluetooth, and
   update status, and the connectivity and updates pages asked again for

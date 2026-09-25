@@ -104,6 +104,11 @@ class Widget(ABC):
         self.visible = True  # Whether the widget should be rendered by the Manager
         self._background_shade = max(0, min(16, background_shade))
         self._cached_sprite: Optional[Image.Image] = None  # Cached rendered image for fast blit
+        # Bumped by invalidate_cache. A render that is already in progress must
+        # not store its sprite when this changes underneath it: resume replays
+        # the next ply while the panel is still drawing the previous one, and
+        # storing that picture puts the e-paper a move behind the web.
+        self._sprite_generation = 0
         # Cached RED overlay sprite for three-color mode. Mirrors _cached_sprite
         # but holds the widget's red mask (0 = red, 255 = not red). Only built for
         # widgets that override render_red(); None means "no red contribution".
@@ -236,6 +241,7 @@ class Widget(ABC):
         affects its red mask too, and a stale red sprite would keep showing the
         previous highlight on a three-color panel.
         """
+        self._sprite_generation += 1
         self._cached_sprite = None
         self._cached_red_sprite = None
     
@@ -284,9 +290,14 @@ class Widget(ABC):
         sprite = self._cached_sprite
         if sprite is None:
             # Cache miss - render to new sprite
+            generation = self._sprite_generation
             sprite = Image.new('1', (self.width, self.height), 255)
             self.render(sprite)
-            self._cached_sprite = sprite
+            # The position can change while render() is still drawing. Storing
+            # the sprite then resurrects the picture invalidate_cache just threw
+            # away, and the next refresh blits the old move.
+            if generation == self._sprite_generation:
+                self._cached_sprite = sprite
             log.debug(f"Widget.draw_on(): {self.__class__.__name__} cache miss, rendered new sprite")
         
         # Fast blit from cache to canvas
@@ -356,9 +367,11 @@ class Widget(ABC):
 
         sprite = self._cached_red_sprite
         if sprite is None:
+            generation = self._sprite_generation
             sprite = Image.new('1', (self.width, self.height), 255)
             self.render_red(sprite)
-            self._cached_red_sprite = sprite
+            if generation == self._sprite_generation:
+                self._cached_red_sprite = sprite
 
         # Paste solid red (0) only where the sprite is red. The mask must be
         # non-zero where red, so invert the sprite (red 0 -> mask 255). A 4-tuple

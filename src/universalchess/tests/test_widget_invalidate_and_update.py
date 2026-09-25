@@ -110,6 +110,37 @@ def test_invalidate_and_update_hidden_not_forced_invalidates_but_skips_update():
     assert result is None, "hidden+unforced request_update returns None"
 
 
+def test_render_that_is_invalidated_midway_does_not_become_the_cached_sprite():
+    """A slow render must not store its picture if the position changed while it ran.
+
+    Resume replays plies faster than the panel draws. The chess board starts
+    rendering the move before the opponent's reply, the reply clears the cache,
+    and the finished render then writes that earlier picture back. The next
+    refresh blits it, so the e-paper stays a move behind the web. The stale
+    sprite must not be cached, and the next draw must render again.
+    """
+    class _MovesDuringRender(Widget):
+        def __init__(self):
+            super().__init__(0, 0, 10, 10, update_callback=lambda *a, **k: None)
+            self.label = "before-reply"
+            self.renders = 0
+
+        def render(self, sprite: Image.Image) -> None:
+            self.renders += 1
+            if self.label == "before-reply":
+                self.label = "after-reply"
+                self.invalidate_cache()
+
+    widget = _MovesDuringRender()
+    canvas = Image.new("1", (10, 10), 255)
+    widget.draw_on(canvas, 0, 0)
+
+    assert widget._cached_sprite is None
+    widget.draw_on(canvas, 0, 0)
+    assert widget.renders == 2
+    assert widget._cached_sprite is not None
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

@@ -831,6 +831,9 @@ class GameManager:
         # further move can land before it does, so reading there would attach a
         # different move's duration to this row.
         move_duration_ms = self._game_state.last_move_duration_ms
+        # Captured now. The task runs later, after a physical piece event may
+        # have cleared web-move mode, and resume must see how THIS move was played.
+        web_play = self._web_move_mode
 
         def execute_tasks():
             try:
@@ -859,6 +862,7 @@ class GameManager:
                             time_control=self._pgn_time_control(),
                             analysis=analysis,
                             chess960=self._game_state.chess960,
+                            web_play=web_play,
                         )
                         self.game_db_id = new_game_db_id
                     except Exception as db_error:

@@ -87,6 +87,7 @@ def persist_move_and_maybe_create_game(
     time_control: Optional[str] = None,
     analysis: Optional["PositionAnalysis"] = None,
     chess960: bool = False,
+    web_play: bool = False,
 ) -> Tuple[int, bool]:
     """Persist a move, creating the game record if needed.
 
@@ -122,6 +123,9 @@ def persist_move_and_maybe_create_game(
             mid-game position ("Play Game from here") -- so resume replays from
             that exact start instead of the standard opening. Only a game that
             begins from the standard opening stores a NULL start_fen.
+        web_play: True when this move was played from the website board. Stored
+            on the game and updated on later moves, so resume can assume the
+            saved position instead of correcting the physical pieces.
 
     Returns:
         Tuple of (new_game_db_id, committed) where:
@@ -155,6 +159,7 @@ def persist_move_and_maybe_create_game(
             chess960=chess960,
             start_fen=fen_before_move if non_standard_start else None,
             time_control=time_control,
+            web_play=web_play,
         )
         session.add(game)
         session.flush()
@@ -184,6 +189,13 @@ def persist_move_and_maybe_create_game(
             best_move=analysis.best_move if analysis is not None else None,
         )
         session.add(game_move)
+        if not is_first_move:
+            # The first-move insert already stored the flag. A later move from
+            # the website board, or a return to the physical board, has to
+            # update the row resume reads.
+            existing = session.get(models.Game, game_db_id)
+            if existing is not None and bool(existing.web_play) != bool(web_play):
+                existing.web_play = bool(web_play)
         session.commit()
         log.debug(f"[GameManager.async] Move {move_uci} committed to database")
         return game_db_id, True

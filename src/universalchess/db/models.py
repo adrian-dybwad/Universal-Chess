@@ -62,6 +62,12 @@ class Game(Base):
     # king-onto-rook move encoding match how the game was played. Nullable/False
     # for standard games and pre-existing databases.
     chess960 = Column(Boolean, nullable=True, default=False)
+    # True when the latest stored move was played from the website board.
+    # That game is not on the physical pieces: resume assumes the saved
+    # position, including the opponent's reply, instead of entering correction
+    # mode to make the scan match. Cleared when a later move is played on the
+    # board. Nullable for games created before this column.
+    web_play = Column(Boolean, nullable=True, default=False)
     # The game's time control in the PGN standard's TimeControl format ("300",
     # "300+5", "40/5400:1800+30", "-" for untimed, "?" when the two sides differ).
     # See universalchess.services.pgn_time.pgn_time_control_tag.
@@ -141,6 +147,7 @@ _ADDED_COLUMNS = (
     ('game', 'start_fen', 'VARCHAR(255)'),
     ('game', 'chess960', 'BOOLEAN'),
     ('game', 'time_control', 'VARCHAR(64)'),
+    ('game', 'web_play', 'BOOLEAN'),
 )
 
 
