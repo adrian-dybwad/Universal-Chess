@@ -3220,11 +3220,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 - **Password handling hardened**: WebDAV password hashes are compared in constant
   time, and the minimum password length is raised from 4 to 6.
 - **Supply chain**: all GitHub Actions are pinned to immutable commit SHAs rather
-  than mutable tags, and high-severity advisories in the web-app development
-  lockfile are resolved (`js-yaml` 4.3.2, `sharp` 0.35.4, `browserslist` 4.28.9,
-  plus `vitest` / `@vitest/mocker` 4.1.11 and `baseline-browser-mapping`
-  2.11.21). Those packages are test and build tools; they are not in the
-  bundle the board serves.
+  than mutable tags, and advisories in the web-app development lockfile are
+  resolved (`js-yaml` 4.3.2, `sharp` 0.35.5, `browserslist` 4.28.9, `undici`
+  7.30.1, `source-map-js` 1.2.2, `brace-expansion` 1.1.21 and 5.0.12, `nanoid`
+  3.3.20, plus `vitest` / `@vitest/mocker` 4.1.11 and
+  `baseline-browser-mapping` 2.11.21). Those packages are test and build tools;
+  they are not in the bundle the board serves.
 
 ### Notes
 
