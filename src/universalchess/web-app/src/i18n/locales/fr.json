@@ -7,7 +7,8 @@
     "boardControl": "Contrôle du plateau",
     "appName": "Universal Chess",
     "mainNav": "navigation principale",
-    "menu": "menu"
+    "menu": "menu",
+    "serviceWorkerLoadFailed": "Le service worker ne s'est pas chargé."
   },
   "brand": {
     "tagline": "Regardez les dents de ce cheval donné"

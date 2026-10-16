@@ -7,7 +7,8 @@
     "boardControl": "Brettsteuerung",
     "appName": "Universal Chess",
     "mainNav": "Hauptnavigation",
-    "menu": "Menü"
+    "menu": "Menü",
+    "serviceWorkerLoadFailed": "Der Service Worker wurde nicht geladen."
   },
   "brand": {
     "tagline": "Dem geschenkten Gaul ins Maul geschaut"

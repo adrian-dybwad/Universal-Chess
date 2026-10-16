@@ -19,7 +19,8 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   certificate lets the page load after the browser warning, but Chrome
   refuses to fetch the service worker, so an open tab never notices a new
   build and never says so. The right end of the status bar now shows a
-  warning icon while that worker is missing, and the icon's label is the
+  warning icon while that worker is missing, and the icon's label is "The
+  service worker did not load." in the selected language, followed by the
   browser's own error. The same warning covers a script that fails while
   installing and an update check that cannot fetch the worker. A tab in
   that state still notices a new web bundle: the `/events` snapshot names

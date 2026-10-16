@@ -7,7 +7,8 @@
     "boardControl": "Controllo scacchiera",
     "appName": "Universal Chess",
     "mainNav": "navigazione principale",
-    "menu": "menu"
+    "menu": "menu",
+    "serviceWorkerLoadFailed": "Il service worker non è stato caricato."
   },
   "brand": {
     "tagline": "A caval donato non si guarda in bocca"

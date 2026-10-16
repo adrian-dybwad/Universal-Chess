@@ -7,7 +7,8 @@
     "boardControl": "Управление доской",
     "appName": "Universal Chess",
     "mainNav": "основная навигация",
-    "menu": "меню"
+    "menu": "меню",
+    "serviceWorkerLoadFailed": "Service worker не загрузился."
   },
   "brand": {
     "tagline": "Дарёному коню в зубы не смотрят"

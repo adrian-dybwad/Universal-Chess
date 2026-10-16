@@ -7,7 +7,8 @@
     "boardControl": "Bordbesturing",
     "appName": "Universal Chess",
     "mainNav": "hoofdnavigatie",
-    "menu": "menu"
+    "menu": "menu",
+    "serviceWorkerLoadFailed": "De service worker is niet geladen."
   },
   "brand": {
     "tagline": "Een gegeven paard in de bek gekeken"

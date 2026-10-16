@@ -7,7 +7,8 @@
     "boardControl": "Tahta kontrolü",
     "appName": "Universal Chess",
     "mainNav": "ana gezinme",
-    "menu": "menü"
+    "menu": "menü",
+    "serviceWorkerLoadFailed": "Service worker yüklenmedi."
   },
   "brand": {
     "tagline": "Hediyenin atına bakılmaz"
