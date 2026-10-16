@@ -205,8 +205,8 @@ class _DeviceStream:
         if cc is not None:
             try:
                 cc.disconnect()
-            except Exception:
-                pass
+            except Exception as e:
+                log.debug(f"[ChromecastService] Error disconnecting {self.name}: {e}")
 
     def _loop(self) -> None:
         """Connect to this device and keep the stream alive until stopped."""
@@ -311,8 +311,8 @@ def _safe_stop_discovery(browser) -> None:
     if browser is not None:
         try:
             browser.stop_discovery()
-        except Exception:
-            pass
+        except Exception as e:
+            log.debug(f"[ChromecastService] Error stopping discovery: {e}")
 
 
 class ChromecastService:
