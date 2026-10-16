@@ -30,9 +30,14 @@ from universalchess.epaper import Manager, SplashScreen
 
 @dataclass(frozen=True)
 class BootResult:
-    """What the bring-up produced. Both are None on a board with no panel."""
+    """What the bring-up produced.
 
-    display_manager: Optional[Manager]
+    On a board with no panel the splash is None and ``display_manager`` is the
+    Manager whose init failed (``initialized`` False), so drawing still has a
+    target and paints nothing.
+    """
+
+    display_manager: Manager
     splash: Optional[SplashScreen]
 
 
@@ -108,8 +113,7 @@ def boot() -> BootResult:
     init_callback.set_callback(_report_board_init_status)
 
     from universalchess.board import board
-    if display_manager is not None:
-        board.display_manager = display_manager
+    board.display_manager = display_manager
 
     board.init_board()
     startup_splash.note("splash.loading")

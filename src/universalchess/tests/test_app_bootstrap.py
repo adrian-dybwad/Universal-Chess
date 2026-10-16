@@ -101,18 +101,25 @@ def test_the_bring_up_publishes_the_splash_for_the_rest_of_startup(record_boot_s
 
 
 def test_a_board_with_no_panel_still_boots(record_boot_steps, monkeypatch):
-    """A panel that never initialises leaves the manager unset, not an exception.
+    """A panel that never initialises still gives the board a Manager, and no splash.
 
-    Why: display bring-up returns None when neither controller can drive the
-    panel (a dead or absent panel), and the board must still run headless --
-    play continues on the squares and the web UI. How a regression manifests:
-    startup raises here, so a display fault takes the whole board down.
+    Why: display bring-up returns the Manager whose panel did not initialise
+    when neither controller can drive the panel (a dead or absent panel), and
+    the board must still run headless -- play continues on the squares and the
+    web UI. The application draws through ``board.display_manager`` without
+    checking for None, and used to retry the display itself when it found None;
+    that retry raised and ended startup. How a regression manifests:
+    ``board.display_manager`` is not the dead panel's Manager, or startup raises.
     """
-    monkeypatch.setattr(display_boot, "init_display", lambda: (None, None))
+    from universalchess.board import board
+
+    dead_panel = MagicMock(name="dead_panel_manager")
+    monkeypatch.setattr(display_boot, "init_display", lambda: (dead_panel, None))
 
     result = bootstrap.boot()
 
-    assert result.display_manager is None
+    assert result.display_manager is dead_panel
+    assert board.display_manager is dead_panel
     assert result.splash is None
     assert startup_splash.current() is None
 

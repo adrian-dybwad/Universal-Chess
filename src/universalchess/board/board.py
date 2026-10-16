@@ -45,7 +45,6 @@ from universalchess.board.settings import Settings
 from universalchess.board import centaur
 import time
 from typing import Optional
-from concurrent.futures import Future
 
 import threading
 
@@ -143,41 +142,10 @@ from universalchess.state.system import POWER_CHARGER, POWER_UNKNOWN
 # Board meta properties (extracted from DGT_SEND_TRADEMARK response)
 board_meta_properties: Optional[dict] = None
 
-#_get_display_manager()  # Initialize display
-
-# Global display manager
+# Global display manager, installed by app.bootstrap. On a board whose panel
+# did not initialize it is that Manager (``initialized`` False), which paints
+# nothing. None only where bootstrap has not run (tests, tooling).
 display_manager: Optional["Manager"] = None
-
-def _default_on_refresh(image, red_image=None):
-    """Default callback for display refreshes - writes image to web static folder.
-
-    Used by the web dashboard to mirror the e-paper display. Accepts the optional
-    RED-plane snapshot (three-color mode) for signature parity with the scheduler
-    callback; mono refreshes pass None.
-    """
-    try:
-        from universalchess.managers import AssetManager
-        AssetManager.write_epaper_static_jpg(image)
-    except Exception as e:
-        log.debug(f"Failed to write epaper.jpg: {e}")
-
-def init_display(on_refresh=None) -> Future:
-    """Get or create the global display manager.
-    
-    Args:
-        on_refresh: Optional callback invoked with the display image after each refresh.
-                    If None, uses default callback that writes to web static folder.
-    """
-    global display_manager
-    
-    if display_manager is None:
-        # Import lazily to avoid pulling Raspberry Pi-only hardware dependencies
-        # (e.g., spidev) in unit tests or non-hardware environments.
-        from universalchess.epaper import Manager
-        callback = on_refresh if on_refresh is not None else _default_on_refresh
-        display_manager = Manager(on_refresh=callback)
-        return display_manager.initialize()
-    return None
 
 
 # Sound command constants

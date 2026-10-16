@@ -117,7 +117,7 @@ def build_epd(controller: str, key: str, high_contrast: bool, three_color: bool)
     ), profile
 
 
-def init_display() -> Tuple[Optional[Manager], Optional[SplashScreen]]:
+def init_display() -> Tuple[Manager, Optional[SplashScreen]]:
     """Initialize the display and show the splash, before board initialization.
 
     Probes the controller that drove the panel on the previous boot first, read
@@ -139,8 +139,11 @@ def init_display() -> Tuple[Optional[Manager], Optional[SplashScreen]]:
     display catches up (the initial Clear() takes ~3 seconds).
 
     Returns:
-        ``(manager, splash)``, both None when no controller could drive the
-        panel -- startup continues headless rather than failing.
+        ``(manager, splash)``. When no controller could drive the panel the
+        splash is None and the manager is the one whose init failed
+        (``manager.initialized`` is False): it paints nothing, and startup
+        continues headless on it. Returning no manager sent the application
+        into its own display retry, which raised and ended startup.
     """
     from universalchess.board import hardware_info
     from universalchess.board import display_selection as ds
@@ -193,7 +196,7 @@ def init_display() -> Tuple[Optional[Manager], Optional[SplashScreen]]:
             busy_timeout=outcome.busy_timeout,
             controller=None,
         )
-        return None, None
+        return manager, None
 
     # Show splash screen immediately (full screen, no status bar)
     manager.clear_widgets(addStatusBar=False)

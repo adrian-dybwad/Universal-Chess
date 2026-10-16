@@ -119,6 +119,18 @@ class Manager:
 
         except Exception as e:
             raise RuntimeError(f"Failed to initialize display: {e}") from e
+
+    @property
+    def initialized(self) -> bool:
+        """Whether the panel driver's init() succeeded and the scheduler is running.
+
+        False on a board whose panel did not answer at boot. That Manager is
+        still installed as ``board.display_manager``: it keeps the widget stack
+        and its update() and flush_now() return without touching the driver, so
+        screens can be built without a panel. Callers that need a visible panel
+        (an on-board prompt the user must read, a live driver change) check this.
+        """
+        return self._initialized
     
     @property
     def epd(self):

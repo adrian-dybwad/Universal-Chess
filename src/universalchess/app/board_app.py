@@ -399,8 +399,8 @@ def _confirm_pairing_on_board(passkey) -> bool:
     high-priority hook in ``key_callback`` regardless of menu/game state.
     """
     display_mgr = getattr(board, "display_manager", None)
-    if display_mgr is None:
-        return False  # No display to ask on - refuse.
+    if display_mgr is None or not display_mgr.initialized:
+        return False  # No visible panel to ask on - refuse.
 
     if not _pairing_confirm_lock.acquire(blocking=False):
         log.warning("[App] Pairing confirm already active; rejecting new request")
@@ -3007,17 +3007,15 @@ def _process_pending_display_profile() -> None:
     display Manager (which owns the EPD and its scheduler) to adopt it and
     force a full refresh -- so the panel re-renders the current screen with the
     new waveform/voltages without a reboot. A no-op when no display Manager
-    exists.
-
-    The Manager is read from the board module rather than held here, so a panel
-    that only came up on the late-initialization path is tuned as well.
+    exists or its panel did not initialize at boot: the settings are already
+    saved, and the next boot's probe reads them.
     """
     requested = _pending.display_profile.take()
     if requested is None:
         return
     cmd = requested.payload
     manager = board.display_manager
-    if manager is None:
+    if manager is None or not manager.initialized:
         return
     from universalchess.epaper.framework.waveshare import waveform_profiles as wp
     key, high_contrast = display_settings.read_selection()
@@ -7349,30 +7347,11 @@ def main():
         raise
 
     # The panel and its splash came up during bootstrap, before this module was
-    # imported. Both are absent only if no controller could drive the panel.
+    # imported. The splash is None when no controller could drive the panel;
+    # board.display_manager is then the Manager whose init failed, which paints
+    # nothing, so the board runs headless.
     splash = startup_splash.current()
 
-    if board.display_manager is None:
-        log.warning("Display manager not available, attempting late initialization...")
-        promise = board.init_display()
-        if promise:
-            try:
-                promise.result(timeout=10.0)
-            except Exception as e:
-                log.warning(f"Error initializing display: {e}")
-        
-        # Create splash screen if early init didn't work (full screen, no status bar)
-        if splash is None:
-            board.display_manager.clear_widgets(addStatusBar=False)
-            splash = SplashScreen(board.display_manager.update, message=t("splash.starting"), leave_room_for_status_bar=False, tagline=t("splash.tagline"))
-            startup_splash.set_splash(splash)
-            promise = board.display_manager.add_widget(splash)
-            if promise:
-                try:
-                    promise.result(timeout=5.0)
-                except Exception as e:
-                    log.debug("Startup splash render wait failed (continuing): %s", e)
-    
     log.info("=" * 60)
     log.info("Universal Chess Starting")
     log.info("=" * 60)

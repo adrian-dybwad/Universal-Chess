@@ -18,14 +18,15 @@ from universalchess.board.display_selection import DisplayAttempt
 from universalchess.services import event_log
 
 
-def _stub_probe(monkeypatch, attempt, *, splash=False):
+def _stub_probe(monkeypatch, attempt, *, splash=False, manager=None):
+    probed_manager = manager if manager is not None else MagicMock()
     monkeypatch.setattr(display_boot, "read_selection", lambda: ("", False))
     monkeypatch.setattr(display_boot, "read_flag", lambda *a, **k: False)
     monkeypatch.setattr(
         display_boot, "build_epd", lambda *a, **k: (MagicMock(), MagicMock(key="x"))
     )
     monkeypatch.setattr(
-        display_boot, "attempt_display_init", lambda *a, **k: (MagicMock(), attempt)
+        display_boot, "attempt_display_init", lambda *a, **k: (probed_manager, attempt)
     )
     hi = MagicMock()
     hi.read_display_status.return_value = None
@@ -52,15 +53,20 @@ def test_init_display_logs_overlay_failure_as_error(monkeypatch, tmp_path):
         "Failed to initialize display: e-paper SPI is spi-gpio; "
         "overlay not loaded (no spi-gpio SPI master)"
     )
-    _stub_probe(
+    dead_panel = MagicMock(name="dead_panel_manager")
+    hi = _stub_probe(
         monkeypatch,
         DisplayAttempt(ok=False, busy_timeout=False, error=err),
+        manager=dead_panel,
     )
 
     manager, splash = display_boot.init_display()
 
-    assert manager is None
+    # The board runs headless on the Manager whose panel failed; returning None
+    # sent board_app into a display retry that raised and ended startup.
+    assert manager is dead_panel
     assert splash is None
+    assert hi.write_display_status.call_args.kwargs["initialized"] is False
     events = event_log.read_events(path=log_path)
     assert len(events) == 1
     assert events[0]["category"] == "display"
@@ -124,8 +130,9 @@ def test_init_display_logs_no_panel_when_both_controllers_time_out(monkeypatch, 
     log_path = tmp_path / "events.jsonl"
     monkeypatch.setenv("UC_EVENT_LOG_PATH", str(log_path))
     monkeypatch.setattr(event_log, "_loggers", {})
+    primary_manager = MagicMock(name="primary_manager")
     results = [
-        (MagicMock(), DisplayAttempt(ok=False, busy_timeout=True, error="busy timeout")),
+        (primary_manager, DisplayAttempt(ok=False, busy_timeout=True, error="busy timeout")),
         (MagicMock(), DisplayAttempt(ok=False, busy_timeout=True, error="ssd1680 busy")),
     ]
 
@@ -147,7 +154,9 @@ def test_init_display_logs_no_panel_when_both_controllers_time_out(monkeypatch, 
 
     manager, splash = display_boot.init_display()
 
-    assert manager is None
+    # Neither controller answered: the headless Manager is the primary probe's,
+    # the same one a failed fallback leaves in place.
+    assert manager is primary_manager
     assert splash is None
     events = event_log.read_events(path=log_path)
     assert len(events) == 1

@@ -1801,6 +1801,22 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   waveform change) does not, because POWER ON on an already-powered panel
   may not pulse BUSY.
 
+- **A board with no working e-paper panel restarted in a loop instead of
+  running headless**: when neither controller initialized, display boot
+  recorded "Not responding" and returned no display Manager, as intended.
+  The board service then found no Manager and retried on its own with the
+  default UC8151D driver -- the controller boot had just probed, ignoring the
+  chosen panel and the V1 fallback. That retry raised the same initialization
+  error outside any handler, so the service exited before BLE, RFCOMM or the
+  game loop started, and systemd restarted it 3 seconds after each exit
+  (`Restart=on-failure`), each pass running the full panel probe again. Boot now hands the board the Manager
+  whose panel did not initialize. It keeps every screen's widgets and paints
+  nothing, so play on the squares, the web app and the chess apps keep
+  working without a panel. The retry is gone. A Bluetooth pairing request is
+  still refused at once when no panel initialized, because the Pair/Reject
+  prompt cannot be seen. A display-tuning change on such a board is saved for
+  the next boot rather than applied to the dead panel.
+
 - **A BUSY-timeout on the System card guessed a cause**: the UC8151D wait
   reported "panel unresponsive or incompatible (e.g. inverted BUSY
   polarity)" and the SSD1680 wait named "not an SSD1680/IL3820-family

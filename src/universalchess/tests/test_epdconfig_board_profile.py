@@ -121,8 +121,8 @@ def test_libgpiod_module_init_opens_spi_gpio_not_onboard_flash(tmp_path, monkeyp
 def test_libgpiod_module_init_releases_prior_request_before_claiming_again(
     tmp_path, monkeypatch
 ):
-    # Why: display_boot initialize() and board.init_display() both call
-    # module_init on the singleton. A second request_lines without releasing
+    # Why: every driver init() calls module_init on the singleton, and the
+    # boot probe's second controller calls it again. A second request_lines without releasing
     # raises OSError 16 (EBUSY) and crash-loops the service. Measured on
     # the Orange Pi: lines 76/233/267 stayed consumer=universalchess-epaper.
     _fake_spi_gpio_sysfs(tmp_path, bus=2)

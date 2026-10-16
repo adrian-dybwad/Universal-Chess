@@ -369,9 +369,10 @@ class LibgpiodEpaper:
                 direction=Direction.INPUT, bias=Bias.PULL_DOWN
             ),
         }
-        # display_boot initialize() and board.init_display() both call this
-        # on the singleton. Holding the first request_lines makes the second
-        # raise EBUSY and crash-loop the service.
+        # Every driver init() calls this on the singleton: the boot probe's
+        # second controller and each live panel swap call it again. Holding
+        # the first request_lines makes the second raise EBUSY and crash-loop
+        # the service.
         self._release_line_request()
         self._request = gpiod.request_lines(
             path, consumer="universalchess-epaper", config=config
