@@ -3203,6 +3203,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
       silent. A refresh that resolves an advisory is owed an entry and gets one;
       the generator cannot tell that case from routine drift, so the judgement is
       made when the pull request is reviewed.
+    - The refresh that moved `cairosvg` from 2.9.0 to 2.9.1 resolves one, a
+      high-severity denial of service in which parsing a crafted SVG `<path>`
+      takes quadratic time. The board was not reachable through it: `cairosvg`
+      rasterises only the twelve piece images `python-chess` generates from fixed
+      piece codes, never an SVG taken from a request. The same refresh moved
+      `python-pam` from 2.0.2 to 2.1.0 as routine drift.
 - **The Lichess API token is no longer disclosed**: the settings endpoint
   returned it in clear text without authentication. It is now redacted, and
   saving settings without it leaves the stored token unchanged rather than
