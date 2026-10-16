@@ -31,12 +31,15 @@ def _manager_with_mock_scheduler():
     """Manager around a mock EPD with the scheduler replaced by a mock.
 
     submit() returns a sentinel so the wrapper's pass-through of the Future can
-    be asserted without a running thread.
+    be asserted without a running thread. Marked initialized because these pin
+    the live-panel path; a Manager whose panel did not initialize sends the
+    frame to the web mirror instead (see test_headless_display.py).
     """
     epd = MagicMock()
     epd.width = 128
     epd.height = 296
     manager = Manager(epd=epd, batch_updates=False)
+    manager._initialized = True
     manager._scheduler = MagicMock()
     sentinel = object()
     manager._scheduler.submit.return_value = sentinel

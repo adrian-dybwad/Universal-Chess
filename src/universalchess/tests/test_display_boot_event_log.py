@@ -13,9 +13,20 @@ How a regression manifests:
 
 from unittest.mock import MagicMock
 
+import pytest
+
 from universalchess.app import display_boot
 from universalchess.board.display_selection import DisplayAttempt
-from universalchess.services import event_log
+from universalchess.services import chromecast, event_log
+
+
+@pytest.fixture(autouse=True)
+def _mirror_frame_under_tmp(monkeypatch, tmp_path):
+    """Point epaper.jpg at tmp_path, since init_display deletes it.
+
+    Run on a board, these tests would otherwise remove the live mirror frame.
+    """
+    monkeypatch.setattr(chromecast, "EPAPER_STATIC_JPG", str(tmp_path / "epaper.jpg"))
 
 
 def _stub_probe(monkeypatch, attempt, *, splash=False, manager=None):

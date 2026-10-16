@@ -19,6 +19,7 @@ Connection robustness notes (fixes for the previously "buggy" casting):
 Also provides the e-paper JPEG export function used for web/Chromecast streaming.
 """
 
+import contextlib
 import os
 import threading
 import time
@@ -155,6 +156,18 @@ def write_epaper_jpg(image, red_image=None) -> str:
     img = img.rotate(180)
     img.save(EPAPER_STATIC_JPG, format="JPEG")
     return EPAPER_STATIC_JPG
+
+
+def discard_epaper_jpg() -> None:
+    """Remove web/static/epaper.jpg so no frame from an earlier run is served.
+
+    The file is on disk and survives a reboot, and ``/screen.jpg`` serves
+    whatever it holds, so the remote view showed the previous boot's last
+    frame as the current screen until this boot drew one. Called at display
+    bring-up; an absent file (fresh install) is the expected case, not an error.
+    """
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(EPAPER_STATIC_JPG)
 
 
 class _DeviceStream:

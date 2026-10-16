@@ -1817,6 +1817,21 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   prompt cannot be seen. A display-tuning change on such a board is saved for
   the next boot rather than applied to the dead panel.
 
+- **The remote view showed no screen, or an old one, on a board running
+  headless**: the board-control panel's screen is `/screen.jpg`, which serves
+  `web/static/epaper.jpg`, and that file was written only after a frame reached
+  the panel. A board whose panel did not initialize returned from every draw
+  before rendering, so the file was never written. After a package install the
+  remote view showed a broken image; after an ordinary reboot it showed the last
+  frame of the previous boot that had a panel, unchanging, as if it were the
+  current screen. Frames from the original-Centaur display gateway went to a
+  refresh queue that nothing drained on such a board. The board now renders
+  every screen and gateway frame without a panel and sends each one to the
+  mirror, oriented as a panel's frame is, so the remote view is the board's
+  screen and the keys under it show their effect. Display bring-up also deletes
+  the previous boot's `epaper.jpg`, so a frame from an earlier boot is never
+  shown as current.
+
 - **A BUSY-timeout on the System card guessed a cause**: the UC8151D wait
   reported "panel unresponsive or incompatible (e.g. inverted BUSY
   polarity)" and the SSD1680 wait named "not an SSD1680/IL3820-family

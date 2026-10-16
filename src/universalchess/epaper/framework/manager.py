@@ -126,9 +126,10 @@ class Manager:
 
         False on a board whose panel did not answer at boot. That Manager is
         still installed as ``board.display_manager``: it keeps the widget stack
-        and its update() and flush_now() return without touching the driver, so
-        screens can be built without a panel. Callers that need a visible panel
-        (an on-board prompt the user must read, a live driver change) check this.
+        and renders every screen, but hands each frame to the web mirror
+        instead of the driver (see ``_present``), so the remote view is that
+        board's screen. Callers that need a visible panel (an on-board prompt
+        the user must read, a live driver change) check this.
         """
         return self._initialized
     
@@ -412,7 +413,7 @@ class Manager:
         if full:
             log.debug("Manager.update() called with full=True (will cause flashing refresh)")
 
-        if not self._initialized or self._shutting_down:
+        if self._shutting_down:
             future = Future()
             future.set_result("not-initialized")
             return future
@@ -520,7 +521,7 @@ class Manager:
         changes deferred since the last tick) and submits one refresh, giving the
         clock a steady once-per-second cadence without other widgets preempting it.
         """
-        if not self._initialized or self._shutting_down:
+        if self._shutting_down:
             return None
         return self._render_now(full, immediate=False, clock_source=True)
 
@@ -597,10 +598,27 @@ class Manager:
         # an all-white (no-red) plane is produced when no highlight is active.
         red_snapshot = self._render_red_snapshot(modal_widget) if self._is_three_color() else None
 
-        # Submit refresh with the captured snapshot and return Future
-        # The on_refresh callback is invoked by Scheduler after display update
-        return self._scheduler.submit(full=full, immediate=immediate, image=snapshot,
-                                      red_image=red_snapshot, clock_source=clock_source)
+        return self._present(snapshot, red_snapshot, full=full, immediate=immediate,
+                             clock_source=clock_source)
+
+    def _present(self, image: Image.Image, red_image: Optional[Image.Image],
+                 full: bool = False, immediate: bool = False,
+                 clock_source: bool = False) -> Future:
+        """Send a panel-oriented frame to the panel, or straight to the mirror.
+
+        With a panel the scheduler refreshes it and then invokes ``on_refresh``.
+        Without one the scheduler thread was never started, so a submitted frame
+        would sit in its queue and its future would never resolve; the frame
+        goes to ``on_refresh`` here instead, oriented exactly as the scheduler
+        would have passed it, so the remote view matches what a panel shows.
+        """
+        if self._initialized:
+            return self._scheduler.submit(full=full, immediate=immediate, image=image,
+                                          red_image=red_image, clock_source=clock_source)
+        self._scheduler.emit_display_updated(image, red_image)
+        future = Future()
+        future.set_result("mirrored")
+        return future
 
     def _is_three_color(self) -> bool:
         """Whether the active driver is in three-color (red) mode.
@@ -665,14 +683,15 @@ class Manager:
             red_image: Optional RED-plane mask for three-color panels.
 
         Returns:
-            The refresh ``Future`` from the scheduler, so callers can await paint.
+            The refresh ``Future`` from the scheduler, so callers can await paint;
+            already resolved to "mirrored" on a board without a panel.
         """
         rotation = self.output_rotation()
         frame = image if rotation == 0 else image.rotate(-rotation, expand=False)
         red = red_image
         if red is not None and rotation != 0:
             red = red.rotate(-rotation, expand=False)
-        return self._scheduler.submit(full=False, immediate=False, image=frame, red_image=red)
+        return self._present(frame, red)
 
     def cleanup(self, for_shutdown: bool = False) -> None:
         """Clean up display resources.

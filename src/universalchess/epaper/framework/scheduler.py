@@ -398,7 +398,7 @@ class Scheduler:
         """All-no-red buffer in getbuffer_red mask space (every byte 0xFF)."""
         return [0xFF] * ((self._epd.width // 8) * self._epd.height)
 
-    def _emit_display_updated(self, image: Image.Image,
+    def emit_display_updated(self, image: Image.Image,
                              red_image: Optional[Image.Image] = None) -> None:
         """Notify the refresh callback of the just-displayed frame.
 
@@ -406,6 +406,10 @@ class Scheduler:
         the web mirror can compose an RGB (white/black/red) preview. red_image is
         None for mono/fast-B/W refreshes (no red on screen). Callback failures are
         swallowed -- the mirror is best-effort and must never break a refresh.
+
+        Public because the Manager of a board whose panel did not initialize
+        calls it directly: that board has no refresh to follow, and the mirror
+        is its only screen.
         """
         if not self._on_display_updated:
             return
@@ -521,7 +525,7 @@ class Scheduler:
             self._baseline_established = True
             self._mark_activity()
 
-            self._emit_display_updated(full_image, red_image)
+            self.emit_display_updated(full_image, red_image)
         except RefreshInterrupted:
             # Newer data arrived mid-refresh. The aborted waveform left the panel
             # mid-transition, so force a re-init before the next draw (its reset()
@@ -581,7 +585,7 @@ class Scheduler:
             self._mark_activity()
             
             # Invoke callback after successful display update (mono: no red plane)
-            self._emit_display_updated(full_image)
+            self.emit_display_updated(full_image)
         except RefreshInterrupted:
             # Newer data arrived mid-refresh: abort and force a re-init so the
             # next draw resets the panel (halting the aborted waveform) and
@@ -666,7 +670,7 @@ class Scheduler:
             self._mark_activity()
             
             # Invoke callback after successful display update (fast B/W: no red plane)
-            self._emit_display_updated(display_image)
+            self.emit_display_updated(display_image)
         except Exception as e:
             # Don't log errors during shutdown (SPI may be closed)
             # Also suppress GPIO-related errors that occur during shutdown race conditions

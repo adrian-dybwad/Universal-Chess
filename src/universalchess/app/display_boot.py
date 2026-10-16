@@ -141,13 +141,19 @@ def init_display() -> Tuple[Manager, Optional[SplashScreen]]:
     Returns:
         ``(manager, splash)``. When no controller could drive the panel the
         splash is None and the manager is the one whose init failed
-        (``manager.initialized`` is False): it paints nothing, and startup
-        continues headless on it. Returning no manager sent the application
-        into its own display retry, which raised and ended startup.
+        (``manager.initialized`` is False): it drives no panel and sends each
+        screen to the web mirror, and startup continues headless on it.
+        Returning no manager sent the application into its own display retry,
+        which raised and ended startup.
+
+    The previous boot's mirror frame is discarded first, so the remote view
+    shows no screen until this boot draws one, never an earlier one.
     """
     from universalchess.board import hardware_info
     from universalchess.board import display_selection as ds
+    from universalchess.services.chromecast import discard_epaper_jpg
 
+    discard_epaper_jpg()
     key, high_contrast = read_selection()
     three_color = read_flag('three_color')
     batch_updates = read_flag('batch_updates', default=True)
