@@ -1830,7 +1830,9 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   mirror, oriented as a panel's frame is, so the remote view is the board's
   screen and the keys under it show their effect. Display bring-up also deletes
   the previous boot's `epaper.jpg`, so a frame from an earlier boot is never
-  shown as current.
+  shown as current. Until the first frame of a boot exists, the board-control
+  panel shows "Waiting for the board's screen" in its place rather than the
+  browser's broken-image icon, and loads the screen when that frame arrives.
 
 - **A BUSY-timeout on the System card guessed a cause**: the UC8151D wait
   reported "panel unresponsive or incompatible (e.g. inverted BUSY

@@ -397,6 +397,7 @@
     "closeAria": "Cerrar el control del tablero",
     "close": "Cerrar",
     "boardDisplayAlt": "Pantalla del tablero",
+    "screenWaiting": "Esperando la pantalla del tablero",
     "boardButtonsAria": "Botones del tablero",
     "hint": "Toca un botón para una pulsación corta; mantén pulsado para una pulsación larga. Mantener Play apaga el tablero. Para jugar un movimiento desde el navegador, usa el Tablero en vivo."
   },

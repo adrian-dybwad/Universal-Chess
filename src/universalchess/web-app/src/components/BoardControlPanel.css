@@ -76,6 +76,20 @@
   box-shadow: var(--shadow-md, 0 8px 28px rgba(0, 0, 0, 0.45));
 }
 
+/* Stands in for the screen at the mirror frame's 128x296 proportions, so the
+   buttons do not jump when the first frame arrives. */
+.board-control-screen--waiting {
+  aspect-ratio: 128 / 296;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-3, 12px);
+  box-sizing: border-box;
+  color: var(--color-text-muted, #aaa);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
 /* Cross/diamond layout matching the device: Up and Down are centered and span
    both columns; Back/Ok and Hint/Play flank them left and right. */
 .board-remote {

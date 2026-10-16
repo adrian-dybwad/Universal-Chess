@@ -394,6 +394,7 @@
     "closeAria": "Tahta kontrolünü kapat",
     "close": "Kapat",
     "boardDisplayAlt": "Tahta ekranı",
+    "screenWaiting": "Tahta ekranı bekleniyor",
     "boardButtonsAria": "Tahta düğmeleri",
     "hint": "Kısa basış için bir düğmeye dokun; uzun basış için basılı tut. Play'i basılı tutmak tahtayı kapatır. Tarayıcıdan hamle oynamak için Canlı tahta'yı kullan."
   },

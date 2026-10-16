@@ -394,6 +394,7 @@
     "closeAria": "Brettsteuerung schließen",
     "close": "Schließen",
     "boardDisplayAlt": "Brettanzeige",
+    "screenWaiting": "Warte auf die Brettanzeige",
     "boardButtonsAria": "Bretttasten",
     "hint": "Tippen Sie eine Taste für einen kurzen Druck; halten Sie sie für einen langen Druck. Play zu halten schaltet das Brett aus. Um einen Zug im Browser zu spielen, verwenden Sie das Live-Brett."
   },

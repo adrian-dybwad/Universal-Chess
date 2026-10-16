@@ -400,6 +400,7 @@
     "closeAria": "Zamknij sterowanie szachownicą",
     "close": "Zamknij",
     "boardDisplayAlt": "Ekran szachownicy",
+    "screenWaiting": "Oczekiwanie na ekran szachownicy",
     "boardButtonsAria": "Przyciski szachownicy",
     "hint": "Dotknij przycisku, aby nacisnąć go krótko; naciśnij i przytrzymaj, aby nacisnąć długo. Przytrzymanie Play wyłącza szachownicę. Aby wykonać ruch z przeglądarki, użyj widoku Szachownica na żywo."
   },

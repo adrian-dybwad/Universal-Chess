@@ -24,6 +24,9 @@ vi.mock('./LoginDialog', () => ({
 import { BoardControlPanel } from './BoardControlPanel';
 import { publishSseEvent, __resetSseBus } from '../utils/sseBus';
 
+const WAITING_TEXT = "Waiting for the board's screen";
+const FIRST_FRAME_MTIME = 1712345679.25;
+
 beforeEach(() => {
   __resetSseBus();
   apiFetchMock.mockReset();
@@ -72,6 +75,30 @@ describe('BoardControlPanel', () => {
     const after = screen.getByAltText('Board display').getAttribute('src');
     expect(after).not.toBe(before);
     expect(after).toBe('/screen.jpg?t=1712345678.5');
+  });
+
+  it('shows a waiting placeholder while the board has no screen, and retries on the next refresh', () => {
+    // /screen.jpg answers 503 until the board writes its first frame of this
+    // boot, which the browser reports as an image load error. Regression: the
+    // <img> stays, and the panel shows the browser's broken-image icon where
+    // the screen goes. The next epaper_changed must bring the image back with
+    // the new token; if the failure stuck, the placeholder would stay up after
+    // the board drew a frame.
+    render(<BoardControlPanel isOpen onClose={() => {}} />);
+    expect(screen.queryByText(WAITING_TEXT)).not.toBeInTheDocument();
+
+    fireEvent.error(screen.getByAltText('Board display'));
+
+    expect(screen.queryByAltText('Board display')).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: WAITING_TEXT })).toHaveTextContent(WAITING_TEXT);
+
+    act(() => {
+      publishSseEvent('epaper_changed', { mtime: FIRST_FRAME_MTIME });
+    });
+
+    expect(screen.queryByText(WAITING_TEXT)).not.toBeInTheDocument();
+    expect(screen.getByAltText('Board display').getAttribute('src'))
+      .toBe(`/screen.jpg?t=${FIRST_FRAME_MTIME}`);
   });
 
   it('renders the six physical control buttons', () => {

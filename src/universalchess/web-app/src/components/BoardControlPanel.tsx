@@ -91,6 +91,12 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
   }, []);
   useSseEvent('epaper_changed', onEpaperChanged);
 
+  // /screen.jpg answers 503 until the board writes this boot's first frame, and
+  // the browser would draw its broken-image icon. The failure is remembered per
+  // token, so the next epaper_changed (a new token) retries the image on its own.
+  const [failedScreenToken, setFailedScreenToken] = useState<string | null>(null);
+  const screenUnavailable = failedScreenToken === screenToken;
+
   // Tracks the in-flight press so release can classify short vs long without
   // stale closures.
   const pressStartRef = useRef<number | null>(null);
@@ -241,11 +247,22 @@ export function BoardControlPanel({ isOpen, onClose }: BoardControlPanelProps) {
         {/* The live e-paper screen on top and the physical key control beneath
             it, matching where the screen and buttons sit on the device. */}
         <div className="board-control-side">
-          <img
-            className="board-control-screen"
-            src={`${buildApiUrl('/screen.jpg')}?t=${screenToken}`}
-            alt={t('boardControl.boardDisplayAlt')}
-          />
+          {screenUnavailable ? (
+            <div
+              className="board-control-screen board-control-screen--waiting"
+              role="img"
+              aria-label={t('boardControl.screenWaiting')}
+            >
+              {t('boardControl.screenWaiting')}
+            </div>
+          ) : (
+            <img
+              className="board-control-screen"
+              src={`${buildApiUrl('/screen.jpg')}?t=${screenToken}`}
+              alt={t('boardControl.boardDisplayAlt')}
+              onError={() => setFailedScreenToken(screenToken)}
+            />
+          )}
 
           <div className="board-remote" role="group" aria-label={t('boardControl.boardButtonsAria')}>
             {BUTTONS.map((btn) => {

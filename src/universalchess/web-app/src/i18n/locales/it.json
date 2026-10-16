@@ -397,6 +397,7 @@
     "closeAria": "Chiudi il controllo scacchiera",
     "close": "Chiudi",
     "boardDisplayAlt": "Display della scacchiera",
+    "screenWaiting": "In attesa del display della scacchiera",
     "boardButtonsAria": "Pulsanti della scacchiera",
     "hint": "Tocca un pulsante per una pressione breve; tieni premuto per una pressione lunga. Tenere premuto Play spegne la scacchiera. Per giocare una mossa dal browser, usa la Scacchiera live."
   },

@@ -397,6 +397,7 @@
     "closeAria": "Fermer le contrôle du plateau",
     "close": "Fermer",
     "boardDisplayAlt": "Écran du plateau",
+    "screenWaiting": "En attente de l'écran du plateau",
     "boardButtonsAria": "Boutons du plateau",
     "hint": "Touchez un bouton pour un appui court ; maintenez pour un appui long. Maintenir Play éteint le plateau. Pour jouer un coup depuis le navigateur, utilisez l'Échiquier en direct."
   },

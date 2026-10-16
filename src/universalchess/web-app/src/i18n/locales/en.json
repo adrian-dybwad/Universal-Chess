@@ -395,6 +395,7 @@
     "closeAria": "Close board control",
     "close": "Close",
     "boardDisplayAlt": "Board display",
+    "screenWaiting": "Waiting for the board's screen",
     "boardButtonsAria": "Board buttons",
     "hint": "Tap a button for a short press; press and hold for a long press. Holding Play powers the board off. To play a move from the browser, use the Live Board."
   },

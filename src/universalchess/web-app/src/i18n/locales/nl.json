@@ -394,6 +394,7 @@
     "closeAria": "Bordbesturing sluiten",
     "close": "Sluiten",
     "boardDisplayAlt": "Bordscherm",
+    "screenWaiting": "Wachten op het bordscherm",
     "boardButtonsAria": "Bordtoetsen",
     "hint": "Tik op een toets voor een korte druk; houd hem ingedrukt voor een lange druk. Play ingedrukt houden schakelt het bord uit. Gebruik het Live bord om vanuit de browser een zet te doen."
   },
