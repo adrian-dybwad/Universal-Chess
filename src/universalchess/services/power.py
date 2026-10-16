@@ -57,7 +57,7 @@ _EXPECTED_EXIT_SIGNALS = frozenset(
 )
 
 
-def classify_centaur_exit(returncode: int, *, log_text: str | None = None) -> tuple[str, str]:
+def classify_centaur_exit(returncode: int, *, log_text: Optional[str] = None) -> tuple[str, str]:
     """Map a centaur process exit code to an ``(event level, message)`` pair.
 
     ``subprocess`` reports a signal death as a negative code, while a child

@@ -1528,6 +1528,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   `epaper.info`, and Event Log rows for that warning or launch failure
   link to that tab.
 
+- **Power-off, reboot and Original Centaur failed on Python 3.9**: the
+  exit-classification helper added for the recapture steps annotated a
+  parameter as `str | None`, which Python 3.9 evaluates when the function is
+  defined and rejects with `TypeError`. Every caller imports the power module
+  on first use, so on Python 3.9 shutting down or rebooting from the board,
+  opening the System menu, launching Original Centaur, and the web app's
+  Centaur-mode and return-to-Universal-Chess requests raised instead of acting.
+  The annotation is `Optional[str]`, and a test now scans the package for any
+  annotation Python 3.9 would reject, so the mistake fails on the newer
+  interpreters developers run.
+
 - **A leftover player name no longer replaces the engine in the PGN**:
   The Name field is only shown for Human, but a name set there stayed on
   the slot after Type switched to Engine or Hand+Brain and overrode the
