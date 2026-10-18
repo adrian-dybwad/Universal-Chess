@@ -31,7 +31,7 @@ def _mirror_frame_under_tmp(monkeypatch, tmp_path):
 
 def _stub_probe(monkeypatch, attempt, *, splash=False, manager=None):
     probed_manager = manager if manager is not None else MagicMock()
-    monkeypatch.setattr(display_boot, "read_selection", lambda: ("", False))
+    monkeypatch.setattr(display_boot, "read_waveform_profile_key", lambda: "")
     monkeypatch.setattr(display_boot, "read_flag", lambda *a, **k: False)
     monkeypatch.setattr(
         display_boot, "build_epd", lambda *a, **k: (MagicMock(), MagicMock(key="x"))
@@ -113,7 +113,7 @@ def test_init_display_logs_detected_v1_after_busy_timeout(monkeypatch, tmp_path)
     def fake_attempt(*_a, **_k):
         return results.pop(0)
 
-    monkeypatch.setattr(display_boot, "read_selection", lambda: ("", False))
+    monkeypatch.setattr(display_boot, "read_waveform_profile_key", lambda: "")
     monkeypatch.setattr(display_boot, "read_flag", lambda *a, **k: False)
     monkeypatch.setattr(
         display_boot, "build_epd", lambda *a, **k: (MagicMock(), MagicMock(key="x"))
@@ -150,7 +150,7 @@ def test_init_display_logs_no_panel_when_both_controllers_time_out(monkeypatch, 
     def fake_attempt(*_a, **_k):
         return results.pop(0)
 
-    monkeypatch.setattr(display_boot, "read_selection", lambda: ("", False))
+    monkeypatch.setattr(display_boot, "read_waveform_profile_key", lambda: "")
     monkeypatch.setattr(display_boot, "read_flag", lambda *a, **k: False)
     monkeypatch.setattr(
         display_boot, "build_epd", lambda *a, **k: (MagicMock(), MagicMock(key="x"))

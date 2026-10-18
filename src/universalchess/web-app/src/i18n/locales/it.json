@@ -847,8 +847,6 @@
       "waveformSource": "Sorgente waveform:",
       "batchLabel": "Raggruppa aggiornamenti rapidi",
       "batchHelp": "Unisce una raffica rapida di aggiornamenti dello schermo in un solo refresh dell'ultimo fotogramma. Quando gli aggiornamenti arrivano più in fretta di quanto l'e-paper possa ridisegnare, salta i fotogrammi intermedi così il display mostra lo stato più recente invece di restare indietro. Spegni per disegnare ogni fotogramma intermedio (più lento quando gli aggiornamenti arrivano in fretta, ma mostra ogni passo). Consigliato acceso.",
-      "highContrastLabel": "Alto contrasto (sperimentale)",
-      "highContrastHelp": "Pilota le tensioni VCOM/source più forte dei predefiniti del waveform per scurire un'immagine sbiadita. Provalo se l'immagine si disegna ma solo debolmente. Non è un'impostazione da datasheet; lascialo spento se il display già si vede bene.",
       "threeColorLabel": "Modo tre colori (rosso)",
       "threeColorHelp": "Solo per pannelli rosso/bianco/nero. Evidenzia in rosso scacchi, donne minacciate, il risultato della partita e le barre di valutazione in perdita. L'inchiostro rosso può cambiare solo con un refresh completo, quindi quegli aggiornamenti rossi richiedono ~12-15 secondi; le mosse ordinarie restano veloci.",
       "savedOffline": "Salvato. Si applicherà quando la scacchiera è in esecuzione.",

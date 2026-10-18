@@ -3019,7 +3019,7 @@ def _process_pending_display_profile() -> None:
         return
     from universalchess.app import display_boot
     from universalchess.epaper.framework.waveshare import panel_models
-    key, high_contrast = display_settings.read_selection()
+    key = display_settings.read_waveform_profile_key()
     model = panel_models.get_model(display_settings.read_panel_key())
     current_panel = manager.epd.PANEL_KEY
     # A different glass means a different driver. Swapping the object is what
@@ -3028,14 +3028,14 @@ def _process_pending_display_profile() -> None:
     if model.explicit and current_panel != model.key:
         log.info(f"[App] Switching e-paper panel to {model.key}")
         display_boot.switch_to_panel(
-            manager, model, key, high_contrast,
+            manager, model, key,
             three_color=display_settings.read_flag('three_color'),
             partial_only=display_settings.read_flag('partial_only'),
         )
     elif not model.explicit and current_panel != panel_models.PANEL_AUTO:
         log.info("[App] Switching e-paper panel back to automatic probe")
         display_boot.switch_to_automatic(
-            manager, key, high_contrast, display_settings.read_flag('three_color'),
+            manager, key, display_settings.read_flag('three_color'),
         )
     elif (
         manager.epd.partial_only_supported
@@ -3052,11 +3052,10 @@ def _process_pending_display_profile() -> None:
         # within its own recipes, and a panel with no waveform table gets None.
         family = None if model.explicit else manager.epd.CONTROLLER
         profile = panel_models.waveform_for(model, key, family)
-        high_contrast = high_contrast and model.high_contrast_supported
         if profile is not None:
             log.info(f"[App] Applying display profile live: {profile.key} "
-                     f"(panel={model.key}, high_contrast={high_contrast})")
-            manager.apply_waveform_profile(profile, high_contrast)
+                     f"(panel={model.key})")
+            manager.apply_waveform_profile(profile)
 
     # Three-color (red) mode is toggled through the same display-tuning settings,
     # so apply it on the same live path. Only when it actually changed, to avoid a

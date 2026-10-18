@@ -240,13 +240,16 @@ def test_get_display_tuning_reports_profiles_and_selection(client, monkeypatch):
 
     How a regression manifests: profiles are dropped or not filtered to the
     active controller, the selection is not reported, or active_controller is
-    omitted so the card cannot choose its copy.
+    omitted so the card cannot choose its copy. The removed high-contrast
+    switch is reported again (high_contrast or high_contrast_supported in the
+    body) from a key a board still has on disk.
     """
     monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: "uc8151d")
     monkeypatch.setattr(webapp, "_read_selected_profile_key",
                         lambda controller=None: "uc8151d_waveshare")
     # Stub honors the per-flag default so the endpoint's default=True for
-    # batch_updates is exercised (high_contrast stays an explicit on here).
+    # batch_updates is exercised. high_contrast is on, as a board that had the
+    # removed switch on still stores it.
     monkeypatch.setattr(display_settings, "read_flag",
                         lambda name, default=False: True if name == "high_contrast" else default)
 
@@ -256,7 +259,8 @@ def test_get_display_tuning_reports_profiles_and_selection(client, monkeypatch):
     assert body["available"] is True
     assert body["active_controller"] == "uc8151d"
     assert body["selected"] == "uc8151d_waveshare"
-    assert body["high_contrast"] is True
+    assert "high_contrast" not in body
+    assert "high_contrast_supported" not in body
     # Update batching ships ON: the GET must report it true by default so the
     # card's toggle starts on. Regression: endpoint omits default=True and the
     # toggle reads false, telling the user batching is off when it is not.
@@ -334,16 +338,18 @@ def test_set_display_tuning_persists_profile_when_no_panel(client, monkeypatch):
 
 
 def test_set_display_tuning_persists_and_applies_live(client, monkeypatch):
-    """POST must persist the profile/high_contrast and send a live board command.
+    """POST must persist the profile and send a live board command.
 
     Why this test exists: the feature requires the change to take effect without
     a reboot, so the endpoint must both write [display] and signal the board
     process via send_board_command("display_profile", ...). Asserts both the
     persisted payload and that the live command was dispatched with the resolved
-    selection.
+    selection. The body also carries high_contrast, as a page cached from
+    before the switch was removed still sends it, and the stored key is on.
 
     How a regression manifests: settings are written but no board command is
-    sent (change needs a reboot), or the wrong keys are persisted.
+    sent (change needs a reboot), the wrong keys are persisted, or
+    high_contrast is saved or forwarded to the board.
     """
     saved = []
     sent = []
@@ -368,11 +374,12 @@ def test_set_display_tuning_persists_and_applies_live(client, monkeypatch):
     body = json.loads(resp.data)
     assert body["success"] is True
     assert body["applied_live"] is True
-    assert saved == [{"display": {"waveform_profile": "uc8151d_t5d", "high_contrast": True}}]
+    assert "high_contrast" not in body
+    assert saved == [{"display": {"waveform_profile": "uc8151d_t5d"}}]
     # The live-apply command must be dispatched with the resolved selection.
     # (Persisting settings may emit other board commands, e.g. reset_inactivity,
     # so assert membership rather than an exact call list.)
-    assert ("display_profile", {"profile": "uc8151d_t5d", "high_contrast": True}) in sent
+    assert ("display_profile", {"profile": "uc8151d_t5d"}) in sent
 
 
 def test_set_display_tuning_persists_batch_updates(client, monkeypatch):
@@ -727,22 +734,27 @@ def test_active_waveform_family_follows_the_recorded_panel(monkeypatch):
         assert webapp._active_waveform_controller() == expected, status
 
 
-def test_set_display_tuning_rejects_empty_body(client, monkeypatch):
-    """A POST with neither profile nor high_contrast must 400, not save nothing.
+@pytest.mark.parametrize("unrecognized", [
+    pytest.param({"bogus": True}, id="unknown-field"),
+    pytest.param({"high_contrast": True}, id="removed-high-contrast"),
+])
+def test_set_display_tuning_rejects_a_body_with_no_known_field(client, monkeypatch, unrecognized):
+    """A POST with no field the card can set must 400 and save nothing.
 
     Why this test exists: save_all_settings({"display": {}}) would be a no-op
     write that masks a client bug (wrong field names); failing fast surfaces it.
-    Sends a body with only an unrecognized key.
+    high_contrast is no longer a field: the switch was removed, and only a
+    page cached from before still posts it.
 
-    How a regression manifests: an empty/garbage body returns 200 and calls
-    save_all_settings with no updates.
+    How a regression manifests: the body returns 200, or high_contrast is
+    written back to the settings file.
     """
     saved = []
     monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
 
     resp = client.post(
         "/api/system/display-tuning",
-        data=json.dumps({"bogus": True}),
+        data=json.dumps(unrecognized),
         content_type="application/json",
     )
     assert resp.status_code == 400

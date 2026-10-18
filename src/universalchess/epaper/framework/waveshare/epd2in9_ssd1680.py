@@ -116,7 +116,7 @@ class EPD(PanelDriver):
     # range" on the next re-init, killing the panel until reboot.
     CONTROLLER = CONTROLLER_SSD16XX
 
-    def __init__(self, profile: WaveformProfile = None, high_contrast: bool = False,
+    def __init__(self, profile: WaveformProfile = None,
                  three_color: bool = False, panel: Optional[PanelModel] = None):
         self._adopt_panel(panel)
         self.reset_pin = epdconfig.RST_PIN
@@ -138,11 +138,6 @@ class EPD(PanelDriver):
         # the working bench panel is unchanged when nothing is configured. See
         # waveform_profiles for the registry and the provenance of each table.
         self.profile = profile if profile is not None else get_profile("")
-        # Experimental drive-voltage override applied on top of whatever the
-        # profile programs (see _apply_high_contrast). Off by default; the one
-        # knob without datasheet backing, surfaced separately in the UI as
-        # experimental.
-        self.high_contrast = high_contrast
         # Last frame shown on the panel. Re-sent to the OLD-RAM bank (0x26) before
         # every partial refresh (see _write_partial_rams) so the differential
         # waveform diffs (currently-shown -> new) and fully clears the prior
@@ -186,8 +181,8 @@ class EPD(PanelDriver):
         """
         self.three_color = enabled
 
-    def apply_profile(self, profile: WaveformProfile, high_contrast: bool) -> None:
-        """Select a new waveform profile/override for the next init().
+    def apply_profile(self, profile: WaveformProfile) -> None:
+        """Select a new waveform profile for the next init().
 
         Backs the live (no-reboot) profile change: the caller sets the new
         selection here, then re-runs init() followed by a full refresh so the
@@ -195,18 +190,6 @@ class EPD(PanelDriver):
         process. None selects the verified default, matching the constructor.
         """
         self.profile = profile if profile is not None else get_profile("")
-        self.high_contrast = high_contrast
-
-    # --- "high contrast" drive voltages (experimental override) ---------------
-    # Pushed harder than the GDEM029T94 trailing voltage bytes (VSH 0x41, VSL
-    # 0x32, VCOM 0x36): a larger VSH darkens black pixels and a more-negative
-    # VSL/VCOM raises contrast on a faint panel. An on-hardware tuning starting
-    # point, not a datasheet guarantee -- the reason it is surfaced as a separate
-    # experimental toggle, applied over whatever profile is selected.
-    HIGH_CONTRAST_VSH1 = 0x4A  # source high (profile default 0x41)
-    HIGH_CONTRAST_VSH2 = 0x00  # second source high (unused on this panel)
-    HIGH_CONTRAST_VSL = 0x3A   # source low / more negative (profile default 0x32)
-    HIGH_CONTRAST_VCOM = 0x44  # VCOM (profile default 0x36)
 
     # --- low-level SPI / GPIO (identical wiring to the V2 driver) -------------
     def reset(self):
@@ -447,9 +430,9 @@ class EPD(PanelDriver):
         self._busy_activity_confirmed = True
         log.info(
             "[EPD SSD1680] init ok: profile=%s driver=%s use_otp=%s "
-            "full_activation=0x%02X high_contrast=%s three_color=%s",
+            "full_activation=0x%02X three_color=%s",
             self.profile.key, self.profile.driver, self.profile.use_otp,
-            self._full_activation_byte(), self.high_contrast, self.three_color,
+            self._full_activation_byte(), self.three_color,
         )
         return 0
 
@@ -498,11 +481,6 @@ class EPD(PanelDriver):
         if self.profile.driver != DRIVER_GDEY029T94 and not self.profile.use_otp:
             self.SetLut(self.profile.full_lut)
 
-        # high_contrast runs LAST so its harder source/VCOM voltages override
-        # whatever SetLut() just wrote.
-        if self.high_contrast:
-            self._apply_high_contrast()
-
     def _init_dke(self):
         """DEPG0290BS (SSD1680) init: OTP full refresh, register partial LUT.
 
@@ -537,9 +515,6 @@ class EPD(PanelDriver):
         self.SetCursor(0, 0)
         self.ReadBusy()
 
-        if self.high_contrast:
-            self._apply_high_contrast()
-
     def _init_il3820(self):
         """IL3820 (GDEH029A1) init + 30-byte full LUT load.
 
@@ -550,9 +525,6 @@ class EPD(PanelDriver):
         power-on (0x22=0xC0, enable clock+analog only -- no display) settles the
         panel before the first image write; the full-refresh activation byte is
         0xC4 (see TurnOnDisplay).
-
-        high_contrast raises VCOM here (0x2C=0x44 vs 0xA8); IL3820 has no separate
-        source-voltage register, so the SSD1680 0x04 override does not apply.
         """
         self.send_command(0x01)  # driver output / gate config
         self.send_data((self.height - 1) % 256)
@@ -565,7 +537,7 @@ class EPD(PanelDriver):
         self.send_data(0x9D)
 
         self.send_command(0x2C)  # VCOM
-        self.send_data(0x44 if self.high_contrast else 0xA8)
+        self.send_data(0xA8)
 
         self.send_command(0x3A)  # dummy line period
         self.send_data(0x1A)
@@ -586,24 +558,6 @@ class EPD(PanelDriver):
         self.send_data(0xC0)
         self.send_command(0x20)  # master activation
         self.ReadBusy(require_activity=not self._busy_activity_confirmed)
-
-    def _apply_high_contrast(self):
-        """Rewrite source (0x04) and VCOM (0x2C) with higher-contrast voltages.
-
-        Invoked from init() last (after the waveform LUT and any IL3820
-        additions) when ``high_contrast`` is set, so these values are the final
-        word on drive voltage. Targets the "draws but faint" symptom: a higher
-        VSH and more-negative VSL/VCOM push more charge into the ink. The bytes
-        are an on-hardware tuning starting point, not a datasheet guarantee --
-        hence the experimental toggle. If the panel still renders faint, these
-        constants are the values to adjust next.
-        """
-        self.send_command(0x04)  # source driving voltage
-        self.send_data(self.HIGH_CONTRAST_VSH1)  # VSH1
-        self.send_data(self.HIGH_CONTRAST_VSH2)  # VSH2
-        self.send_data(self.HIGH_CONTRAST_VSL)   # VSL
-        self.send_command(0x2C)  # VCOM
-        self.send_data(self.HIGH_CONTRAST_VCOM)
 
     def getbuffer(self, image):
         """Pack a PIL image into the 1bpp panel buffer (white=1, black=0).
@@ -819,8 +773,7 @@ class EPD(PanelDriver):
 
         No register LUT. Data entry is 0x01 (X increment, Y decrement), and the
         Y window runs from 295 down to 0. BUSY is active-high, same as the
-        other SSD1680 panels. The experimental high-contrast voltages are not
-        in this demo and are not applied.
+        other SSD1680 panels.
         """
         self._z95_basemap_ready = False
         self.ReadBusy()

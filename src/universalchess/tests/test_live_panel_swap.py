@@ -163,7 +163,7 @@ class SwitchPanelTests(unittest.TestCase):
                 manager = self._manager(lambda epd, result=replaced: result)
                 with patch("universalchess.board.hardware_info.write_display_status") as write:
                     switched = display_boot.switch_to_panel(
-                        manager, model, "gdey029t94", False, False, False,
+                        manager, model, "gdey029t94", False, False,
                     )
                 self.assertEqual(switched, replaced)
                 self.assertEqual(write.call_count, expected_calls)
@@ -188,7 +188,7 @@ class SwitchPanelTests(unittest.TestCase):
         with patch.object(ds, "controller_order", return_value=(ds.CONTROLLER_UC8151D, ds.CONTROLLER_SSD1680)), \
                 patch("universalchess.board.hardware_info.read_display_status", return_value=None), \
                 patch("universalchess.board.hardware_info.write_display_status") as write:
-            switched = display_boot.switch_to_automatic(manager, "", False, False)
+            switched = display_boot.switch_to_automatic(manager, "", False)
 
         self.assertTrue(switched)
         self.assertEqual(tried, ["epd2in9d", "epd2in9_ssd1680"])
@@ -205,7 +205,7 @@ class SwitchPanelTests(unittest.TestCase):
         with patch.object(ds, "controller_order", return_value=(ds.CONTROLLER_UC8151D, ds.CONTROLLER_SSD1680)), \
                 patch("universalchess.board.hardware_info.read_display_status", return_value=None), \
                 patch("universalchess.board.hardware_info.write_display_status") as write:
-            switched = display_boot.switch_to_automatic(manager, "", False, False)
+            switched = display_boot.switch_to_automatic(manager, "", False)
 
         self.assertFalse(switched)
         self.assertEqual(manager.replace_epd.call_count, 2)
@@ -222,7 +222,7 @@ class _TuningManager:
         self.applied_profiles = []
         self.applied_three_color = []
 
-    def apply_waveform_profile(self, profile, high_contrast):
+    def apply_waveform_profile(self, profile):
         self.applied_profiles.append(profile.key)
 
     def apply_three_color(self, enabled):
@@ -256,7 +256,7 @@ class LiveWaveformTests(unittest.TestCase):
         from universalchess.board import board, display_settings
 
         model = panels.get_model(panel_key)
-        epd = display_boot.build_panel_epd(model, stored_key, False, False)
+        epd = display_boot.build_panel_epd(model, stored_key, False)
         manager = _TuningManager(epd)
         pending = PendingWork()
         pending.display_profile.request({})
@@ -264,7 +264,7 @@ class LiveWaveformTests(unittest.TestCase):
         flags = {"three_color": three_color, "partial_only": False}
         with patch.object(board_app, "_pending", pending), \
                 patch.object(board, "display_manager", manager, create=True), \
-                patch.object(display_settings, "read_selection", return_value=(stored_key, False)), \
+                patch.object(display_settings, "read_waveform_profile_key", return_value=stored_key), \
                 patch.object(display_settings, "read_panel_key", return_value=panel_key), \
                 patch.object(display_settings, "read_flag",
                              side_effect=lambda name, default=False: flags.get(name, default)):

@@ -840,8 +840,6 @@
       "waveformSource": "Waveform kaynağı:",
       "batchLabel": "Hızlı güncellemeleri birleştir",
       "batchHelp": "Hızlı bir ekran güncellemesi serisini son karenin tek bir yenilemesinde birleştirir. Güncellemeler e-paper'ın çizebileceğinden hızlı geldiğinde ara kareler atlanır, böylece ekran geride kalmak yerine en son durumu gösterir. Her ara kareyi çizmek için kapat (güncellemeler hızlı gelince daha yavaştır ama her adımı gösterir). Açık önerilir.",
-      "highContrastLabel": "Yüksek karşıtlık (deneysel)",
-      "highContrastHelp": "Soluk bir görüntüyü koyulaştırmak için VCOM/kaynak gerilimlerini waveform varsayılanlarından daha sert sürer. Görüntü çiziliyor ama yalnızca zayıfsa dene. Veri sayfasına dayalı bir ayar değildir; ekran zaten iyiyse kapalı bırak.",
       "threeColorLabel": "Üç renk (kırmızı) modu",
       "threeColorHelp": "Yalnızca kırmızı/beyaz/siyah paneller için. Şahları, tehdit altındaki vezirleri, oyun sonucunu ve kaybeden değerlendirme çubuklarını kırmızıyla vurgular. Kırmızı mürekkep yalnızca tam yenilemeyle değişebilir, bu yüzden o kırmızı güncellemeler ~12-15 saniye sürer; olağan hamleler hızlı kalır.",
       "savedOffline": "Kaydedildi. Tahta çalışırken uygulanır.",

@@ -76,7 +76,7 @@ def _i6fd_driver():
 
 def _built_panel(key, stored_waveform=""):
     """The driver the boot path constructs for replacement panel ``key``."""
-    return display_boot.build_panel_epd(panels.get_model(key), stored_waveform, False, False)
+    return display_boot.build_panel_epd(panels.get_model(key), stored_waveform, False)
 
 
 def _commands_of(epd, action):
@@ -267,7 +267,6 @@ class Gdey029Z95Tests(unittest.TestCase):
         self.assertEqual(model.pinned_profile, "gdey029z95")
         self.assertTrue(model.supports_partial)
         self.assertTrue(model.three_color_supported)
-        self.assertFalse(model.high_contrast_supported)
         self.assertTrue(model.waveform_applicable)
         self.assertEqual(model.waveform_controller, wp.CONTROLLER_SSD16XX)
         self.assertEqual(model.panel_mode, "bwr")
@@ -292,19 +291,6 @@ class Gdey029Z95Tests(unittest.TestCase):
                 self.assertEqual(epd.profile.key, expected_key)
                 commands = [command for command, _data in _commands_of(epd, epd.init)]
                 self.assertEqual(0x32 in commands, loads_register_lut)
-
-    def test_hidden_high_contrast_is_not_driven(self):
-        # Why: high contrast is one setting shared by every panel, and the
-        # card hides it where the panel does not offer it. A value left on
-        # from Automatic must not raise the voltages on this glass. How a
-        # regression manifests: epd.high_contrast True on GDEY029Z95, or
-        # False on GDEY029T94, which offers the switch.
-        for key, expected in (("gdey029z95", False), ("gdey029t94", True)):
-            with self.subTest(panel=key):
-                epd = display_boot.build_panel_epd(
-                    panels.get_model(key), "gdem029t94", True, False,
-                )
-                self.assertEqual(epd.high_contrast, expected)
 
     def test_init_uses_vendor_y_decrement_and_no_lut(self):
         # EPD_HW_Init: data entry 0x01 and Y window starting at 295 (0x27, 0x01).
@@ -465,7 +451,7 @@ class ExplicitPanelBootTests(unittest.TestCase):
             return MagicMock()
 
         with patch.object(display_settings, "read_panel_key", return_value="gdey029f52"), \
-                patch.object(display_boot, "read_selection", return_value=("", False)), \
+                patch.object(display_boot, "read_waveform_profile_key", return_value=""), \
                 patch.object(display_boot, "read_flag", return_value=False), \
                 patch.object(display_boot, "build_epd", side_effect=_build_epd), \
                 patch.object(display_boot, "build_panel_epd", side_effect=_build_panel), \
@@ -552,12 +538,12 @@ class Gdew029I6fdGrayTests(unittest.TestCase):
         # is the second gray plane on this glass. A regression leaves
         # three_color set and the red path writes a mask into the gray bits.
         model = panels.get_model("gdew029i6fd")
-        epd = display_boot.build_panel_epd(model, model.key, False, True)
+        epd = display_boot.build_panel_epd(model, model.key, True)
         self.assertEqual(epd.gray_levels, 4)
         self.assertTrue(epd.supports_partial)
         self.assertFalse(epd.three_color)
         other = display_boot.build_panel_epd(
-            panels.get_model("gdey029t94"), "gdey029t94", False, False,
+            panels.get_model("gdey029t94"), "gdey029t94", False,
         )
         self.assertFalse(other.partial_only_supported)
         self.assertFalse(other.partial_only)
@@ -573,16 +559,16 @@ class Gdew029I6fdGrayTests(unittest.TestCase):
         # the next refresh still loads the 3-second waveform, or sets
         # partial_only on T94.
         model = panels.get_model("gdew029i6fd")
-        epd = display_boot.build_panel_epd(model, model.key, False, False, True)
+        epd = display_boot.build_panel_epd(model, model.key, False, True)
         self.assertTrue(epd.partial_only)
         self.assertTrue(epd.partial_only_supported)
         self.assertEqual(epd.gray_levels, 1)
         self.assertFalse(epd.three_color)
-        off = display_boot.build_panel_epd(model, model.key, False, False, False)
+        off = display_boot.build_panel_epd(model, model.key, False, False)
         self.assertFalse(off.partial_only)
         self.assertEqual(off.gray_levels, 4)
         other = display_boot.build_panel_epd(
-            panels.get_model("gdey029t94"), "gdey029t94", False, False, True,
+            panels.get_model("gdey029t94"), "gdey029t94", False, True,
         )
         self.assertFalse(other.partial_only)
         self.assertEqual(other.gray_levels, 1)
@@ -787,7 +773,7 @@ class Gdew029I6fdGrayTests(unittest.TestCase):
 
     def _gray_epd(self, partial_only=False):
         model = panels.get_model("gdew029i6fd")
-        epd = display_boot.build_panel_epd(model, model.key, False, False, partial_only)
+        epd = display_boot.build_panel_epd(model, model.key, False, partial_only)
         epd.ReadBusy = MagicMock()
         epdconfig.delay_ms = MagicMock()
         return epd
@@ -887,7 +873,7 @@ class PanelWaveformChoiceTests(unittest.TestCase):
         for panel_key, stored_key, expected in cases:
             with self.subTest(panel=panel_key, stored=stored_key):
                 epd = display_boot.build_panel_epd(
-                    panels.get_model(panel_key), stored_key, False, False,
+                    panels.get_model(panel_key), stored_key, False,
                 )
                 self.assertEqual(epd.profile.key, expected)
 
@@ -899,7 +885,7 @@ class PanelWaveformChoiceTests(unittest.TestCase):
         for stored_key in ("gdey029t94", "gdey029z95"):
             with self.subTest(stored=stored_key):
                 _epd, profile = display_boot.build_epd(
-                    panels.CONTROLLER_SSD1680, stored_key, False, False,
+                    panels.CONTROLLER_SSD1680, stored_key, False,
                 )
                 self.assertEqual(profile.key, "gdem029t94")
 
@@ -978,7 +964,7 @@ class DriverCapabilityTests(unittest.TestCase):
     def test_automatic_drivers_report_the_stock_panel(self):
         for controller in (panels.CONTROLLER_UC8151D, panels.CONTROLLER_SSD1680):
             with self.subTest(controller=controller):
-                epd, _profile = display_boot.build_epd(controller, "", False, False)
+                epd, _profile = display_boot.build_epd(controller, "", False)
                 self.assertEqual(
                     {name: getattr(epd, name) for name in DRIVER_CAPABILITIES},
                     {"PANEL_KEY": panels.PANEL_AUTO, "supports_partial": True,
@@ -991,7 +977,7 @@ class DriverCapabilityTests(unittest.TestCase):
             if not model.explicit:
                 continue
             with self.subTest(panel=model.key):
-                epd = display_boot.build_panel_epd(model, "", False, False)
+                epd = display_boot.build_panel_epd(model, "", False)
                 self.assertEqual(
                     {name: getattr(epd, name) for name in DRIVER_CAPABILITIES},
                     {"PANEL_KEY": model.key, "supports_partial": model.supports_partial,
@@ -1034,13 +1020,13 @@ class ThreeColorScopeTests(unittest.TestCase):
     def test_stored_switch_reaches_only_a_red_ink_driver(self):
         for controller in (panels.CONTROLLER_UC8151D, panels.CONTROLLER_SSD1680):
             with self.subTest(panel="auto", controller=controller):
-                epd, _profile = display_boot.build_epd(controller, "", False, True)
+                epd, _profile = display_boot.build_epd(controller, "", True)
                 self.assertFalse(epd.three_color)
         for model in panels.all_panels():
             if not model.explicit:
                 continue
             with self.subTest(panel=model.key):
-                epd = display_boot.build_panel_epd(model, "", False, True)
+                epd = display_boot.build_panel_epd(model, "", True)
                 self.assertEqual(epd.three_color, model.key in RED_INK_PANELS)
 
 

@@ -4544,7 +4544,6 @@ function DisplayTuningCard() {
   const [activeController, setActiveController] = useState<WaveformController | null>(null);
   const [profiles, setProfiles] = useState<WaveformProfile[]>([]);
   const [selected, setSelected] = useState<string>('');
-  const [highContrast, setHighContrast] = useState(false);
   const [threeColor, setThreeColor] = useState(false);
   const [threeColorSupported, setThreeColorSupported] = useState(false);
   const [batchUpdates, setBatchUpdates] = useState(true);
@@ -4554,7 +4553,6 @@ function DisplayTuningCard() {
   const [selectedPanel, setSelectedPanel] = useState('');
   const [panelMode, setPanelMode] = useState<PanelMode>('auto');
   const [waveformApplicable, setWaveformApplicable] = useState(true);
-  const [highContrastSupported, setHighContrastSupported] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -4577,7 +4575,6 @@ function DisplayTuningCard() {
         }
         if (Array.isArray(data.profiles)) setProfiles(data.profiles);
         if (typeof data.selected === 'string') setSelected(data.selected);
-        if (typeof data.high_contrast === 'boolean') setHighContrast(data.high_contrast);
         if (typeof data.three_color === 'boolean') setThreeColor(data.three_color);
         if (typeof data.three_color_supported === 'boolean') setThreeColorSupported(data.three_color_supported);
         if (typeof data.batch_updates === 'boolean') setBatchUpdates(data.batch_updates);
@@ -4587,7 +4584,6 @@ function DisplayTuningCard() {
         if (typeof data.selected_panel === 'string') setSelectedPanel(data.selected_panel);
         if (isPanelMode(data.panel_mode)) setPanelMode(data.panel_mode);
         if (typeof data.waveform_applicable === 'boolean') setWaveformApplicable(data.waveform_applicable);
-        if (typeof data.high_contrast_supported === 'boolean') setHighContrastSupported(data.high_contrast_supported);
       })
       .catch(() => {
         // The card stays on screen: a failed read must not hide the recovery
@@ -4599,11 +4595,10 @@ function DisplayTuningCard() {
   // Persist the selection and apply it live: the board re-inits the panel and
   // forces a full refresh, so the change takes effect without a reboot. On 401
   // the login dialog opens and the same apply is retried after authentication.
-  // Field-based so each control (profile / high contrast / three-color) sends
+  // Field-based so each control (profile / three-color / batching) sends
   // only its change, merged with the current state for the others.
-  const apply = async (updates: { profile?: string; high_contrast?: boolean; three_color?: boolean; batch_updates?: boolean; panel?: string; partial_only?: boolean }) => {
+  const apply = async (updates: { profile?: string; three_color?: boolean; batch_updates?: boolean; panel?: string; partial_only?: boolean }) => {
     const profile = updates.profile ?? selected;
-    const contrast = updates.high_contrast ?? highContrast;
     const tricolor = updates.three_color ?? threeColor;
     const batching = updates.batch_updates ?? batchUpdates;
     const partial = updates.partial_only ?? partialOnly;
@@ -4612,7 +4607,6 @@ function DisplayTuningCard() {
     setNotice(null);
     try {
       const payload: Record<string, string | boolean> = {
-        high_contrast: contrast,
         batch_updates: batching,
         partial_only: partial,
       };
@@ -4641,7 +4635,6 @@ function DisplayTuningCard() {
         return;
       }
       setSelected(data.selected ?? profile);
-      setHighContrast(typeof data.high_contrast === 'boolean' ? data.high_contrast : contrast);
       setThreeColor(typeof data.three_color === 'boolean' ? data.three_color : tricolor);
       setBatchUpdates(typeof data.batch_updates === 'boolean' ? data.batch_updates : batching);
       setPartialOnly(typeof data.partial_only === 'boolean' ? data.partial_only : partial);
@@ -4649,7 +4642,6 @@ function DisplayTuningCard() {
       if (typeof data.selected_panel === 'string') setSelectedPanel(data.selected_panel);
       if (isPanelMode(data.panel_mode)) setPanelMode(data.panel_mode);
       if (typeof data.waveform_applicable === 'boolean') setWaveformApplicable(data.waveform_applicable);
-      if (typeof data.high_contrast_supported === 'boolean') setHighContrastSupported(data.high_contrast_supported);
       if (typeof data.three_color_supported === 'boolean') setThreeColorSupported(data.three_color_supported);
       const enabledRed = updates.three_color === true;
       setNotice(
@@ -4746,15 +4738,6 @@ function DisplayTuningCard() {
             onChange={(v) => apply({ partial_only: v })}
             disabled={busy}
           />
-        )}
-        {highContrastSupported && (
-        <Toggle
-          label={t('settingsPage.displayTuning.highContrastLabel')}
-          help={t('settingsPage.displayTuning.highContrastHelp')}
-          checked={highContrast}
-          onChange={(v) => apply({ high_contrast: v })}
-          disabled={busy}
-        />
         )}
         {threeColorSupported && (
           <Toggle

@@ -854,8 +854,6 @@
       "waveformSource": "Źródło waveformu:",
       "batchLabel": "Grupuj szybkie aktualizacje",
       "batchHelp": "Łączy szybką serię aktualizacji ekranu w jedno odświeżenie ostatniej klatki. Gdy aktualizacje przychodzą szybciej, niż e-paper potrafi je narysować, pośrednie klatki są pomijane, więc ekran pokazuje najnowszy stan, a nie zostaje w tyle. Wyłącz, aby rysować każdą pośrednią klatkę (wolniej przy szybkich aktualizacjach, ale pokazuje każdy krok). Zalecane włączone.",
-      "highContrastLabel": "Wysoki kontrast (eksperymentalne)",
-      "highContrastHelp": "Steruje napięciami VCOM/source mocniej niż domyślne wartości waveformu, aby przyciemnić blady obraz. Spróbuj tego, jeśli obraz się rysuje, ale tylko słabo. To ustawienie nie ma potwierdzenia w dokumentacji technicznej; pozostaw wyłączone, jeśli ekran już wygląda dobrze.",
       "threeColorLabel": "Tryb trójkolorowy (czerwony)",
       "threeColorHelp": "Tylko dla paneli czerwono-biało-czarnych. Wyróżnia na czerwono szachy, zagrożone hetmany, wynik partii i przegrywające słupki oceny. Czerwony tusz może się zmienić tylko przy pełnym odświeżeniu, więc te czerwone aktualizacje trwają ~12-15 sekund; zwykłe ruchy pozostają szybkie.",
       "savedOffline": "Zapisano. Zostanie zastosowane, gdy szachownica będzie uruchomiona.",

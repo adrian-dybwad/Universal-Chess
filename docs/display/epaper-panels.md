@@ -38,7 +38,7 @@ only the **active** controller's profiles.
   Used for the V2 panel. BUSY is active-LOW (idle = LOW). A bounded wait raises
   `EPDTimeoutError` after `BUSY_TIMEOUT_SECONDS = 5.0`; `init()` converts that to
   a `-1` result so the board disables the display rather than hanging.
-  Consumes a UC8151D `WaveformProfile` (`+ high_contrast`), with
+  Consumes a UC8151D `WaveformProfile`, with
   `apply_profile()` for live re-selection. **Full refresh is OTP for every
   UC8151D profile** (the already-working V2 full path is untouched); only the
   **partial** register LUTs (`0x20`–`0x24`) and analog bytes (PLL `0x30`,
@@ -89,8 +89,7 @@ and `0x24` with the new frame on **every** call — mirroring GxEPD2's
 This fixed a real ghosting bug: previously only `0x24` was written, so every
 partial diffed against the last *full-refresh* baseline (or, after a transition,
 garbage), and the prior frame was never cleared — e.g. a clock's digits stacked
-on top of each other. The waveform/voltage profiles and the high-contrast toggle
-could **not** fix this, because the cause was baseline-RAM management, not the
+on top of each other. The waveform/voltage profiles could **not** fix this, because the cause was baseline-RAM management, not the
 waveform. Pinned by `PartialBaselineTests` in `tests/test_epd_ssd1680.py`.
 
 ## Panel 1 — DGT Centaur V2 (UC8151D)
@@ -119,8 +118,7 @@ waveform. Pinned by `PartialBaselineTests` in `tests/test_epd_ssd1680.py`.
   `0xC7`). Confirmed working *before* the profile model was added.
 - **Regression guarantee:** when no profile is configured, the driver resolves to
   the `gdem029t94` profile, whose path is byte-for-byte identical to the prior
-  hard-coded driver. High contrast defaults **off**. So this panel behaves exactly
-  as it did. Pinned by `test_default_writes_register_lut`, the `0xC7` case of
+  hard-coded driver. So this panel behaves exactly as it did. Pinned by `test_default_writes_register_lut`, the `0xC7` case of
   `test_full_refresh_control_byte_depends_on_otp`,
   `test_partial_stays_partial_when_not_otp` in `tests/test_epd_ssd1680.py`, and
   `test_default_is_gdem029t94_with_register_luts` in
@@ -167,7 +165,7 @@ registry — every register LUT is transcribed verbatim from a credited publishe
 source, never invented (see "Data integrity" in that module).
 
 Exposed in the web UI under **Settings → Display → "Display tuning"** as a
-dropdown plus a high-contrast toggle, backed by `GET/POST
+dropdown, backed by `GET/POST
 /api/system/display-tuning`. The card is **always shown**. When the board
 reports an initialized panel with a known controller
 (`_active_waveform_controller()`), the dropdown is **filtered to the active
@@ -177,7 +175,7 @@ profile is listed** so a waveform can still be persisted for the next boot —
 hiding the card then is the recovery path the user needs. The card
 title/copy adapt to the active controller (V1 vs V2), or explain that no
 panel was detected. The selection is stored in
-`[display] waveform_profile` / `high_contrast` (one key shared across
+`[display] waveform_profile` (one key shared across
 controllers; each driver resolves it against its own family, falling back to that
 controller's verified default for a mismatched key — e.g. after a panel swap).
 
@@ -199,7 +197,7 @@ waveform family, and the next boot's probe hint whether the Automatic probe
 found Centaur glass. Only an Automatic boot seeds the hint.
 
 ### Live apply (no reboot)
-Selecting a profile (or toggling high contrast) **takes effect immediately**:
+Selecting a profile **takes effect immediately**:
 
 1. The web POST persists the setting and sends the board process a
    `display_profile` command (`send_board_command`, the same Unix-socket channel
@@ -249,50 +247,28 @@ full, uses this partial waveform.
 blank/generic (common on raw panels) it may render blank or garbage. No damage
 risk — OTP is factory data and nothing is written to OTP.
 
-### High contrast (experimental toggle)
-Orthogonal to the profile. For the `ssd1680`/`dke_ssd1680` drivers it overrides
-the source (`0x04`) and VCOM (`0x2C`) registers **after** the profile's LUT, so
-it is the final word on voltage. The `il3820` driver has **no** `0x04` register,
-so high contrast there instead raises VCOM inline (`0x2C=0x44` vs the `0xA8`
-default). On the **UC8151D** driver it bumps VCOM_DC (`0x82`) by
-`UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA = 0x08`, clamped to the 6-bit field max
-`0x3F` (e.g. the default `0x12` → `0x1A`) — a more-negative VCOM_DC to darken a
-faint partial. Register deltas vs. the `WS_20_30` trailing bytes (`ssd1680`):
-
-| Register | Default (`WS_20_30`) | High contrast | Delta |
-|---|---|---|---|
-| `0x04` VSH1 | `0x41` | `0x4A` | +9 codes |
-| `0x04` VSH2 | `0x00` | `0x00` | none |
-| `0x04` VSL | `0x32` | `0x3A` | +8 codes |
-| `0x2C` VCOM | `0x36` | `0x44` | +14 codes |
-
-> The code→voltage mapping has **not** been verified against the SSD1680/E029A01
-> datasheet, so no volt figures are quoted. The values are an on-hardware tuning
-> starting point, not a datasheet guarantee — which is why this is surfaced as an
-> experimental toggle.
-
-- **Cosmetic/reversible:** darker output, possible over-saturation/blooming, and
-  worse ghosting (waveform timing was tuned for the original voltages). Usually
-  clears after turning it off and running a few full refreshes.
-- **Real risk if left on:** if these exceed the panel's rated source/VCOM
-  limits, sustained operation is out-of-spec; the VCOM shift in particular is the
-  classic cause of DC imbalance → accelerated aging / persistent burn-in.
-- **Guidance:** safe to enable **briefly** to observe; do not leave running on a
-  panel you care about.
-
-It composes with any profile (including `builtin_otp` and `depg0290bs`, where the
-register overrides are written best-effort over an OTP-driven full refresh — the
-least-characterized combination).
+### No voltage override
+The drive voltages are the selected profile's own: the SSD1680 source (`0x04`)
+and VCOM (`0x2C`) bytes from the LUT, the IL3820 VCOM `0x2C=0xA8`, and the
+UC8151D VCOM_DC (`0x82`) from the profile. An earlier "High contrast
+(experimental)" switch raised them (SSD1680 VSH1 `0x41`→`0x4A`, VSL
+`0x32`→`0x3A`, VCOM `0x36`→`0x44`; IL3820 VCOM `0xA8`→`0x44`; UC8151D VCOM_DC
+`+0x08`). It was removed: the code→voltage mapping was never verified against
+the SSD1680/E029A01 datasheet, a VCOM shift is the classic cause of DC
+imbalance → accelerated aging / persistent burn-in, and the switch was saved
+and re-applied at every boot. A `[display] high_contrast` key left in
+`centaur.ini` is ignored, which `tests/test_stored_high_contrast_ignored.py`
+pins at boot and on the live path. A faint image is addressed by choosing
+another published profile.
 
 ## Remote test procedure (for Panel 3)
 
 1. Select a profile in the display-tuning card (it applies immediately, no reboot).
 2. Photograph the panel (splash + a position).
-3. Try the next profile; then try each with **High contrast** on.
-4. Report which profile (and whether high contrast) yields a clean, solid image.
+3. Try the next profile.
+4. Report which profile yields a clean, solid image.
 
-`builtin_otp` is the lower-risk, higher-information experiment to try first;
-high contrast should be enabled only briefly.
+`builtin_otp` is the lower-risk, higher-information experiment to try first.
 
 ## Three-color (red/white/black) mode
 
@@ -378,8 +354,6 @@ the board. The live panel is SSD1680, so the SSD1680 driver is the one to tune
   other) — currently inferred, not confirmed.
 - Determine whether its OTP holds a usable waveform (resolves `otp_waveform`'s
   viability).
-- Obtain the `E029A01`/`E029A01T1956C0` datasheet to replace the experimental
-  high-contrast codes with datasheet-rated VSH/VSL/VCOM values.
 - Add new vendor profiles from credited published tables as they are obtained
   (the registry is built for this; see its "Data integrity" note).
 - If a profile is confirmed to fix Panel 3 *and* verified non-harmful on Panel 2,
@@ -420,10 +394,10 @@ Bayer dither.
 ## Key source files
 
 - `src/universalchess/epaper/framework/waveshare/epd2in9d.py` — UC8151D (V2);
-  consumes a UC8151D `WaveformProfile` + `high_contrast`, with `apply_profile()`
+  consumes a UC8151D `WaveformProfile`, with `apply_profile()`
   for live re-selection. Exposes `CONTROLLER` for profile resolution.
 - `src/universalchess/epaper/framework/waveshare/epd2in9_ssd1680.py` — SSD1680
-  (V1); consumes a `WaveformProfile` + `high_contrast`, with `apply_profile()`
+  (V1); consumes a `WaveformProfile`, with `apply_profile()`
   for live re-selection.
 - `src/universalchess/epaper/framework/waveshare/waveform_profiles.py` — the
   attributed profile registry (per-controller LUT data + metadata).
@@ -441,7 +415,7 @@ Bayer dither.
   always-offered card + active-controller filtering (all profiles when none
   is live) + live-apply command.
 - `src/universalchess/web-app/src/pages/Settings.tsx` (`DisplayTuningCard`) — UI
-  dropdown + high-contrast toggle + per-controller copy + source credits.
+  dropdown + per-controller copy + source credits.
 - `src/universalchess/web-app/src/pages/Licenses.tsx` — waveform-source credits.
 - `src/universalchess/tests/test_epd_ssd1680.py`,
   `src/universalchess/tests/test_epd_uc8151d.py`,

@@ -10,18 +10,15 @@ Kept free of any driver import so the web process can read the settings without
 pulling in the GPIO-dependent driver modules.
 """
 
-from typing import Tuple
-
 TRUE_VALUES = ('1', 'true', 'on', 'yes')
 
 
 def read_flag(name: str, default: bool = False) -> bool:
     """Return whether a ``[display]`` boolean opt-in is set.
 
-    Covers the high_contrast drive-voltage override, the three_color switch and
-    the update-batching option. high_contrast gates no driver selection -- it
-    only adjusts how the active driver drives the panel (SSD1680 source/VCOM
-    push, or UC8151D VCOM_DC bump).
+    Covers the three_color switch, the update-batching option and the
+    partial-only switch. A key no longer read, such as ``high_contrast`` from
+    the removed voltage override, stays in the file and has no effect.
 
     ``default`` is the value when the key is absent, so a never-configured board
     gets the intended shipped behaviour (e.g. batching on).
@@ -58,8 +55,3 @@ def read_panel_key() -> str:
     if panel_models.is_known_panel(stored):
         return stored
     return panel_models.PANEL_AUTO
-
-
-def read_selection() -> Tuple[str, bool]:
-    """Return ``(waveform_profile_key, high_contrast)``, both as stored."""
-    return read_waveform_profile_key(), read_flag('high_contrast')

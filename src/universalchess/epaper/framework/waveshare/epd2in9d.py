@@ -96,14 +96,6 @@ LUT_4G_BB = (
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 )
 
-# Experimental "high contrast" override for UC8151D: add this to the profile's
-# VCOM_DC byte (register 0x82), clamped to the 6-bit field max. A more-negative
-# VCOM_DC darkens black and lifts a faint partial image. Not datasheet-backed --
-# the one tuning knob without provenance, surfaced as experimental in the UI and
-# mirrors the SSD1680 driver's high_contrast voltage push.
-UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA = 0x08
-UC8151D_VCOM_DC_MAX = 0x3F
-
 # --- Three-color (red/white/black) mode ------------------------------------
 # The same UC8151D controller drives the tri-color BWR panels (GDEH029Z13 /
 # GDEW029Z13). On a tri-color panel command 0x10 is the BLACK/WHITE data channel
@@ -255,7 +247,7 @@ class EPD(PanelDriver):
         # no longer what the glass shows.
         self._shown_gray = None
 
-    def __init__(self, profile: WaveformProfile = None, high_contrast: bool = False,
+    def __init__(self, profile: WaveformProfile = None,
                  three_color: bool = False, panel: Optional[PanelModel] = None,
                  partial_only: bool = False):
         self._adopt_panel(panel, partial_only)
@@ -277,9 +269,6 @@ class EPD(PanelDriver):
         # for replacement panels (GDEW029I6FD/T5D/M06) that ghost or render faint
         # on the stock partial waveform.
         self.profile = profile if profile is not None else get_profile("", CONTROLLER_UC8151D)
-        # Experimental drive-voltage override (VCOM_DC bump). Off by default; the
-        # one knob without datasheet backing, surfaced separately in the UI.
-        self.high_contrast = high_contrast
         # Set True by init() when it returns -1 specifically because the BUSY
         # line never reached idle within the timeout (the inverted-polarity V1
         # panel signature). Lets the startup selector distinguish that case --
@@ -317,8 +306,8 @@ class EPD(PanelDriver):
         """
         self.three_color = enabled
 
-    def apply_profile(self, profile: WaveformProfile, high_contrast: bool) -> None:
-        """Select a new waveform profile/override for the next refresh.
+    def apply_profile(self, profile: WaveformProfile) -> None:
+        """Select a new waveform profile for the next refresh.
 
         Backs the live (no-reboot) profile change: the caller sets the new
         selection here, then re-runs init() followed by a full refresh so the
@@ -328,21 +317,7 @@ class EPD(PanelDriver):
         subsequent partial refreshes drive the panel.
         """
         self.profile = profile if profile is not None else get_profile("", CONTROLLER_UC8151D)
-        self.high_contrast = high_contrast
 
-    def _effective_vcom_dc(self) -> int:
-        """VCOM_DC byte (0x82) for the active profile, with high_contrast applied.
-
-        Returns the profile's nominal VCOM_DC, or -- when high_contrast is on --
-        that value pushed harder by UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA, clamped
-        to the register's 6-bit range so the experimental boost can never write
-        an out-of-range value.
-        """
-        base = self.profile.uc8151d.vcom_dc
-        if not self.high_contrast:
-            return base
-        return min(base + UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA, UC8151D_VCOM_DC_MAX)
-        
     # Hardware reset
     def reset(self):
         print("Resetting display")
@@ -501,7 +476,7 @@ class EPD(PanelDriver):
         and analog bytes (0x30 PLL, 0x82 VCOM_DC, 0x50 interval) come from
         ``self.profile.uc8151d`` so a replacement panel variant
         (GDEW029I6FD/T5D/M06) can be driven without code changes. With the
-        Waveshare default profile and high_contrast off, the bytes emitted are
+        Waveshare default profile, the bytes emitted are
         identical to the stock driver. PLL is skipped when the profile leaves it
         ``None`` (the controller default), matching GxEPD2's I6FD/T5D partial init.
         """
@@ -535,7 +510,7 @@ class EPD(PanelDriver):
         self.send_data(self.height & 0xff)
 
         self.send_command(0x82) #vcom_DC setting
-        self.send_data(self._effective_vcom_dc())
+        self.send_data(self.profile.uc8151d.vcom_dc)
 
         self.send_command(0X50)     #VCOM AND DATA INTERVAL SETTING
         self.send_data(wf.interval)

@@ -119,7 +119,6 @@ describe('Display tuning card stays offered when the panel is down', () => {
       active_controller: null,
       profiles: BOTH_FAMILY_PROFILES,
       selected: 'gdem029t94',
-      high_contrast: false,
       three_color: false,
       three_color_supported: true,
       batch_updates: true,
@@ -151,7 +150,6 @@ describe('Display tuning card stays offered when the panel is down', () => {
       active_controller: 'uc8151d',
       profiles: [BOTH_FAMILY_PROFILES[1]],
       selected: 'uc8151d_waveshare',
-      high_contrast: false,
       three_color: false,
       three_color_supported: true,
       batch_updates: true,
@@ -178,8 +176,6 @@ describe('Display tuning card stays offered when the panel is down', () => {
       selected_panel: 'gdey029f52',
       panel_mode: 'fixed',
       waveform_applicable: false,
-      high_contrast: false,
-      high_contrast_supported: false,
       three_color: false,
       three_color_supported: true,
       batch_updates: true,
@@ -217,8 +213,6 @@ describe('Display tuning card stays offered when the panel is down', () => {
       selected_panel: 'gdew029i6fd',
       panel_mode: 'gray',
       waveform_applicable: false,
-      high_contrast: false,
-      high_contrast_supported: false,
       three_color: false,
       three_color_supported: false,
       batch_updates: true,
@@ -273,8 +267,6 @@ function z95Tuning() {
     selected_panel: 'gdey029z95',
     panel_mode: 'bwr',
     waveform_applicable: true,
-    high_contrast: false,
-    high_contrast_supported: false,
     three_color: true,
     three_color_supported: true,
     batch_updates: true,
@@ -319,6 +311,45 @@ describe('Three-color switch appears only on a panel with red ink', () => {
     await waitFor(() => expect(posts).toHaveLength(1));
     expect(posts[0].panel).toBe('gdey029t94');
     expect(posts[0]).not.toHaveProperty('three_color');
+  });
+});
+
+describe('The removed high-contrast switch stays gone', () => {
+  it('shows no switch and posts no high_contrast when a server still reports it', async () => {
+    // Why: the switch drove unverified voltages and was removed. A board not
+    // yet updated still reports high_contrast_supported and a stored true.
+    // A regression is the "High contrast" label on the card, or
+    // high_contrast in the body of a waveform change, which an older server
+    // would save and apply.
+    const posts: Record<string, unknown>[] = [];
+    mockFetch(jsonResponse({
+      available: true,
+      active_controller: null,
+      profiles: BOTH_FAMILY_PROFILES,
+      selected: 'gdem029t94',
+      high_contrast: true,
+      high_contrast_supported: true,
+      three_color: false,
+      three_color_supported: false,
+      batch_updates: true,
+    }), posts);
+    renderDisplayTab();
+
+    const heading = await screen.findByRole('heading', { name: 'Display tuning' });
+    const card = heading.closest('.card') as HTMLElement;
+    const row = (await within(card).findByText('Waveform')).closest('.form-row') as HTMLElement;
+    const waveform = await waitFor(() => {
+      const select = within(row).getByRole('combobox') as HTMLSelectElement;
+      if (select.value !== 'gdem029t94') throw new Error('selection not loaded');
+      return select;
+    });
+    expect(within(card).queryByText(/high contrast/i)).not.toBeInTheDocument();
+
+    fireEvent.change(waveform, { target: { value: 'uc8151d_waveshare' } });
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0].profile).toBe('uc8151d_waveshare');
+    expect(posts[0]).not.toHaveProperty('high_contrast');
   });
 });
 

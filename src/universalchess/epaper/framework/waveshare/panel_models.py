@@ -76,8 +76,6 @@ class PanelModel:
         three_color_supported: Whether the glass has red ink. Only then is the
             Three-color switch offered, saved on, or passed to the driver;
             the Centaur V1/V2 glass is black and white.
-        high_contrast_supported: Whether the experimental voltage toggle has
-            a register to write on this controller.
         source: Attribution for the init sequence.
         url: Link to that source.
         gray_levels: 4 only for GDEW029I6FD. Every other choice stays 1-bit.
@@ -100,7 +98,6 @@ class PanelModel:
     native_height: int
     supports_partial: bool
     three_color_supported: bool
-    high_contrast_supported: bool
     source: str
     url: str
     gray_levels: int = 1
@@ -150,7 +147,6 @@ _PANELS: Tuple[PanelModel, ...] = (
         native_height=LOGICAL_HEIGHT,
         supports_partial=True,
         three_color_supported=False,
-        high_contrast_supported=True,
         source="Universal Chess V1/V2 probe",
         url="",
     ),
@@ -167,7 +163,6 @@ _PANELS: Tuple[PanelModel, ...] = (
         native_height=LOGICAL_HEIGHT,
         supports_partial=True,
         three_color_supported=False,
-        high_contrast_supported=False,
         source="GxEPD2_4G class GxEPD2_290_I6FD (Jean-Marc Zingg), Good Display GDEW029I6FD demo",
         url="https://github.com/ZinggJM/GxEPD2_4G",
         gray_levels=4,
@@ -186,7 +181,6 @@ _PANELS: Tuple[PanelModel, ...] = (
         native_height=LOGICAL_HEIGHT,
         supports_partial=True,
         three_color_supported=False,
-        high_contrast_supported=True,
         source="GxEPD2 class GxEPD2_290_GDEY029T94 (Jean-Marc Zingg), Good Display GDEY029T94 demo",
         url=_GXEPD2,
     ),
@@ -205,7 +199,6 @@ _PANELS: Tuple[PanelModel, ...] = (
         native_height=LOGICAL_HEIGHT,
         supports_partial=True,
         three_color_supported=True,
-        high_contrast_supported=False,
         source="Good Display GDEY029Z95 Arduino demo (AU-GDEY029Z95, SSD1680)",
         url="https://www.good-display.com/product/527.html",
     ),
@@ -222,7 +215,6 @@ _PANELS: Tuple[PanelModel, ...] = (
         native_height=384,
         supports_partial=True,
         three_color_supported=False,
-        high_contrast_supported=False,
         source="GxEPD2 class GxEPD2_290_GDEY029T71H (Jean-Marc Zingg), Good Display GDEY029T71H demo",
         url=_GXEPD2,
     ),
@@ -239,7 +231,6 @@ _PANELS: Tuple[PanelModel, ...] = (
         native_height=384,
         supports_partial=False,
         three_color_supported=True,
-        high_contrast_supported=False,
         source="GxEPD2 class GxEPD2_290c_GDEY029F51H (Jean-Marc Zingg), Good Display GDEY029F51H demo",
         url=_GXEPD2,
     ),
@@ -256,7 +247,6 @@ _PANELS: Tuple[PanelModel, ...] = (
         native_height=LOGICAL_HEIGHT,
         supports_partial=False,
         three_color_supported=True,
-        high_contrast_supported=False,
         source="Good Display GDEY029F52 Arduino demo (AU-GDEY029F52, JD79661)",
         url=_GOOD_DISPLAY_F52,
     ),

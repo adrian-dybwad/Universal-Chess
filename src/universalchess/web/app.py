@@ -3976,8 +3976,6 @@ def api_get_display_tuning():
             "selected_panel": panel.key,
             "panel_mode": panel.panel_mode,
             "waveform_applicable": panel.waveform_applicable or not panel.explicit,
-            "high_contrast_supported": panel.high_contrast_supported,
-            "high_contrast": display_settings.read_flag("high_contrast"),
             # Three-color (red) mode, offered only for glass with red ink
             # (GDEY029Z95 and the four-color panels). The value is what the
             # selected panel runs: a switch left on from another panel is off.
@@ -4000,12 +3998,15 @@ def api_get_display_tuning():
 def api_set_display_tuning():
     """Select a waveform profile for the active panel and apply it live. Requires auth.
 
-    Persists [display] waveform_profile and high_contrast, then sends the board
-    process a ``display_profile`` command so it re-inits the panel and forces a
-    full refresh -- the new waveform/voltages take effect without a reboot. An
-    unknown profile key, or one that does not target the active controller, is
+    Persists the given [display] fields, then sends the board process a
+    ``display_profile`` command so it re-inits the panel and forces a full
+    refresh -- the new waveform takes effect without a reboot. An unknown
+    profile key, or one that does not target the active controller, is
     rejected (400) so a client bug fails loudly rather than writing an invalid
-    selection. Body: {"profile": "<key>", "high_contrast": bool}.
+    selection. Body fields: profile, panel, three_color, batch_updates,
+    partial_only. ``high_contrast`` is not a field: the voltage override was
+    removed, and a page cached from before still posts it. It is ignored, so a
+    body with no other field is rejected like any body with no known field.
     """
     try:
         from universalchess.epaper.framework.waveshare import panel_models
@@ -4045,8 +4046,6 @@ def api_set_display_tuning():
             if not known:
                 return jsonify({"success": False, "error": f"unknown profile: {key}"}), 400
             updates["waveform_profile"] = key
-        if "high_contrast" in body:
-            updates["high_contrast"] = bool(body["high_contrast"])
         if "three_color" in body:
             three_color = bool(body["three_color"])
             if three_color and not target_panel.three_color_supported:
@@ -4062,7 +4061,7 @@ def api_set_display_tuning():
         if not updates:
             return jsonify({
                 "success": False,
-                "error": "no profile, panel, high_contrast, three_color, batch_updates or partial_only given",
+                "error": "no profile, panel, three_color, batch_updates or partial_only given",
             }), 400
 
         save_all_settings({"display": updates})
@@ -4073,7 +4072,6 @@ def api_set_display_tuning():
         from universalchess.services.game_broadcast import send_board_command
         applied_live = send_board_command("display_profile", {
             "profile": _read_selected_profile_key(controller),
-            "high_contrast": display_settings.read_flag("high_contrast"),
         })
 
         selected_panel = panel_models.get_model(display_settings.read_panel_key())
@@ -4086,8 +4084,6 @@ def api_set_display_tuning():
             "waveform_applicable": (
                 selected_panel.waveform_applicable or not selected_panel.explicit
             ),
-            "high_contrast_supported": selected_panel.high_contrast_supported,
-            "high_contrast": display_settings.read_flag("high_contrast"),
             "three_color": _three_color_for(selected_panel),
             "three_color_supported": selected_panel.three_color_supported,
             "batch_updates": display_settings.read_flag("batch_updates", default=True),

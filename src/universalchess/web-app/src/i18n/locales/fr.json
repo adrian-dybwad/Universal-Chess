@@ -847,8 +847,6 @@
       "waveformSource": "Source de la forme d'onde :",
       "batchLabel": "Regrouper les mises à jour rapides",
       "batchHelp": "Regroupe une rafale rapide de mises à jour d'écran en un seul rafraîchissement de l'image finale. Lorsque les mises à jour arrivent plus vite que l'encre électronique ne peut redessiner, cela saute les images intermédiaires pour que l'écran montre l'état le plus récent au lieu de prendre du retard. Désactivez pour dessiner chaque image intermédiaire (plus lent lorsque les mises à jour arrivent vite, mais montre chaque étape). Recommandé activé.",
-      "highContrastLabel": "Contraste élevé (expérimental)",
-      "highContrastHelp": "Pousse les tensions VCOM/source plus fort que les valeurs par défaut de la forme d'onde pour assombrir une image pâle. Essayez ceci si l'image se dessine mais seulement faiblement. Ce n'est pas un réglage validé par la fiche technique ; laissez désactivé si l'affichage est déjà correct.",
       "threeColorLabel": "Mode trois couleurs (rouge)",
       "threeColorHelp": "Uniquement pour les panneaux rouge/blanc/noir. Met en rouge les échecs, les dames menacées, le résultat de la partie et les barres d'évaluation défavorables. L'encre rouge ne peut changer qu'avec un rafraîchissement complet, donc ces mises à jour rouges prennent ~12-15 secondes ; les coups ordinaires restent rapides.",
       "savedOffline": "Enregistré. Cela s'appliquera lorsque le plateau sera en marche.",

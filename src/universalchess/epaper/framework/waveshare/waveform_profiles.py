@@ -34,9 +34,8 @@ Data integrity
 Every register LUT here is transcribed from a published manufacturer/community
 source (credited in ``source``/``url``) -- none are invented. Panel waveform
 bytes that resemble real data but are guessed can under/over-drive and damage a
-panel, so new profiles must be added only from a verifiable source. The
-``high_contrast`` voltage override (applied by the driver, not stored here) is the
-one explicitly experimental knob and is labelled as such in the UI.
+panel, so new profiles must be added only from a verifiable source. For the
+same reason no setting raises the drive voltages above a profile's own values.
 
 There is intentionally no synthetic "Default" profile: the entries are named
 after the real tables. ``DEFAULT_PROFILE_KEY_BY_CONTROLLER`` selects, per
@@ -248,9 +247,8 @@ class Uc8151dWaveform:
     Attributes:
         vcom: 44-byte VCOM LUT written to register 0x20.
         ww/bw/wb/bb: 42-byte channel LUTs written to 0x21/0x22/0x23/0x24.
-        vcom_dc: VCOM_DC setting byte (register 0x82). ``high_contrast`` bumps a
-            harder value on top of this (see the driver); the stored value is the
-            source's nominal one.
+        vcom_dc: VCOM_DC setting byte (register 0x82), the source's nominal
+            value, written as is.
         interval: VCOM-and-data-interval byte (register 0x50).
         pll: PLL/frame-rate byte (register 0x30), or ``None`` to leave the
             controller default in place. GxEPD2's I6FD/T5D partial init does not

@@ -11,15 +11,14 @@ Why these tests exist:
     (b) a variant profile changes exactly the phase byte / analog bytes it should
         and -- matching GxEPD2 -- omits the PLL write when the profile leaves it
         unset;
-    (c) high_contrast bumps VCOM_DC (the experimental boost) and clamps it;
-    (d) apply_profile swaps the live selection (the no-reboot path).
+    (c) apply_profile swaps the live selection (the no-reboot path), including
+        the profile's own VCOM_DC.
 
 How a regression manifests:
     - Default drift: test_default_* sees a changed phase/analog byte, meaning
       every V2 panel's partial refresh silently changed.
     - Variant drift: the I6FD/T5D phase or the skipped-PLL behavior diverges from
       the transcribed GxEPD2 sequence.
-    - Contrast bug: VCOM_DC is not bumped, or exceeds the 6-bit clamp.
 """
 
 import sys
@@ -33,12 +32,7 @@ for _mod in ('spidev', 'RPi', 'RPi.GPIO', 'gpiozero'):
 
 from universalchess.epaper.framework.waveshare import epd2in9d, epdconfig
 from universalchess.epaper.framework.waveshare import waveform_profiles as wp
-from universalchess.epaper.framework.waveshare.epd2in9d import (
-    EPD,
-    RefreshInterrupted,
-    UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA,
-    UC8151D_VCOM_DC_MAX,
-)
+from universalchess.epaper.framework.waveshare.epd2in9d import EPD, RefreshInterrupted
 
 
 class _RecordingEpd:
@@ -51,8 +45,8 @@ class _RecordingEpd:
     sequence noise.
     """
 
-    def __init__(self, profile=None, high_contrast=False):
-        self.epd = EPD(profile=profile, high_contrast=high_contrast)
+    def __init__(self, profile=None):
+        self.epd = EPD(profile=profile)
         self.ops = []
         self.epd.send_command = lambda c: self.ops.append(("cmd", c))
         self.epd.send_data = lambda d: self.ops.append(("data", d))
@@ -153,31 +147,6 @@ class VariantProfileTests(unittest.TestCase):
         self.assertEqual(rec.data_after(0x30), 0x3c)
 
 
-class HighContrastTests(unittest.TestCase):
-    """high_contrast bumps VCOM_DC (0x82) and stays within the register range."""
-
-    def test_high_contrast_bumps_vcom_dc(self):
-        # On the default profile (VCOM_DC 0x12) high_contrast must add the delta.
-        # Regression: no bump means the experimental boost does nothing.
-        rec = _RecordingEpd(high_contrast=True)
-        rec.run_set_part_reg()
-        self.assertEqual(rec.data_after(0x82),
-                         0x12 + UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA)
-
-    def test_high_contrast_clamps_to_register_max(self):
-        # The boost must never exceed the 6-bit VCOM_DC field. Build a synthetic
-        # profile already near the max and confirm the result is clamped, not
-        # wrapped/overflowed (which would latch an unintended voltage).
-        near_max = UC8151D_VCOM_DC_MAX - 1
-        base = wp.get_profile("uc8151d_waveshare", wp.CONTROLLER_UC8151D)
-        wf = base.uc8151d
-        from dataclasses import replace
-        profile = replace(base, uc8151d=replace(wf, vcom_dc=near_max))
-        rec = _RecordingEpd(profile=profile, high_contrast=True)
-        rec.run_set_part_reg()
-        self.assertEqual(rec.data_after(0x82), UC8151D_VCOM_DC_MAX)
-
-
 class ApplyProfileLiveTests(unittest.TestCase):
     def test_apply_profile_swaps_active_selection(self):
         # The no-reboot path sets a new profile then re-inits/refreshes. After
@@ -186,19 +155,18 @@ class ApplyProfileLiveTests(unittest.TestCase):
         rec = _RecordingEpd()  # default (phase 0x19)
         rec.run_set_part_reg()
         self.assertEqual(rec.data_after(0x20)[1], 0x19)
-        rec.epd.apply_profile(
-            wp.get_profile("uc8151d_t5d", wp.CONTROLLER_UC8151D), True)
+        t5d = wp.get_profile("uc8151d_t5d", wp.CONTROLLER_UC8151D)
+        rec.epd.apply_profile(t5d)
         rec.run_set_part_reg()
         self.assertEqual(rec.data_after(0x20)[1], 0x20)
-        self.assertEqual(rec.data_after(0x82),
-                         0x08 + UC8151D_HIGH_CONTRAST_VCOM_DC_DELTA)
+        self.assertEqual(rec.data_after(0x82), t5d.uc8151d.vcom_dc)
 
     def test_apply_profile_none_restores_default(self):
         # Passing None must restore the verified default, matching the
         # constructor. Regression: None left the prior profile or crashed.
         rec = _RecordingEpd(profile=wp.get_profile("uc8151d_t5d",
                                                    wp.CONTROLLER_UC8151D))
-        rec.epd.apply_profile(None, False)
+        rec.epd.apply_profile(None)
         self.assertEqual(
             rec.epd.profile.key,
             wp.DEFAULT_PROFILE_KEY_BY_CONTROLLER[wp.CONTROLLER_UC8151D])

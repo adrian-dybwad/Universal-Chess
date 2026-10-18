@@ -840,8 +840,6 @@
       "waveformSource": "Waveform source:",
       "batchLabel": "Batch rapid updates",
       "batchHelp": "Coalesce a rapid burst of screen updates into a single refresh of the final frame. When updates arrive faster than the e-paper can redraw, this skips the intermediate frames so the display shows the latest state instead of lagging behind. Turn off to draw every intermediate frame (slower when updates come quickly, but shows each step). Recommended on.",
-      "highContrastLabel": "High contrast (experimental)",
-      "highContrastHelp": "Drive the VCOM/source voltages harder than the waveform's defaults to darken a faint image. Try this if the image draws but only faintly. Not a datasheet-backed setting; leave off if the display already looks good.",
       "threeColorLabel": "Three-color (red) mode",
       "threeColorHelp": "For red/white/black panels only. Highlights checks, threatened queens, the game result, and losing evaluation bars in red. Red ink can only change with a full refresh, so those red updates take ~12-15 seconds; ordinary moves stay fast.",
       "savedOffline": "Saved. It will apply when the board is running.",

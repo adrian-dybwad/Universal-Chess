@@ -840,8 +840,6 @@
       "waveformSource": "Waveform-Quelle:",
       "batchLabel": "Schnelle Aktualisierungen bündeln",
       "batchHelp": "Bündelt eine schnelle Folge von Bildschirmaktualisierungen zu einer einzigen Aktualisierung des letzten Bildes. Wenn Aktualisierungen schneller eintreffen, als das E-Paper zeichnen kann, werden die Zwischenbilder übersprungen, sodass die Anzeige den neuesten Stand zeigt statt hinterherzulaufen. Ausschalten, um jedes Zwischenbild zu zeichnen (langsamer bei schnell eintreffenden Aktualisierungen, zeigt aber jeden Schritt). Empfohlen: ein.",
-      "highContrastLabel": "Hoher Kontrast (experimentell)",
-      "highContrastHelp": "Steuert die VCOM-/Source-Spannungen stärker an als die Standardwerte der Waveform, um ein blasses Bild dunkler zu machen. Probieren Sie das, wenn das Bild zwar gezeichnet wird, aber nur schwach. Keine im Datenblatt belegte Einstellung; ausgeschaltet lassen, wenn die Anzeige schon gut aussieht.",
       "threeColorLabel": "Dreifarbmodus (Rot)",
       "threeColorHelp": "Nur für rot/weiß/schwarze Panels. Hebt Schachgebote, bedrohte Damen, das Ergebnis der Partie und ungünstige Bewertungsbalken in Rot hervor. Rote Tinte kann sich nur mit einer vollständigen Aktualisierung ändern, daher dauern diese roten Aktualisierungen ~12-15 Sekunden; gewöhnliche Züge bleiben schnell.",
       "savedOffline": "Gespeichert. Es wird angewendet, wenn das Brett läuft.",

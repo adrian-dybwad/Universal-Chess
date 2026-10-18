@@ -925,8 +925,7 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   waveforms, which drive that glass with three-color mode on (the
   Waveshare GDEM029T94 table gives the steadiest clock there); its own
   vendor recipe stays the default. A panel with no waveform choice rejects a
-  waveform change, and a high-contrast setting left on from another panel is
-  not applied to a panel that does not offer it. The boot path and a live change pick the waveform by the
+  waveform change. The boot path and a live change pick the waveform by the
   same rule, so a waveform chosen on GDEY029T94 survives a reboot and
   GDEW029I6FD keeps its own recipe live as well as at boot. Choosing a panel
   re-inits it immediately, after any refresh in progress finishes. If the
@@ -1438,6 +1437,19 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   option is gone; a leftover slot is stored as Human. Lichess remains
   an account type so tokens can still be added. The factory still
   builds a Lichess player when the lobby substitutes the pairing.
+
+- **High contrast (experimental) in Display tuning**: The switch raised
+  the panel drive voltages above the selected waveform's own values: SSD1680
+  source and VCOM, IL3820 VCOM (0xA8 to 0x44), and UC8151D VCOM_DC (+0x08).
+  The register values were never checked against the panel datasheets, a
+  VCOM shift is the usual cause of DC imbalance and permanent burn-in, and
+  the setting was saved and re-applied at every boot, so a brief test could
+  stay on indefinitely. The switch, its `high_contrast` and
+  `high_contrast_supported` fields in `/api/system/display-tuning`, and the
+  driver overrides are gone. A `[display] high_contrast` key already in
+  `centaur.ini` is ignored, and posting `high_contrast` alone is rejected as a
+  body with no known field. A faint image is addressed by choosing another
+  waveform.
 
 - **Dead `GET /api/engines`**: superseded by `/api/engines/all`, which the web app
   actually calls, and unused by anything for long enough that it still listed

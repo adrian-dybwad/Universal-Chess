@@ -451,14 +451,13 @@ class OtpWaveformTests(unittest.TestCase):
         self.assertNotIn(("data", 0xF7), transcript)
 
 
-class HighContrastTests(unittest.TestCase):
-    """The high-contrast override must rewrite source/VCOM voltages, last word.
+class WaveformVoltageTests(unittest.TestCase):
+    """init() programs the selected waveform's own drive voltages.
 
-    A faint image that draws but lightly is the classic symptom of under-driven
-    source (VSH) / VCOM voltages. For the SSD1680 path this override rewrites the
-    0x04 (source) and 0x2C (VCOM) registers AFTER SetLut() so its higher-contrast
-    values win regardless of what the waveform wrote. (The IL3820 driver has no
-    0x04 register and instead raises VCOM inline; see Il3820DriverTests.)
+    The source (0x04) and VCOM (0x2C) bytes come from the profile, or for
+    IL3820 from the GxEPD2 reference sequence. Nothing writes a value above
+    them: a voltage past the panel's rating is the cause of DC imbalance and
+    burn-in, and these bytes are the published ones.
     """
 
     def setUp(self):
@@ -501,9 +500,9 @@ class HighContrastTests(unittest.TestCase):
         return payload
 
     def test_default_keeps_waveform_voltages(self):
-        # Baseline: with high-contrast off, the last source-voltage (0x04) write
-        # is the GDEM029T94 LUT's trailing bytes. If this regresses, the panel's
-        # verified voltages would change without anyone asking.
+        # The last source-voltage (0x04) write is the GDEM029T94 LUT's
+        # trailing bytes. If this regresses, the panel's verified voltages
+        # would change without anyone asking.
         epd, result, transcript = self._record_and_init()
         self.assertEqual(result, 0)
         self.assertEqual(
@@ -511,42 +510,15 @@ class HighContrastTests(unittest.TestCase):
             [wp.WS_20_30[155], wp.WS_20_30[156], wp.WS_20_30[157]],
         )
 
-    def test_high_contrast_overrides_source_and_vcom(self):
-        # High-contrast on: the final 0x04 (source) and 0x2C (VCOM) writes must
-        # be the high-contrast constants, proving the override runs last and
-        # wins. A regression (running before SetLut, or not at all) leaves the
-        # faint waveform voltages in place.
-        epd, result, transcript = self._record_and_init(high_contrast=True)
-        self.assertEqual(result, 0)
-        self.assertEqual(
-            self._last_command_payload(transcript, 0x04),
-            [EPD.HIGH_CONTRAST_VSH1, EPD.HIGH_CONTRAST_VSH2, EPD.HIGH_CONTRAST_VSL],
-        )
-        self.assertEqual(
-            self._last_command_payload(transcript, 0x2C),
-            [EPD.HIGH_CONTRAST_VCOM],
-        )
-
-    def test_high_contrast_raises_il3820_vcom(self):
-        # The IL3820 driver has no separate source-voltage (0x04) register, so
-        # high_contrast raises VCOM (0x2C) inline to 0x44 (vs the 0xA8 default).
-        # Regression: leaving 0xA8 keeps the panel under-driven (faint); the
-        # SSD1680 0x04 override does not apply to IL3820.
+    def test_il3820_vcom_is_a8(self):
+        # IL3820 has no 0x04 register, and its VCOM is the GxEPD2 reference
+        # 0xA8. A drift here would silently change the panel's drive.
         epd, result, transcript = self._record_and_init(
-            profile=wp.get_profile("il3820_gdeh029a1"), high_contrast=True
-        )
-        self.assertEqual(result, 0)
-        self.assertEqual(self._last_command_payload(transcript, 0x2C), [0x44])
-        self.assertNotIn(("cmd", 0x04), transcript)
-
-    def test_il3820_default_vcom_is_a8(self):
-        # Inverse guard: with high_contrast off, the IL3820 VCOM must be the
-        # reference 0xA8. A drift here would silently change the panel's drive.
-        epd, result, transcript = self._record_and_init(
-            profile=wp.get_profile("il3820_gdeh029a1"), high_contrast=False
+            profile=wp.get_profile("il3820_gdeh029a1")
         )
         self.assertEqual(result, 0)
         self.assertEqual(self._last_command_payload(transcript, 0x2C), [0xA8])
+        self.assertNotIn(("cmd", 0x04), transcript)
 
     def test_apply_profile_switches_selection_for_next_init(self):
         # Live (no-reboot) apply path: apply_profile() must change which waveform
@@ -555,7 +527,7 @@ class HighContrastTests(unittest.TestCase):
         # A regression here means a live profile change would not take effect
         # until a reboot -- the exact behavior the feature removes.
         epd = EPD()
-        epd.apply_profile(wp.get_profile("builtin_otp"), high_contrast=False)
+        epd.apply_profile(wp.get_profile("builtin_otp"))
         transcript = []
         epd.send_command = lambda c: transcript.append(("cmd", c))
         epd.send_data = MagicMock()
@@ -584,7 +556,7 @@ class HighContrastTests(unittest.TestCase):
         # and this init() raises IndexError exactly as it did on the panel.
         epd = EPD()
         profile = wp.get_profile("gdem029t94", EPD.CONTROLLER)
-        epd.apply_profile(profile, high_contrast=False)
+        epd.apply_profile(profile)
         epd.send_command = MagicMock()
         epd.send_data = MagicMock()
         epd.send_data2 = MagicMock()

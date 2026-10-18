@@ -257,7 +257,7 @@ def _probe_finds_no_panel(monkeypatch, tmp_path):
     """Make init_display's controller probe fail without touching hardware."""
     monkeypatch.setenv("UC_EVENT_LOG_PATH", str(tmp_path / "events.jsonl"))
     monkeypatch.setattr(event_log, "_loggers", {})
-    monkeypatch.setattr(display_boot, "read_selection", lambda: ("", False))
+    monkeypatch.setattr(display_boot, "read_waveform_profile_key", lambda: "")
     monkeypatch.setattr(display_boot, "read_flag", lambda *_a, **_k: False)
     monkeypatch.setattr(display_boot, "build_epd",
                         lambda *_a, **_k: (MagicMock(), MagicMock(key="x")))
@@ -334,7 +334,7 @@ def test_display_tuning_is_left_for_the_next_boot_when_the_panel_did_not_initial
     manager.initialized = False
     monkeypatch.setattr(board_app, "_pending", pending)
     monkeypatch.setattr(board, "display_manager", manager, raising=False)
-    monkeypatch.setattr(board_app.display_settings, "read_selection", lambda: ("", False))
+    monkeypatch.setattr(board_app.display_settings, "read_waveform_profile_key", lambda: "")
     monkeypatch.setattr(board_app.display_settings, "read_flag", lambda *_a, **_k: False)
 
     board_app._process_pending_display_profile()

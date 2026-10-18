@@ -14,7 +14,7 @@ handshake that follow.
 import os
 from typing import Optional, Tuple
 
-from universalchess.board.display_settings import read_flag, read_selection
+from universalchess.board.display_settings import read_flag, read_waveform_profile_key
 from universalchess.board.logging import log
 from universalchess.epaper import Manager, SplashScreen
 from universalchess.i18n import t
@@ -92,7 +92,7 @@ def attempt_display_init(epd, batch_updates: bool = True):
         )
 
 
-def build_epd(controller: str, key: str, high_contrast: bool, three_color: bool):
+def build_epd(controller: str, key: str, three_color: bool):
     """Construct the driver for ``controller``, resolving its waveform profile.
 
     The driver module is imported here rather than at function entry so a board
@@ -115,38 +115,29 @@ def build_epd(controller: str, key: str, high_contrast: bool, three_color: bool)
     else:
         from universalchess.epaper.framework.waveshare.epd2in9d import EPD
         profile = panel_models.waveform_for(automatic, key, wp.CONTROLLER_UC8151D)
-    return EPD(
-        profile=profile,
-        high_contrast=high_contrast,
-        three_color=three_color,
-    ), profile
+    return EPD(profile=profile, three_color=three_color), profile
 
 
-def build_panel_epd(model, key: str, high_contrast: bool, three_color: bool,
-                    partial_only: bool = False):
+def build_panel_epd(model, key: str, three_color: bool, partial_only: bool = False):
     """Construct the driver for an explicit replacement panel.
 
     ``model`` is a ``panel_models.PanelModel`` with ``explicit`` True. The
     waveform is ``panel_models.waveform_for``, the same one a live tuning
     change loads. ``three_color`` is ignored on a panel without red ink: on
-    GDEW029I6FD 0x13 is the second gray plane. ``high_contrast`` is ignored
-    on a panel that does not offer it, so a value left on from another panel
-    does not raise this glass's voltages. The driver is given the model,
+    GDEW029I6FD 0x13 is the second gray plane. The driver is given the model,
     so it reports this glass and its capabilities.
     """
     from universalchess.epaper.framework.waveshare import panel_models
 
     three_color = three_color and model.three_color_supported
-    high_contrast = high_contrast and model.high_contrast_supported
     profile = panel_models.waveform_for(model, key, None)
     if model.driver_module == "epd2in9d":
         from universalchess.epaper.framework.waveshare.epd2in9d import EPD
-        return EPD(profile=profile, high_contrast=high_contrast, three_color=three_color,
+        return EPD(profile=profile, three_color=three_color,
                    panel=model, partial_only=partial_only)
     if model.driver_module == "epd2in9_ssd1680":
         from universalchess.epaper.framework.waveshare.epd2in9_ssd1680 import EPD
-        return EPD(profile=profile, high_contrast=high_contrast, three_color=three_color,
-                   panel=model)
+        return EPD(profile=profile, three_color=three_color, panel=model)
     if model.driver_module == "epd2in9_ssd1685":
         from universalchess.epaper.framework.waveshare.epd2in9_ssd1685 import EPD
         return EPD(panel=model)
@@ -156,8 +147,7 @@ def build_panel_epd(model, key: str, high_contrast: bool, three_color: bool,
     raise ValueError(f"no driver for panel {model.key}")
 
 
-def switch_to_panel(manager, model, key: str, high_contrast: bool, three_color: bool,
-                    partial_only: bool) -> bool:
+def switch_to_panel(manager, model, key: str, three_color: bool, partial_only: bool) -> bool:
     """Drive an explicit replacement panel live, and report it to the web process.
 
     The Manager initializes the new driver and keeps the current one when
@@ -167,7 +157,7 @@ def switch_to_panel(manager, model, key: str, high_contrast: bool, three_color: 
     """
     from universalchess.board import hardware_info
 
-    epd = build_panel_epd(model, key, high_contrast, three_color, partial_only)
+    epd = build_panel_epd(model, key, three_color, partial_only)
     if not manager.replace_epd(epd):
         log.warning(f"[Display] {model.key} did not initialize; keeping the current panel driver")
         return False
@@ -177,7 +167,7 @@ def switch_to_panel(manager, model, key: str, high_contrast: bool, three_color: 
     return True
 
 
-def switch_to_automatic(manager, key: str, high_contrast: bool, three_color: bool) -> bool:
+def switch_to_automatic(manager, key: str, three_color: bool) -> bool:
     """Return to the Centaur V1/V2 probe live, and report the controller that answered.
 
     Tries the controllers in the boot probe order. The Manager keeps the
@@ -190,7 +180,7 @@ def switch_to_automatic(manager, key: str, high_contrast: bool, three_color: boo
 
     prior = hardware_info.read_display_status()
     for controller in ds.controller_order(ds.hint_from_status(prior)):
-        epd, _profile = build_epd(controller, key, high_contrast, three_color)
+        epd, _profile = build_epd(controller, key, three_color)
         if manager.replace_epd(epd):
             hardware_info.write_display_status(
                 initialized=True, busy_timeout=False, controller=controller,
@@ -213,8 +203,8 @@ def init_display() -> Tuple[Manager, Optional[SplashScreen]]:
     The fallback to the other controller is preserved in both directions and
     requires no opt-in, so a stale hint (panel swap, restored config) always
     self-corrects rather than leaving the panel blank. The [display]
-    waveform_profile / high_contrast settings do not affect which controller is
-    chosen, only how the chosen driver drives the panel. The resolved outcome
+    waveform_profile setting does not affect which controller is chosen, only
+    how the chosen driver drives the panel. The resolved outcome
     (controller + busy_timeout) is published to the cross-process status file
     for the web System card, and is what seeds the next boot's hint.
 
@@ -238,7 +228,7 @@ def init_display() -> Tuple[Manager, Optional[SplashScreen]]:
     from universalchess.services.chromecast import discard_epaper_jpg
 
     discard_epaper_jpg()
-    key, high_contrast = read_selection()
+    key = read_waveform_profile_key()
     three_color = read_flag('three_color')
     batch_updates = read_flag('batch_updates', default=True)
 
@@ -248,9 +238,7 @@ def init_display() -> Tuple[Manager, Optional[SplashScreen]]:
     if model.explicit:
         # An explicit Good Display module does not fall through to the other
         # Centaur controller. The two command sets are not interchangeable.
-        epd = build_panel_epd(
-            model, key, high_contrast, three_color, read_flag('partial_only'),
-        )
+        epd = build_panel_epd(model, key, three_color, read_flag('partial_only'))
         manager, primary = attempt_display_init(epd, batch_updates=batch_updates)
         if primary.ok:
             outcome = ds.DisplayOutcome(
@@ -280,14 +268,14 @@ def init_display() -> Tuple[Manager, Optional[SplashScreen]]:
     if hint:
         log.info(f"Display: probing {hint} first (drove the panel last boot)")
 
-    epd, _ = build_epd(first, key, high_contrast, three_color)
+    epd, _ = build_epd(first, key, three_color)
     manager, primary = attempt_display_init(epd, batch_updates=batch_updates)
     alt = None
     if ds.should_attempt_alt(primary, hinted=hinted):
-        alt_epd, alt_profile = build_epd(second, key, high_contrast, three_color)
+        alt_epd, alt_profile = build_epd(second, key, three_color)
         log.warning(
             f"{first} init failed at startup; trying {second} fallback "
-            f"(profile={alt_profile.key}, high_contrast={high_contrast})"
+            f"(profile={alt_profile.key})"
         )
         alt_manager, alt = attempt_display_init(
             alt_epd, batch_updates=batch_updates

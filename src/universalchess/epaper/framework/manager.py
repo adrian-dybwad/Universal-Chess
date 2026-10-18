@@ -163,12 +163,12 @@ class Manager:
         """
         return self._epd
 
-    def apply_waveform_profile(self, profile, high_contrast: bool) -> Future:
+    def apply_waveform_profile(self, profile) -> Future:
         """Adopt a new waveform profile live and force a full refresh.
 
         Works for either driver (UC8151D or SSD1680): both expose ``apply_profile``
         and consume a controller-appropriate profile. Backs the no-reboot profile
-        change: swaps the driver's profile/override, forces the next refresh to
+        change: swaps the driver's profile, forces the next refresh to
         re-run init() (which reloads the LUT and
         voltages), and submits a full refresh so the current screen redraws with
         the new settings. A no-op when the active driver predates ``apply_profile``
@@ -183,7 +183,7 @@ class Manager:
             return future
 
         def apply():
-            self._epd.apply_profile(profile, high_contrast)
+            self._epd.apply_profile(profile)
             self._scheduler.force_reinit()
 
         self._scheduler.run_with_panel(apply)

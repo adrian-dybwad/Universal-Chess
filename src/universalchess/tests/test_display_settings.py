@@ -34,12 +34,12 @@ def test_the_spellings_of_on_are_all_accepted(stored, value):
 
     Why: the value is written by the web UI, by hand over SSH, and by older
     versions of this product, so all of these appear in the wild. How a
-    regression manifests: a board with ``high_contrast = yes`` silently runs
+    regression manifests: a board with ``three_color = yes`` silently runs
     without it, and nothing on screen explains why.
     """
-    stored["high_contrast"] = value
+    stored["three_color"] = value
 
-    assert display_settings.read_flag("high_contrast") is True
+    assert display_settings.read_flag("three_color") is True
 
 
 @pytest.mark.parametrize("value", ["0", "false", "off", "no", "", "nonsense"])
@@ -58,13 +58,13 @@ def test_anything_else_reads_as_off(stored, value):
 def test_an_absent_key_takes_the_shipped_default(stored):
     """A never-configured board gets the behaviour the product ships with.
 
-    Why: update batching ships on and the contrast override ships off, and the
+    Why: update batching ships on and three-color mode ships off, and the
     difference is carried entirely by this argument -- the settings file on a
     fresh board mentions neither. How a regression manifests: a new board runs
-    unbatched (visibly slower menu navigation) or with the override on.
+    unbatched (visibly slower menu navigation) or in three-color mode.
     """
     assert display_settings.read_flag("batch_updates", default=True) is True
-    assert display_settings.read_flag("high_contrast") is False
+    assert display_settings.read_flag("three_color") is False
 
 
 def test_the_waveform_key_is_returned_as_stored(stored):
@@ -79,7 +79,6 @@ def test_the_waveform_key_is_returned_as_stored(stored):
     stored["waveform_profile"] = "  uc8151d_t5d \n"
 
     assert display_settings.read_waveform_profile_key() == "uc8151d_t5d"
-    assert display_settings.read_selection() == ("uc8151d_t5d", False)
 
 
 def test_both_processes_read_through_this_module():

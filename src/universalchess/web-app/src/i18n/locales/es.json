@@ -847,8 +847,6 @@
       "waveformSource": "Fuente de la forma de onda:",
       "batchLabel": "Agrupar actualizaciones rápidas",
       "batchHelp": "Agrupa una ráfaga rápida de actualizaciones de pantalla en un único refresco del fotograma final. Cuando las actualizaciones llegan más rápido de lo que la tinta electrónica puede redibujar, esto omite los fotogramas intermedios para que la pantalla muestre el estado más reciente en lugar de ir con retraso. Desactívalo para dibujar cada fotograma intermedio (más lento cuando llegan rápido, pero muestra cada paso). Recomendado activado.",
-      "highContrastLabel": "Alto contraste (experimental)",
-      "highContrastHelp": "Fuerza los voltajes VCOM/fuente más allá de los predeterminados de la forma de onda para oscurecer una imagen tenue. Prueba esto si la imagen se dibuja pero solo débilmente. No es un ajuste respaldado por la hoja de datos; déjalo desactivado si la pantalla ya se ve bien.",
       "threeColorLabel": "Modo de tres colores (rojo)",
       "threeColorHelp": "Solo para paneles rojo/blanco/negro. Resalta en rojo los jaques, las damas amenazadas, el resultado de la partida y las barras de evaluación desfavorables. La tinta roja solo cambia con un refresco completo, así que esas actualizaciones en rojo tardan ~12-15 segundos; las jugadas normales siguen siendo rápidas.",
       "savedOffline": "Guardado. Se aplicará cuando el tablero esté en marcha.",

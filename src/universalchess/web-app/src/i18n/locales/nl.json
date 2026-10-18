@@ -840,8 +840,6 @@
       "waveformSource": "Bron van de waveform:",
       "batchLabel": "Snelle updates bundelen",
       "batchHelp": "Voegt een snelle reeks schermupdates samen tot één verversing van het laatste beeld. Als updates sneller binnenkomen dan het e-paper kan tekenen, worden de tussenliggende beelden overgeslagen, zodat het scherm de nieuwste stand toont in plaats van achter te lopen. Zet uit om elk tussenliggend beeld te tekenen (langzamer bij snel opeenvolgende updates, maar toont elke stap). Aanbevolen: aan.",
-      "highContrastLabel": "Hoog contrast (experimenteel)",
-      "highContrastHelp": "Stuurt de VCOM-/source-spanningen harder aan dan de standaardwaarden van de waveform, om een vaag beeld donkerder te maken. Probeer dit als het beeld wel wordt getekend, maar alleen zwak. Deze instelling wordt niet door een datasheet gedekt; laat hem uit als het scherm er al goed uitziet.",
       "threeColorLabel": "Driekleurmodus (rood)",
       "threeColorHelp": "Alleen voor rood/wit/zwarte panelen. Markeert schaak, bedreigde dames, het resultaat van de partij en verliezende evaluatiebalken in rood. Rode inkt kan alleen met een volledige verversing veranderen, dus die rode updates duren ~12-15 seconden; gewone zetten blijven snel.",
       "savedOffline": "Opgeslagen. Het wordt toegepast zodra het bord actief is.",
