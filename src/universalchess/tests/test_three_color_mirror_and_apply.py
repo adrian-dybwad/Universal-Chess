@@ -30,6 +30,7 @@ from PIL import Image
 
 from universalchess.services.chromecast import compose_epaper_rgb
 from universalchess.epaper.framework.manager import Manager
+from universalchess.epaper.framework.waveshare.panel_models import PanelDriver
 
 RED = (220, 0, 0)
 BLACK = (0, 0, 0)
@@ -73,11 +74,14 @@ class _FakeScheduler:
     def submit_deferred(self, cb):
         cb()
 
+    def run_with_panel(self, operation):
+        return operation()
+
     def force_reinit(self):
         self.reinit_count += 1
 
 
-class _FakeEpd:
+class _FakeEpd(PanelDriver):
     def __init__(self):
         self.width = 128
         self.height = 296
@@ -87,7 +91,7 @@ class _FakeEpd:
         self.three_color = enabled
 
 
-class _NoApplyEpd:
+class _NoApplyEpd(PanelDriver):
     """A driver without apply_three_color (e.g. the SSD1680 fallback)."""
 
     def __init__(self):

@@ -848,6 +848,17 @@
       "threeColorOn": "Üç renk modu açık. Kırmızı vurgular ~12-15 s'de yenilenir; normal hamleler hızlı kalır.",
       "applied": "Uygulandı. Panel yeni ayarla yenilendi.",
       "updateFailed": "Ekran waveform'u güncellenemedi.",
+      "panelLabel": "Panel",
+      "panelHelp": "Tahtaya bağlı e-kağıt modülü. Otomatik, Centaur V1 ve V2 denetleyicilerini yoklar. Tam olarak o panel bağlıyken bir Good Display modeli seçin; her modelin kendi denetleyicisi ve gerilimleri vardır. Değişiklik paneli hemen yeniden başlatır.",
+      "panelSource": "Başlatma kaynağı:",
+      "titleFixed": "Ekran ayarı",
+      "descriptionFixed": "Bu panel üreticinin başlatma dizisini kullanır. Satranç ekranı 128×296 siyah-beyaz çizilir ve cam 168×384 olduğunda ölçeklenir. Dört renkli paneller tek bir tam yenilemeyle güncellenir (GDEY029F52 için yaklaşık 11 saniye, GDEY029F51H için yaklaşık 25 saniye). Üç renk kipi, var olan kırmızı vurguları kırmızı mürekkeple boyar. Sarı mürekkep kullanılmaz.",
+      "titleBwr": "Ekran ayarı",
+      "descriptionBwr": "Bu panel 128×296 siyah, beyaz ve kırmızıdır. Tam yenileme (yaklaşık 16 saniye) kırmızı mürekkebi günceller. Kısmi yenileme (yaklaşık 1,5 saniye) yalnızca siyah ve beyazı günceller; kırmızı mürekkep bir sonraki tam yenilemeye kadar kalır. Üç renk kipi, var olan kırmızı vurguları kırmızı mürekkeple boyar.",
+      "titleGray": "Ekran ayarı",
+      "descriptionGray": "Bu panel dört gri düzey kullanır: beyaz, açık gri, koyu gri ve siyah. Diğer panellerde titreme olan tonlar burada düz gridir. Bir gri değişikliği tüm paneli yeniler (yaklaşık 3 saniye). Saat, hızlı kısmi yenilemeyi kullanır (yaklaşık 0,3 saniye) ve griyi yerinde bırakır.",
+      "partialOnlyLabel": "Yalnızca kısmi yenileme",
+      "partialOnlyHelp": "Her güncelleme hızlı kısmi yenilemeyi kullanır (yaklaşık 0,3 saniye), hamleler dahil. Gri tonlar titreme olarak çizilir. Dört gri düzeyi kullanmak için bunu kapatın; bir gri değişikliği o zaman yaklaşık 3 saniye sürer.",
       "networkError": "Ağ hatası"
     },
     "centaur": {

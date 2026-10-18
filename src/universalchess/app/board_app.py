@@ -3017,21 +3017,56 @@ def _process_pending_display_profile() -> None:
     manager = board.display_manager
     if manager is None or not manager.initialized:
         return
-    from universalchess.epaper.framework.waveshare import waveform_profiles as wp
+    from universalchess.app import display_boot
+    from universalchess.epaper.framework.waveshare import panel_models
     key, high_contrast = display_settings.read_selection()
-    # Resolve for whichever controller actually drove the panel. The EPD driver
-    # exposes its family via CONTROLLER; fall back to the UC8151D default family
-    # if a driver predates that attribute.
-    controller = getattr(manager.epd, "CONTROLLER", wp.CONTROLLER_UC8151D)
-    profile = wp.get_profile(key, controller)
-    log.info(f"[App] Applying display profile live: {profile.key} "
-             f"(controller={controller}, high_contrast={high_contrast})")
-    manager.apply_waveform_profile(profile, high_contrast)
+    model = panel_models.get_model(display_settings.read_panel_key())
+    current_panel = manager.epd.PANEL_KEY
+    # A different glass means a different driver. Swapping the object is what
+    # loads that controller's init; applying a waveform on the old driver
+    # would send the previous command set to the new panel.
+    if model.explicit and current_panel != model.key:
+        log.info(f"[App] Switching e-paper panel to {model.key}")
+        display_boot.switch_to_panel(
+            manager, model, key, high_contrast,
+            three_color=display_settings.read_flag('three_color'),
+            partial_only=display_settings.read_flag('partial_only'),
+        )
+    elif not model.explicit and current_panel != panel_models.PANEL_AUTO:
+        log.info("[App] Switching e-paper panel back to automatic probe")
+        display_boot.switch_to_automatic(
+            manager, key, high_contrast, display_settings.read_flag('three_color'),
+        )
+    elif (
+        manager.epd.partial_only_supported
+        and display_settings.read_flag('partial_only') != manager.epd.partial_only
+    ):
+        # Do this before a waveform refresh. Applying the waveform first would
+        # run the 4-gray update the switch exists to skip.
+        enabled = display_settings.read_flag('partial_only')
+        log.info(f"[App] Applying partial-only refresh: {enabled}")
+        manager.apply_partial_only(enabled)
+    else:
+        # The same rule the boot path uses. Under Automatic the family is the
+        # Centaur driver that probed successfully; a replacement panel resolves
+        # within its own recipes, and a panel with no waveform table gets None.
+        family = None if model.explicit else manager.epd.CONTROLLER
+        profile = panel_models.waveform_for(model, key, family)
+        high_contrast = high_contrast and model.high_contrast_supported
+        if profile is not None:
+            log.info(f"[App] Applying display profile live: {profile.key} "
+                     f"(panel={model.key}, high_contrast={high_contrast})")
+            manager.apply_waveform_profile(profile, high_contrast)
 
     # Three-color (red) mode is toggled through the same display-tuning settings,
     # so apply it on the same live path. Only when it actually changed, to avoid a
     # second ~12-15s full refresh when only the waveform/contrast was edited.
-    desired_three_color = display_settings.read_flag('three_color')
+    # Only glass with red ink takes it; the stored switch may be left on from
+    # a panel that had it.
+    desired_three_color = (
+        display_settings.read_flag('three_color')
+        and manager.epd.panel.three_color_supported
+    )
     current_three_color = bool(getattr(manager.epd, "three_color", False))
     if desired_three_color != current_three_color:
         log.info(f"[App] Applying three-color mode live: {desired_three_color}")

@@ -3884,39 +3884,49 @@ def api_set_debug_serial():
         return _internal_error(e)
 
 
-# Map the board-reported active controller (display_selection.CONTROLLER_*) to
-# the waveform-profile family the web layer filters on. Kept as a plain table so
-# the web process needs no import from the RPi.GPIO-dependent driver modules.
-_CONTROLLER_TO_WAVEFORM_FAMILY = {
-    "UC8151D": "uc8151d",
-    "SSD1680": "ssd16xx",
-}
-
-
 def _active_waveform_controller():
-    """Return the active controller's waveform family, or None if unknown.
+    """Return the live panel's waveform family, or None if unknown.
 
     Reads the cross-process display-status file the board writes at startup. The
     family selects which profiles the UI offers (a UC8151D table is meaningless
-    on the SSD1680 driver and vice versa). None when the board has not reported,
-    the display is disabled, or it reported a controller with no profile family.
+    on the SSD1680 driver and vice versa). A replacement panel's family is its
+    own dropdown family; Automatic maps the Centaur controller the probe found.
+    None when the board has not reported, the display is disabled, or the live
+    panel has no profile family.
     """
     from universalchess.board import hardware_info
+    from universalchess.epaper.framework.waveshare import panel_models
     status = hardware_info.read_display_status()
     if not status or not status.get("initialized"):
         return None
-    return _CONTROLLER_TO_WAVEFORM_FAMILY.get(status.get("active_controller"))
+    return panel_models.waveform_family(status.get("panel"), status.get("active_controller"))
 
 
 def _read_selected_profile_key(controller=None) -> str:
-    """Return the configured waveform-profile key, resolved to a known profile.
+    """Return the waveform key the selected panel runs, or "" when it has none.
 
-    A blank or stale stored key -- or one belonging to the other controller after
-    a panel swap -- resolves to the active controller's verified default, so the
-    UI never shows an unknown selection and the board never runs with no waveform.
+    Resolved with ``panel_models.waveform_for``, the rule the board applies at
+    boot and live, so the card shows the waveform that is driving the glass.
+    ``controller`` is the Centaur family used under Automatic. A blank or stale
+    stored key -- or one belonging to the other controller or to a replacement
+    panel -- resolves to that family's verified default.
     """
-    from universalchess.epaper.framework.waveshare import waveform_profiles as wp
-    return wp.get_profile(display_settings.read_waveform_profile_key(), controller).key
+    from universalchess.epaper.framework.waveshare import panel_models
+    panel = panel_models.get_model(display_settings.read_panel_key())
+    profile = panel_models.waveform_for(
+        panel, display_settings.read_waveform_profile_key(), controller,
+    )
+    return profile.key if profile is not None else ""
+
+
+def _three_color_for(panel) -> bool:
+    """Whether ``panel`` runs three-color mode with the stored switch.
+
+    The switch is one setting shared by every panel, so it can be left on from
+    a panel with red ink. The board ignores it on black/white glass, and the
+    card reports that rather than the stored value.
+    """
+    return panel.three_color_supported and display_settings.read_flag("three_color")
 
 
 def _display_tuning_available() -> bool:
@@ -3945,25 +3955,41 @@ def api_get_display_tuning():
     the recovery path when the panel is down, so it must not be hidden.
     """
     try:
+        from universalchess.epaper.framework.waveshare import panel_models
         from universalchess.epaper.framework.waveshare import waveform_profiles as wp
         controller = _active_waveform_controller()
+        panel = panel_models.get_model(display_settings.read_panel_key())
+        # An explicit panel lists its own family and recipes even before the
+        # board has reported it. Automatic lists only Centaur recipes.
+        if not panel.explicit:
+            profiles = wp.profiles_metadata(controller)
+        elif panel.waveform_applicable:
+            profiles = wp.profiles_metadata(panel.waveform_controller, panel=panel.key)
+        else:
+            profiles = []
         return jsonify({
             "available": _display_tuning_available(),
             "active_controller": controller,
-            "profiles": wp.profiles_metadata(controller),
+            "profiles": profiles,
             "selected": _read_selected_profile_key(controller),
+            "panels": panel_models.panels_metadata(),
+            "selected_panel": panel.key,
+            "panel_mode": panel.panel_mode,
+            "waveform_applicable": panel.waveform_applicable or not panel.explicit,
+            "high_contrast_supported": panel.high_contrast_supported,
             "high_contrast": display_settings.read_flag("high_contrast"),
-            # Three-color (red/white/black) mode. Both the UC8151D (V2) and SSD1680
-            # (V1) drivers can drive tri-color BWR panels. Offered even when no
-            # panel is live so a blank board can still persist the flag for the
-            # next boot.
-            "three_color": display_settings.read_flag("three_color"),
-            "three_color_supported": True,
+            # Three-color (red) mode, offered only for glass with red ink
+            # (GDEY029Z95 and the four-color panels). The value is what the
+            # selected panel runs: a switch left on from another panel is off.
+            "three_color": _three_color_for(panel),
+            "three_color_supported": panel.three_color_supported,
             # Update batching (default on): coalesce a rapid burst of refreshes to
             # one refresh of the final frame so the panel does not lag behind when
             # updates arrive faster than it can draw. Applies to every panel, so
             # it is reported whenever the card is available.
             "batch_updates": display_settings.read_flag("batch_updates", default=True),
+            "partial_only": display_settings.read_flag("partial_only"),
+            "partial_only_supported": panel.partial_only_supported,
         })
     except Exception as e:
         return _internal_error(e)
@@ -3982,27 +4008,62 @@ def api_set_display_tuning():
     selection. Body: {"profile": "<key>", "high_contrast": bool}.
     """
     try:
+        from universalchess.epaper.framework.waveshare import panel_models
         from universalchess.epaper.framework.waveshare import waveform_profiles as wp
 
         controller = _active_waveform_controller()
         body = request.get_json(silent=True) or {}
         updates = {}
+        target_panel = panel_models.get_model(display_settings.read_panel_key())
+        if "panel" in body:
+            panel_key = str(body["panel"]).strip()
+            if not panel_models.is_known_panel(panel_key):
+                return jsonify({"success": False, "error": "unknown panel"}), 400
+            updates["panel"] = panel_key
+            target_panel = panel_models.get_model(panel_key)
+            # Pin the manufacturer waveform when the glass is chosen. A later
+            # waveform edit is a separate request and is not overwritten.
+            if target_panel.pinned_profile:
+                updates["waveform_profile"] = target_panel.pinned_profile
         if "profile" in body:
             key = str(body["profile"]).strip()
-            # Validate against the active controller's family so a UC8151D key
-            # cannot be persisted for an SSD1680 panel (or vice versa). When the
-            # board has not reported a controller yet, fall back to any-known.
-            if not wp.is_known_profile(key, controller):
+            # Validate against the panel the key will run on: a replacement
+            # panel's own family and recipes, or under Automatic the Centaur
+            # controller's family (any Centaur recipe when none has reported).
+            # A panel without a dropdown runs its manufacturer recipe only.
+            if target_panel.explicit and not target_panel.waveform_applicable:
+                return jsonify({
+                    "success": False,
+                    "error": f"panel {target_panel.key} has no waveform choice",
+                }), 400
+            if target_panel.explicit:
+                known = wp.is_known_profile(
+                    key, target_panel.waveform_controller, panel=target_panel.key,
+                )
+            else:
+                known = wp.is_known_profile(key, controller)
+            if not known:
                 return jsonify({"success": False, "error": f"unknown profile: {key}"}), 400
             updates["waveform_profile"] = key
         if "high_contrast" in body:
             updates["high_contrast"] = bool(body["high_contrast"])
         if "three_color" in body:
-            updates["three_color"] = bool(body["three_color"])
+            three_color = bool(body["three_color"])
+            if three_color and not target_panel.three_color_supported:
+                return jsonify({
+                    "success": False,
+                    "error": f"panel {target_panel.key} has no red ink",
+                }), 400
+            updates["three_color"] = three_color
         if "batch_updates" in body:
             updates["batch_updates"] = bool(body["batch_updates"])
+        if "partial_only" in body:
+            updates["partial_only"] = bool(body["partial_only"])
         if not updates:
-            return jsonify({"success": False, "error": "no profile, high_contrast, three_color or batch_updates given"}), 400
+            return jsonify({
+                "success": False,
+                "error": "no profile, panel, high_contrast, three_color, batch_updates or partial_only given",
+            }), 400
 
         save_all_settings({"display": updates})
 
@@ -4015,13 +4076,23 @@ def api_set_display_tuning():
             "high_contrast": display_settings.read_flag("high_contrast"),
         })
 
+        selected_panel = panel_models.get_model(display_settings.read_panel_key())
         return jsonify({
             "success": True,
             "applied_live": bool(applied_live),
             "selected": _read_selected_profile_key(controller),
+            "selected_panel": selected_panel.key,
+            "panel_mode": selected_panel.panel_mode,
+            "waveform_applicable": (
+                selected_panel.waveform_applicable or not selected_panel.explicit
+            ),
+            "high_contrast_supported": selected_panel.high_contrast_supported,
             "high_contrast": display_settings.read_flag("high_contrast"),
-            "three_color": display_settings.read_flag("three_color"),
+            "three_color": _three_color_for(selected_panel),
+            "three_color_supported": selected_panel.three_color_supported,
             "batch_updates": display_settings.read_flag("batch_updates", default=True),
+            "partial_only": display_settings.read_flag("partial_only"),
+            "partial_only_supported": selected_panel.partial_only_supported,
         })
     except Exception as e:
         return _internal_error(e)

@@ -24,10 +24,11 @@ from unittest.mock import MagicMock
 import pytest
 
 from universalchess.epaper.framework.manager import Manager
+from universalchess.epaper.framework.waveshare.panel_models import PanelDriver
 from universalchess.epaper.framework.widget import Widget
 
 
-class _FakePanel:
+class _FakePanel(PanelDriver):
     """Minimal EPD stand-in: only geometry and mono mode are needed here."""
 
     width = 128

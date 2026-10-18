@@ -141,6 +141,12 @@ def fill_dither_dark(sprite: Image.Image, x: int, y: int, tile: int = TILE) -> N
     squares tile seamlessly, matching the ordered dither the UI backgrounds use
     (shade 8 ~= 50%). Matches the look the legacy sheets baked into their row 1.
     """
+    from universalchess.epaper.gray import draws_gray, shade_luma
+    if draws_gray(sprite):
+        ImageDraw.Draw(sprite).rectangle(
+            [x, y, x + tile - 1, y + tile - 1], fill=shade_luma(8),
+        )
+        return
     pattern = DITHER_PATTERNS[8]
     pixels = sprite.load()
     for yy in range(y, y + tile):

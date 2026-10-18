@@ -221,12 +221,20 @@ CONTROLLER_UC8151D = "uc8151d"
 #                   activation 0xC4, partial 0x04.
 #   "dke_ssd1680" : DEPG0290BS (SSD1680). Full from OTP (0xF7); partial loads a
 #                   153-byte register LUT (no voltage bytes), activation 0xCC.
+#   "gdey029t94"  : GDEY029T94 (SSD1680). Same init window as the Waveshare
+#                   path, no register LUT. Fast full writes temperature 0x64
+#                   then activates 0xD7; partial activates 0xFC (OTP partial).
+#   "gdey029z95"  : GDEY029Z95 (SSD1680, black/white/red). Vendor init with
+#                   data entry 0x01 (Y decrement). Full activation 0xF7;
+#                   partial 0x1C after the basemap update 0xF4. No register LUT.
 #   "uc8151d"     : UC8151D (V2). Full from OTP; partial loads the 5 register
 #                   LUTs (0x20-0x24) carried in ``uc8151d``. Consumed by the
 #                   ``epd2in9d`` driver, not the SSD1680 fallback.
 DRIVER_SSD1680 = "ssd1680"
 DRIVER_IL3820 = "il3820"
 DRIVER_DKE_SSD1680 = "dke_ssd1680"
+DRIVER_GDEY029T94 = "gdey029t94"
+DRIVER_GDEY029Z95 = "gdey029z95"
 DRIVER_UC8151D = "uc8151d"
 
 
@@ -296,6 +304,11 @@ class WaveformProfile:
             ``il3820``: 30; ``dke_ssd1680``: 153 (no voltage bytes).
         uc8151d: UC8151D partial recipe (5 register LUTs + analog bytes). Set
             only on ``uc8151d`` profiles; ``None`` for the SSD16xx family.
+        panel: Replacement-panel key (``[display] panel``) the recipe was
+            transcribed for, or ``None`` when any glass of the family runs
+            it. A panel-bound recipe is listed, accepted and loaded only when
+            that panel is selected: its init and activation bytes belong to
+            that module, not to the Centaur glass of the same family.
     """
 
     key: str
@@ -308,6 +321,16 @@ class WaveformProfile:
     full_lut: Tuple[int, ...] = field(default=())
     partial_lut: Tuple[int, ...] = field(default=())
     uc8151d: Optional[Uc8151dWaveform] = None
+    panel: Optional[str] = None
+
+    def runs_on(self, controller: Optional[str], panel: Optional[str]) -> bool:
+        """Whether this recipe may drive ``panel`` on the ``controller`` family.
+
+        ``controller`` None accepts any family. ``panel`` None is the Centaur
+        glass the Automatic probe drives.
+        """
+        family_ok = controller is None or self.controller == controller
+        return family_ok and (self.panel is None or self.panel == panel)
 
 
 # Ordered registry. Only verifiable profiles ship; add new ones solely from a
@@ -322,6 +345,22 @@ _PROFILES = (
         driver=DRIVER_SSD1680,
         full_lut=WS_20_30,
         partial_lut=WF_PARTIAL_2IN9,
+    ),
+    WaveformProfile(
+        key="gdey029t94",
+        label="GDEY029T94 (SSD1680, OTP fast full + partial)",
+        source="GxEPD2 class GxEPD2_290_GDEY029T94 (Jean-Marc Zingg), from the Good Display GDEY029T94 demo",
+        url="https://github.com/ZinggJM/GxEPD2",
+        driver=DRIVER_GDEY029T94,
+        panel="gdey029t94",
+    ),
+    WaveformProfile(
+        key="gdey029z95",
+        label="GDEY029Z95 (SSD1680, tri-color, partial 1.5 s)",
+        source="Good Display GDEY029Z95 Arduino demo (AU-GDEY029Z95, 2024-08-26), EPD_HW_Init / EPD_Update / EPD_Part_Update",
+        url="https://www.good-display.com/product/527.html",
+        driver=DRIVER_GDEY029Z95,
+        panel="gdey029z95",
     ),
     WaveformProfile(
         key="builtin_otp",
@@ -407,29 +446,30 @@ DEFAULT_PROFILE_KEY_BY_CONTROLLER = {
 DEFAULT_PROFILE_KEY = DEFAULT_PROFILE_KEY_BY_CONTROLLER[CONTROLLER_SSD16XX]
 
 
-def all_profiles(controller: Optional[str] = None) -> Tuple[WaveformProfile, ...]:
-    """Return registered profiles in display order, optionally one controller.
+def all_profiles(controller: Optional[str] = None,
+                 panel: Optional[str] = None) -> Tuple[WaveformProfile, ...]:
+    """Return the profiles that may drive ``panel``, in display order.
 
-    ``controller`` ``None`` returns every profile; otherwise only those targeting
-    that controller family (what the web UI offers for the active panel).
+    ``controller`` ``None`` spans both families; otherwise only that family
+    (what the web UI offers for the active panel). ``panel`` ``None`` is the
+    Centaur glass, which excludes every panel-bound recipe.
     """
-    if controller is None:
-        return _PROFILES
-    return tuple(p for p in _PROFILES if p.controller == controller)
+    return tuple(p for p in _PROFILES if p.runs_on(controller, panel))
 
 
-def get_profile(key: str, controller: Optional[str] = None) -> WaveformProfile:
+def get_profile(key: str, controller: Optional[str] = None,
+                panel: Optional[str] = None) -> WaveformProfile:
     """Return the profile for ``key``, falling back to a verified default.
 
     Falls back rather than raising so a stale or mistyped stored key -- or a key
     belonging to the *other* controller after a panel swap -- can never leave the
-    board with no waveform (which would render nothing). When ``controller`` is
-    given, a key whose profile targets a different controller is treated as a
-    miss and that controller's default is returned; the worst case is the panel
-    renders with its own known-good table.
+    board with no waveform (which would render nothing). A key whose profile
+    targets a different controller, or is bound to a panel other than
+    ``panel``, is treated as a miss and the controller's default is returned;
+    the worst case is the panel renders with its own known-good table.
     """
     profile = _PROFILES_BY_KEY.get(key or "")
-    if profile is not None and (controller is None or profile.controller == controller):
+    if profile is not None and profile.runs_on(controller, panel):
         return profile
     default_key = (
         DEFAULT_PROFILE_KEY if controller is None
@@ -438,23 +478,23 @@ def get_profile(key: str, controller: Optional[str] = None) -> WaveformProfile:
     return _PROFILES_BY_KEY[default_key]
 
 
-def is_known_profile(key: str, controller: Optional[str] = None) -> bool:
-    """Whether ``key`` names a registered profile (used to validate web input).
+def is_known_profile(key: str, controller: Optional[str] = None,
+                     panel: Optional[str] = None) -> bool:
+    """Whether ``key`` names a profile that may drive ``panel`` (web input check).
 
     With ``controller`` given, also requires the profile to target that
     controller family, so the UI cannot persist a UC8151D key for an SSD1680
-    panel (or vice versa).
+    panel (or vice versa). A panel-bound recipe is known only for its panel.
     """
     profile = _PROFILES_BY_KEY.get(key)
-    if profile is None:
-        return False
-    return controller is None or profile.controller == controller
+    return profile is not None and profile.runs_on(controller, panel)
 
 
-def profiles_metadata(controller: Optional[str] = None) -> list:
+def profiles_metadata(controller: Optional[str] = None,
+                      panel: Optional[str] = None) -> list:
     """Serializable profile list for the web API (no waveform bytes)."""
     return [
         {"key": p.key, "label": p.label, "source": p.source,
          "url": p.url, "controller": p.controller}
-        for p in all_profiles(controller)
+        for p in all_profiles(controller, panel)
     ]

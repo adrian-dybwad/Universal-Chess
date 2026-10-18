@@ -8,10 +8,23 @@ from PIL import Image
 class FrameBuffer:
     """Manages the display framebuffer for widget compositing."""
     
-    def __init__(self, width: int, height: int):
+    def __init__(self, width: int, height: int, mode: str = "1"):
         self.width = width
         self.height = height
-        self._current = Image.new("1", (width, height), 255)  # White
+        self.mode = mode
+        self._current = Image.new(mode, (width, height), 255)  # White
+
+    def set_mode(self, mode: str) -> None:
+        """Switch the compositing mode, discarding the current frame.
+
+        ``L`` holds the four gray levels used by GDEW029I6FD. ``1`` is the
+        black/white frame every other panel dithers into. The next render
+        repaints the widgets, so the discarded frame is not shown.
+        """
+        if mode == self.mode:
+            return
+        self.mode = mode
+        self._current = Image.new(mode, (self.width, self.height), 255)
     
     def get_canvas(self, rotation: int = 0) -> Image.Image:
         """Get the current framebuffer for rendering.

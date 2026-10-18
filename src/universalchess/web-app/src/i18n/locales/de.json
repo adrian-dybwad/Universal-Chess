@@ -848,6 +848,17 @@
       "threeColorOn": "Dreifarbmodus ein. Rote Hervorhebungen werden in ~12-15 s aktualisiert; normale Züge bleiben schnell.",
       "applied": "Angewendet. Das Panel wurde mit der neuen Einstellung aktualisiert.",
       "updateFailed": "Die Waveform der Anzeige konnte nicht geändert werden.",
+      "panelLabel": "Panel",
+      "panelHelp": "Das am Brett angeschlossene E-Paper-Modul. Automatisch prüft die Centaur-Controller V1 und V2. Wählen Sie ein Good-Display-Modell, wenn genau dieses Panel angeschlossen ist, denn jedes Modell hat seinen eigenen Controller und seine eigenen Spannungen. Die Änderung initialisiert das Panel sofort neu.",
+      "panelSource": "Init-Quelle:",
+      "titleFixed": "Display-Abstimmung",
+      "descriptionFixed": "Dieses Panel verwendet die Initialisierungssequenz des Herstellers. Der Schachbildschirm wird schwarz-weiß mit 128×296 gezeichnet und skaliert, wenn das Glas 168×384 hat. Vierfarb-Panels aktualisieren mit einer vollen Auffrischung (etwa 11 Sekunden beim GDEY029F52, etwa 25 Sekunden beim GDEY029F51H). Der Dreifarbmodus zeichnet die vorhandenen roten Hervorhebungen mit roter Tinte. Gelbe Tinte wird nicht verwendet.",
+      "titleBwr": "Display-Abstimmung",
+      "descriptionBwr": "Dieses Panel ist schwarz, weiß und rot mit 128×296. Eine volle Auffrischung (etwa 16 Sekunden) aktualisiert die rote Tinte. Die partielle Auffrischung (etwa 1,5 Sekunden) aktualisiert nur Schwarz und Weiß; die rote Tinte bleibt bis zur nächsten vollen Auffrischung. Der Dreifarbmodus zeichnet die vorhandenen roten Hervorhebungen mit roter Tinte.",
+      "titleGray": "Display-Abstimmung",
+      "descriptionGray": "Dieses Panel verwendet vier Graustufen: Weiß, Hellgrau, Dunkelgrau und Schwarz. Töne, die auf anderen Panels ein Raster sind, sind hier ein flaches Grau. Eine Änderung an einem Grau aktualisiert das ganze Panel (etwa 3 Sekunden). Die Uhr nutzt die schnelle partielle Auffrischung (etwa 0,3 Sekunden) und lässt das Grau stehen.",
+      "partialOnlyLabel": "Nur partielle Auffrischung",
+      "partialOnlyHelp": "Jede Aktualisierung nutzt die schnelle partielle Auffrischung (etwa 0,3 Sekunden), auch Züge. Grautöne werden als Raster gezeichnet. Schalten Sie dies aus, um die vier Graustufen zu verwenden; eine Änderung an einem Grau dauert dann etwa 3 Sekunden.",
       "networkError": "Netzwerkfehler"
     },
     "centaur": {

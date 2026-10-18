@@ -250,6 +250,14 @@ class IconButtonWidget(Widget):
             img: Image to modify in place
             shade: Shade level 0-16 (0=white, 16=black)
         """
+        from universalchess.epaper.gray import draws_gray, shade_luma
+        if draws_gray(img):
+            fill = shade_luma(shade)
+            pixels = img.load()
+            for y in range(img.height):
+                for x in range(img.width):
+                    pixels[x, y] = fill
+            return
         pattern = DITHER_PATTERNS.get(shade, DITHER_PATTERNS[0])
         pattern_size = len(pattern)  # 8 for Bayer
         pixels = img.load()
@@ -332,15 +340,23 @@ class IconButtonWidget(Widget):
         # border_width 0 is a frameless cell: no stroke, so content can use the
         # inner area. Selected still dithers so focus is visible without a box.
         if self.selected:
-            # Selected: dark grey dithered background inside border only
-            pattern = DITHER_PATTERNS.get(self.selected_shade, DITHER_PATTERNS[0])
-            pattern_size = len(pattern)  # 8 for Bayer
-            for y in range(border_top, border_bottom + 1):
-                for x in range(border_left, border_right + 1):
-                    if pattern[y % pattern_size][x % pattern_size] == 1:
-                        sprite.putpixel((x, y), 0)
-                    else:
-                        sprite.putpixel((x, y), 255)
+            # Selected: dark grey background inside the border. On GDEW029I6FD
+            # that shade is a flat gray; every other panel dithers it.
+            from universalchess.epaper.gray import draws_gray, shade_luma
+            if draws_gray(sprite):
+                draw.rectangle(
+                    [border_left, border_top, border_right, border_bottom],
+                    fill=shade_luma(self.selected_shade),
+                )
+            else:
+                pattern = DITHER_PATTERNS.get(self.selected_shade, DITHER_PATTERNS[0])
+                pattern_size = len(pattern)  # 8 for Bayer
+                for y in range(border_top, border_bottom + 1):
+                    for x in range(border_left, border_right + 1):
+                        if pattern[y % pattern_size][x % pattern_size] == 1:
+                            sprite.putpixel((x, y), 0)
+                        else:
+                            sprite.putpixel((x, y), 255)
             if self.border_width > 0:
                 draw.rectangle(
                     [border_left, border_top, border_right, border_bottom],
@@ -434,6 +450,15 @@ class IconButtonWidget(Widget):
         reads as a faded version of whatever was drawn. The border is outside
         this region, so it stays solid.
         """
+        from universalchess.epaper.gray import draws_gray, shade_luma
+        if draws_gray(sprite):
+            # Flat light gray ink. Dropping pixels would put the dither back.
+            gray_ink = shade_luma(8)
+            for y in range(max(0, top), min(self.height, bottom + 1)):
+                for x in range(max(0, left), min(self.width, right + 1)):
+                    if sprite.getpixel((x, y)) == 0:
+                        sprite.putpixel((x, y), gray_ink)
+            return
         pattern = DITHER_PATTERNS.get(8, DITHER_PATTERNS[0])
         pattern_size = len(pattern)
         for y in range(max(0, top), min(self.height, bottom + 1)):

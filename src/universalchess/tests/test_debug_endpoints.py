@@ -293,7 +293,7 @@ def test_get_display_tuning_offers_all_profiles_when_no_panel(client, monkeypatc
     body = json.loads(resp.data)
     assert body["available"] is True
     assert body["active_controller"] is None
-    assert body["three_color_supported"] is True
+    assert body["three_color_supported"] is False
     families = {entry["controller"] for entry in body["profiles"]}
     assert families == {"uc8151d", "ssd16xx"}
     assert {entry["key"] for entry in body["profiles"]} >= {
@@ -406,6 +406,112 @@ def test_set_display_tuning_persists_batch_updates(client, monkeypatch):
     assert saved == [{"display": {"batch_updates": False}}]
 
 
+def test_set_display_tuning_persists_partial_only(client, monkeypatch):
+    """POST must persist partial_only, and GET must offer it only for I6FD.
+
+    Why this test exists: the flexible panel's switch posts partial_only.
+    The board reads that flag at boot and on the live path. GET reports
+    partial_only_supported from the selected panel so the card can hide the
+    switch on every other glass.
+
+    How a regression manifests: the POST writes nothing, so the toggle
+    snaps back, or GET reports the switch for Automatic and the card shows
+    a control the Centaur driver ignores.
+    """
+    saved = []
+    panel = {"key": "auto"}
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: "uc8151d")
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+    monkeypatch.setattr(webapp, "_read_selected_profile_key",
+                        lambda controller=None: "uc8151d_waveshare")
+    monkeypatch.setattr(display_settings, "read_flag",
+                        lambda name, default=False: default)
+    monkeypatch.setattr(display_settings, "read_panel_key", lambda: panel["key"])
+    import universalchess.services.game_broadcast as gb
+    monkeypatch.setattr(gb, "send_board_command",
+                        lambda cmd, params=None: True)
+
+    resp = client.get("/api/system/display-tuning")
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert body["partial_only"] is False
+    assert body["partial_only_supported"] is False
+
+    panel["key"] = "gdew029i6fd"
+    resp = client.get("/api/system/display-tuning")
+    body = json.loads(resp.data)
+    assert body["partial_only_supported"] is True
+    assert body["selected_panel"] == "gdew029i6fd"
+
+    resp = client.post(
+        "/api/system/display-tuning",
+        data=json.dumps({"partial_only": True}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert saved == [{"display": {"partial_only": True}}]
+
+
+def test_set_display_tuning_pins_i6fd_waveform(client, monkeypatch):
+    """Choosing GDEW029I6FD must persist the panel and its published waveform.
+
+    Why this test exists: the flexible panel is a 4-gray glass driven as
+    black/white by the pinned UC8151D partial. Saving only the panel key
+    would leave the previous waveform loaded, which is a different voltage
+    table. A waveform-only POST must not write panel, so this body includes
+    panel and asserts both keys.
+
+    How a regression manifests: saved is missing waveform_profile
+    uc8151d_gdew029i6fd, or the response is 400.
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: "uc8151d")
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+    monkeypatch.setattr(webapp, "_read_selected_profile_key",
+                        lambda controller=None: "uc8151d_gdew029i6fd")
+    monkeypatch.setattr(display_settings, "read_flag",
+                        lambda name, default=False: default)
+    monkeypatch.setattr(display_settings, "read_panel_key", lambda: "gdew029i6fd")
+    import universalchess.services.game_broadcast as gb
+    monkeypatch.setattr(gb, "send_board_command", lambda cmd, params=None: True)
+
+    resp = client.post(
+        "/api/system/display-tuning",
+        data=json.dumps({"panel": "gdew029i6fd"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 200
+    assert saved == [{
+        "display": {
+            "panel": "gdew029i6fd",
+            "waveform_profile": "uc8151d_gdew029i6fd",
+        },
+    }]
+
+
+def test_set_display_tuning_rejects_unknown_panel(client, monkeypatch):
+    """An unknown panel key must 400 and write nothing.
+
+    Why this test exists: an unknown key degrades to Automatic at boot, so
+    saving it would look like a selection and then probe the Centaur
+    controllers. The error string is the fixed "unknown panel".
+
+    How a regression manifests: status 200, or a saved panel key.
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+
+    resp = client.post(
+        "/api/system/display-tuning",
+        data=json.dumps({"panel": "not-a-panel"}),
+        content_type="application/json",
+    )
+    assert resp.status_code == 400
+    body = json.loads(resp.data)
+    assert body["error"] == "unknown panel"
+    assert saved == []
+
+
 def test_set_display_tuning_rejects_unknown_profile(client, monkeypatch):
     """An unknown profile key must 400 rather than persist an invalid selection.
 
@@ -452,6 +558,173 @@ def test_set_display_tuning_rejects_profile_for_other_controller(client, monkeyp
     )
     assert resp.status_code == 400
     assert saved == []
+
+
+def test_display_tuning_offers_a_replacement_recipe_only_on_its_panel(client, monkeypatch):
+    """GET lists, and POST accepts, a replacement panel's recipe only on that panel.
+
+    Why this test exists: GDEY029T94 and GDEY029Z95 recipes share the SSD16xx
+    family with the Centaur V1 glass, so filtering by family listed them for
+    Automatic on a V1 board and accepted them. The V1 panel was then driven
+    with the Z95 tri-color sequence.
+
+    How a regression manifests: gdey029z95 appears in the Automatic dropdown,
+    or a POST of it under Automatic returns 200 and is saved.
+    """
+    saved = []
+    panel = {"key": "auto"}
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: "ssd16xx")
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+    monkeypatch.setattr(display_settings, "read_flag", lambda name, default=False: default)
+    monkeypatch.setattr(display_settings, "read_panel_key", lambda: panel["key"])
+    monkeypatch.setattr(display_settings, "read_waveform_profile_key", lambda: "gdem029t94")
+    import universalchess.services.game_broadcast as gb
+    monkeypatch.setattr(gb, "send_board_command", lambda cmd, params=None: True)
+
+    body = json.loads(client.get("/api/system/display-tuning").data)
+    keys = {entry["key"] for entry in body["profiles"]}
+    assert "gdem029t94" in keys
+    assert not keys & {"gdey029t94", "gdey029z95"}
+
+    resp = client.post("/api/system/display-tuning",
+                       data=json.dumps({"profile": "gdey029z95"}),
+                       content_type="application/json")
+    assert resp.status_code == 400
+    assert saved == []
+
+    panel["key"] = "gdey029t94"
+    body = json.loads(client.get("/api/system/display-tuning").data)
+    keys = {entry["key"] for entry in body["profiles"]}
+    assert "gdey029t94" in keys
+    assert "gdey029z95" not in keys
+    resp = client.post("/api/system/display-tuning",
+                       data=json.dumps({"profile": "gdey029t94"}),
+                       content_type="application/json")
+    assert resp.status_code == 200
+    assert saved == [{"display": {"waveform_profile": "gdey029t94"}}]
+
+
+def test_display_tuning_offers_the_ssd1680_waveforms_on_gdey029z95(client, monkeypatch):
+    """GDEY029Z95 lists and accepts the Centaur SSD1680 waveforms beside its own.
+
+    Why this test exists: on this tri-color glass the Waveshare GDEM029T94
+    table gives the steadiest clock. It was reachable only through Automatic,
+    which does not offer three-color mode, so red ink and that waveform
+    could not be used together.
+
+    How a regression manifests: the dropdown is empty or lacks gdem029t94 or
+    gdey029z95, lists the GDEY029T94 recipe, or a POST of gdem029t94 returns 400.
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: None)
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+    monkeypatch.setattr(display_settings, "read_flag", lambda name, default=False: default)
+    monkeypatch.setattr(display_settings, "read_panel_key", lambda: "gdey029z95")
+    monkeypatch.setattr(display_settings, "read_waveform_profile_key", lambda: "gdey029z95")
+    import universalchess.services.game_broadcast as gb
+    monkeypatch.setattr(gb, "send_board_command", lambda cmd, params=None: True)
+
+    body = json.loads(client.get("/api/system/display-tuning").data)
+    keys = {entry["key"] for entry in body["profiles"]}
+    assert body["waveform_applicable"] is True
+    assert {"gdem029t94", "gdey029z95"} <= keys
+    assert "gdey029t94" not in keys
+    assert {entry["controller"] for entry in body["profiles"]} == {"ssd16xx"}
+    assert body["selected"] == "gdey029z95"
+
+    resp = client.post("/api/system/display-tuning",
+                       data=json.dumps({"profile": "gdem029t94"}),
+                       content_type="application/json")
+    assert resp.status_code == 200
+    assert saved == [{"display": {"waveform_profile": "gdem029t94"}}]
+
+
+def test_set_display_tuning_rejects_a_waveform_for_a_panel_without_one(client, monkeypatch):
+    """A waveform POST for a panel with no waveform dropdown must 400.
+
+    Why this test exists: GDEW029I6FD runs its pinned recipe at boot. The web
+    process read its family as UC8151D and accepted any UC8151D key, which the
+    live path then loaded until the next reboot replaced it.
+
+    How a regression manifests: uc8151d_t5d is saved with status 200 while
+    GDEW029I6FD is the selected panel.
+    """
+    saved = []
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: "uc8151d")
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+    monkeypatch.setattr(display_settings, "read_panel_key", lambda: "gdew029i6fd")
+
+    resp = client.post("/api/system/display-tuning",
+                       data=json.dumps({"profile": "uc8151d_t5d"}),
+                       content_type="application/json")
+    assert resp.status_code == 400
+    assert saved == []
+
+
+def test_three_color_is_offered_and_accepted_only_for_red_ink(client, monkeypatch):
+    """GET reports, and POST accepts, three-color mode only on a panel with red ink.
+
+    Why this test exists: Automatic and GDEY029T94 drive black/white glass.
+    Offering the switch there, or saving it on, sends a red plane the glass
+    cannot show.
+
+    How a regression manifests: GET on Automatic reports three_color True or
+    three_color_supported True while the stored switch is on, a POST turning
+    red on for GDEY029T94 returns 200 and is saved, or the same POST for
+    GDEY029Z95 is rejected.
+    """
+    saved = []
+    panel = {"key": "auto"}
+    monkeypatch.setattr(webapp, "_active_waveform_controller", lambda: None)
+    monkeypatch.setattr(webapp, "save_all_settings", lambda d: saved.append(d))
+    monkeypatch.setattr(display_settings, "read_panel_key", lambda: panel["key"])
+    monkeypatch.setattr(display_settings, "read_flag",
+                        lambda name, default=False: True if name == "three_color" else default)
+    import universalchess.services.game_broadcast as gb
+    monkeypatch.setattr(gb, "send_board_command", lambda cmd, params=None: True)
+
+    for key, supported in (("auto", False), ("gdey029t94", False), ("gdey029z95", True)):
+        panel["key"] = key
+        body = json.loads(client.get("/api/system/display-tuning").data)
+        assert (body["three_color_supported"], body["three_color"]) == (supported, supported), key
+
+    panel["key"] = "gdey029t94"
+    resp = client.post("/api/system/display-tuning",
+                       data=json.dumps({"three_color": True}),
+                       content_type="application/json")
+    assert resp.status_code == 400
+    assert saved == []
+
+    panel["key"] = "gdey029z95"
+    resp = client.post("/api/system/display-tuning",
+                       data=json.dumps({"three_color": True}),
+                       content_type="application/json")
+    assert resp.status_code == 200
+    assert saved == [{"display": {"three_color": True}}]
+
+
+def test_active_waveform_family_follows_the_recorded_panel(monkeypatch):
+    """The live waveform family comes from the recorded panel, then its controller.
+
+    Why this test exists: the status file records the chip and the panel key.
+    A replacement panel's family is its own (None when it has no dropdown);
+    only Automatic maps the Centaur chip to a family.
+
+    How a regression manifests: GDEW029I6FD reports uc8151d, so the UC8151D
+    list is offered for a panel that ignores it, or Automatic on SSD1680 is None.
+    """
+    from universalchess.board import hardware_info
+    cases = (
+        ({"initialized": True, "active_controller": "SSD1680", "panel": "auto"}, "ssd16xx"),
+        ({"initialized": True, "active_controller": "UC8151D"}, "uc8151d"),
+        ({"initialized": True, "active_controller": "SSD1680", "panel": "gdey029t94"}, "ssd16xx"),
+        ({"initialized": True, "active_controller": "UC8151D", "panel": "gdew029i6fd"}, None),
+        ({"initialized": True, "active_controller": "SSD1685", "panel": "gdey029t71h"}, None),
+        ({"initialized": False, "active_controller": None, "panel": "auto"}, None),
+    )
+    for status, expected in cases:
+        monkeypatch.setattr(hardware_info, "read_display_status", lambda status=status: status)
+        assert webapp._active_waveform_controller() == expected, status
 
 
 def test_set_display_tuning_rejects_empty_body(client, monkeypatch):

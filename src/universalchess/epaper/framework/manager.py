@@ -71,7 +71,26 @@ class Manager:
         # end. Square remapping alone left abort/takeback/next-game upright for
         # the original seat.
         self._content_rotation = 0
+        self._sync_gray()
         log.debug(f"Manager.__init__() completed - Manager id: {id(self)}, EPD id: {id(self._epd)}")
+
+    def _sync_gray(self) -> None:
+        """Match the framebuffer mode to the active driver's gray depth.
+
+        GDEW029I6FD reports 4 and the framebuffer becomes 8-bit so a flat gray
+        fill survives until the driver quantizes it. Any other driver reports
+        1. Widgets draw flat gray or the Bayer dither from the mode of the
+        image they draw on, so the mode is the only gray state. Cached sprites
+        are dropped because a 1-bit sprite pasted onto an L frame would
+        threshold the gray away, and the reverse would dither a gray sprite
+        back to dots.
+        """
+        with self._render_lock:
+            self._framebuffer.set_mode("L" if self._epd.gray_levels == 4 else "1")
+            for widget in self._widgets:
+                widget.invalidate_cache()
+            if self._background is not None:
+                self._background.invalidate_cache()
 
     def set_content_rotation(self, degrees: int) -> None:
         """Rotate drawn content on top of the panel's mounting rotation.
@@ -162,9 +181,38 @@ class Manager:
             future = Future()
             future.set_result("not-applicable")
             return future
-        self._epd.apply_profile(profile, high_contrast)
-        self._scheduler.force_reinit()
+
+        def apply():
+            self._epd.apply_profile(profile, high_contrast)
+            self._scheduler.force_reinit()
+
+        self._scheduler.run_with_panel(apply)
         return self.update(full=True, immediate=True)
+
+    def replace_epd(self, epd) -> bool:
+        """Swap the live driver for another panel and redraw.
+
+        Runs the new driver's init() while no refresh is in flight, and keeps
+        the current driver when it fails: the chosen glass may not be
+        connected. Returns whether the new driver was adopted.
+
+        The chess frame stays 128x296, so the framebuffer and widgets are
+        kept. The previous driver's sleep opcode is not sent: the panel may
+        already be the new glass, and a foreign command is the thing this swap
+        exists to avoid. Reset inside the new init() is the shared wake.
+        """
+        def swap() -> bool:
+            if epd.init() != 0:
+                return False
+            self._epd = epd
+            self._scheduler.adopt_initialized_epd(epd)
+            return True
+
+        if not self._scheduler.run_with_panel(swap):
+            return False
+        self._sync_gray()
+        self.update(full=True, immediate=True)
+        return True
 
     def apply_three_color(self, enabled: bool) -> Future:
         """Enable/disable three-color (red) mode live and force a full refresh.
@@ -184,9 +232,36 @@ class Manager:
             future = Future()
             future.set_result("not-applicable")
             return future
-        self._epd.apply_three_color(enabled)
-        self._scheduler.force_reinit()
+
+        def apply():
+            self._epd.apply_three_color(enabled)
+            self._scheduler.force_reinit()
+
+        self._scheduler.run_with_panel(apply)
         return self.update(full=True, immediate=True)
+
+    def apply_partial_only(self, enabled: bool) -> Future:
+        """Use only the fast partial on GDEW029I6FD, or restore 4-gray.
+
+        Turning the switch on drops drawing back to the 1-bit dither and the
+        next refresh is a partial, so the 4-gray waveform does not run.
+        Turning it off restores the four gray levels and refreshes once with
+        that waveform so the flat grays appear. A no-op when the active driver
+        has no such switch.
+        """
+        if not hasattr(self._epd, "apply_partial_only"):
+            future = Future()
+            future.set_result("not-applicable")
+            return future
+
+        def apply():
+            self._epd.apply_partial_only(enabled)
+            if not enabled:
+                self._scheduler.force_reinit()
+
+        self._scheduler.run_with_panel(apply)
+        self._sync_gray()
+        return self.update(full=not enabled, immediate=True)
 
     def set_batch_updates(self, enabled: bool) -> None:
         """Enable/disable update batching live, delegating to the scheduler.

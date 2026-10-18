@@ -848,6 +848,17 @@
       "threeColorOn": "Three-color mode on. Red highlights refresh in ~12-15s; normal moves stay fast.",
       "applied": "Applied. The panel refreshed with the new setting.",
       "updateFailed": "Failed to update the display waveform.",
+      "panelLabel": "Panel",
+      "panelHelp": "The e-paper module wired to the board. Automatic probes the Centaur V1 and V2 controllers. Choose a Good Display model when that exact panel is connected, because each model has its own controller and voltages. The change re-inits the panel immediately.",
+      "panelSource": "Init source:",
+      "titleFixed": "Display tuning",
+      "descriptionFixed": "This panel uses its manufacturer's init sequence. The chess screen is drawn in black and white at 128×296 and scaled when the glass is 168×384. Four-color panels update in one full refresh (about 11 seconds for GDEY029F52, about 25 seconds for GDEY029F51H). Three-color mode paints the existing red highlights in red ink. Yellow ink is not used.",
+      "titleBwr": "Display tuning",
+      "descriptionBwr": "This panel is black, white, and red at 128×296. A full refresh (about 16 seconds) updates red ink. Partial refresh (about 1.5 seconds) updates black and white only; red ink stays until the next full refresh. Three-color mode paints the existing red highlights in red ink.",
+      "titleGray": "Display tuning",
+      "descriptionGray": "This panel uses four gray levels: white, light gray, dark gray, and black. Shades that are a dither on other panels are a flat gray here. Changing a gray refreshes the whole panel (about 3 seconds). The clock uses the fast partial refresh (about 0.3 seconds) and leaves the gray in place.",
+      "partialOnlyLabel": "Partial refresh only",
+      "partialOnlyHelp": "Every update uses the fast partial refresh (about 0.3 seconds), including piece moves. Gray shades are drawn as a dither. Turn this off to use the four gray levels; changing a gray then takes about 3 seconds.",
       "networkError": "Network error"
     },
     "centaur": {
@@ -1010,8 +1021,8 @@
       "chartjs": "Renders the evaluation graph showing position advantage over time. Displays engine evaluation history as an interactive chart during game review.",
       "zustand": "Manages global application state. Zustand handles game state synchronization, connection status, and settings across all components.",
       "waveshareEpaper": "Source of the SSD1680 (GDEM029T94) waveform tables and init for the V1-panel driver and the \"Waveshare 2.9″ V2\" waveform, and of the UC8151D partial LUTs/analog bytes (epd2in9d.py) used by the default \"Waveshare 2.9″ V2 — UC8151D\" waveform.",
-      "gxepd2": "Arduino e-paper library by Jean-Marc Zingg. Verbatim source of the IL3820/GDEH029A1 LUTs (class GxEPD2_290), the DEPG0290BS register partial LUT (GxEPD2_290_BS), and the UC8151D variant partial LUTs/analog bytes — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) and the experimental GDEW029M06 (GxEPD2_290_M06) — used by the tuning waveforms; also corroborates the GDEM029T94 table and the panel-OTP approach.",
-      "goodDisplay": "Original vendor demo code (relayed verbatim via GxEPD2) behind the IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 and T5D tuning waveforms."
+      "gxepd2": "Arduino e-paper library by Jean-Marc Zingg. Verbatim source of the IL3820/GDEH029A1 LUTs (class GxEPD2_290), the DEPG0290BS register partial LUT (GxEPD2_290_BS), and the UC8151D variant partial LUTs/analog bytes — GDEW029I6FD (GxEPD2_290_I6FD), T5D (GxEPD2_290_T5D) and the experimental GDEW029M06 (GxEPD2_290_M06) — used by the tuning waveforms; also corroborates the GDEM029T94 table and the panel-OTP approach. The GDEY029T94, GDEY029T71H (SSD1685) and GDEY029F51H (JD79667) init sequences used for those replacement panels come from the same library. The GDEW029I6FD 4-gray waveform (lut_*_4G in GxEPD2_4G's GxEPD2_290_I6FD) is that library's transcription of the Good Display demo.",
+      "goodDisplay": "Original vendor demo code (relayed verbatim via GxEPD2) behind the IL3820/GDEH029A1, DEPG0290BS, GDEW029I6FD, GDEW029M06 and T5D tuning waveforms. The GDEY029F52 (JD79661) init is that manufacturer's Arduino demo (AU-GDEY029F52). The GDEY029Z95 (SSD1680 tri-color) init, full refresh, and partial refresh are that manufacturer's Arduino demo (AU-GDEY029Z95)."
     }
   },
   "engineProfile": {

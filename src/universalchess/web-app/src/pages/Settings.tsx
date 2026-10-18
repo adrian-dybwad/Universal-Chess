@@ -4500,7 +4500,44 @@ const DISPLAY_TUNING_COPY_KEYS = {
     titleKey: 'settingsPage.displayTuning.titleUnknown',
     descriptionKey: 'settingsPage.displayTuning.descriptionUnknown',
   },
-} satisfies Record<WaveformController | 'unknown', { titleKey: string; descriptionKey: string }>;
+  fixed: {
+    titleKey: 'settingsPage.displayTuning.titleFixed',
+    descriptionKey: 'settingsPage.displayTuning.descriptionFixed',
+  },
+  bwr: {
+    titleKey: 'settingsPage.displayTuning.titleBwr',
+    descriptionKey: 'settingsPage.displayTuning.descriptionBwr',
+  },
+  gray: {
+    titleKey: 'settingsPage.displayTuning.titleGray',
+    descriptionKey: 'settingsPage.displayTuning.descriptionGray',
+  },
+} satisfies Record<WaveformController | 'unknown' | 'fixed' | 'bwr' | 'gray', { titleKey: string; descriptionKey: string }>;
+
+// Server PanelModel.panel_mode values.
+const PANEL_MODES = ['auto', 'tunable', 'fixed', 'bwr', 'gray'] as const;
+type PanelMode = (typeof PANEL_MODES)[number];
+
+function isPanelMode(value: unknown): value is PanelMode {
+  return typeof value === 'string' && (PANEL_MODES as readonly string[]).includes(value);
+}
+
+// Card copy per panel mode. null takes the live controller's copy: Automatic
+// and a panel with a waveform dropdown are described by their waveform family.
+const PANEL_MODE_COPY = {
+  auto: null,
+  tunable: null,
+  fixed: 'fixed',
+  bwr: 'bwr',
+  gray: 'gray',
+} satisfies Record<PanelMode, 'fixed' | 'bwr' | 'gray' | null>;
+
+interface PanelChoice {
+  key: string;
+  label: string;
+  source: string;
+  url: string;
+}
 
 function DisplayTuningCard() {
   const { t } = useTranslation();
@@ -4509,8 +4546,15 @@ function DisplayTuningCard() {
   const [selected, setSelected] = useState<string>('');
   const [highContrast, setHighContrast] = useState(false);
   const [threeColor, setThreeColor] = useState(false);
-  const [threeColorSupported, setThreeColorSupported] = useState(true);
+  const [threeColorSupported, setThreeColorSupported] = useState(false);
   const [batchUpdates, setBatchUpdates] = useState(true);
+  const [partialOnly, setPartialOnly] = useState(false);
+  const [partialOnlySupported, setPartialOnlySupported] = useState(false);
+  const [panels, setPanels] = useState<PanelChoice[]>([]);
+  const [selectedPanel, setSelectedPanel] = useState('');
+  const [panelMode, setPanelMode] = useState<PanelMode>('auto');
+  const [waveformApplicable, setWaveformApplicable] = useState(true);
+  const [highContrastSupported, setHighContrastSupported] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -4537,6 +4581,13 @@ function DisplayTuningCard() {
         if (typeof data.three_color === 'boolean') setThreeColor(data.three_color);
         if (typeof data.three_color_supported === 'boolean') setThreeColorSupported(data.three_color_supported);
         if (typeof data.batch_updates === 'boolean') setBatchUpdates(data.batch_updates);
+        if (typeof data.partial_only === 'boolean') setPartialOnly(data.partial_only);
+        if (typeof data.partial_only_supported === 'boolean') setPartialOnlySupported(data.partial_only_supported);
+        if (Array.isArray(data.panels)) setPanels(data.panels);
+        if (typeof data.selected_panel === 'string') setSelectedPanel(data.selected_panel);
+        if (isPanelMode(data.panel_mode)) setPanelMode(data.panel_mode);
+        if (typeof data.waveform_applicable === 'boolean') setWaveformApplicable(data.waveform_applicable);
+        if (typeof data.high_contrast_supported === 'boolean') setHighContrastSupported(data.high_contrast_supported);
       })
       .catch(() => {
         // The card stays on screen: a failed read must not hide the recovery
@@ -4550,19 +4601,37 @@ function DisplayTuningCard() {
   // the login dialog opens and the same apply is retried after authentication.
   // Field-based so each control (profile / high contrast / three-color) sends
   // only its change, merged with the current state for the others.
-  const apply = async (updates: { profile?: string; high_contrast?: boolean; three_color?: boolean; batch_updates?: boolean }) => {
+  const apply = async (updates: { profile?: string; high_contrast?: boolean; three_color?: boolean; batch_updates?: boolean; panel?: string; partial_only?: boolean }) => {
     const profile = updates.profile ?? selected;
     const contrast = updates.high_contrast ?? highContrast;
     const tricolor = updates.three_color ?? threeColor;
     const batching = updates.batch_updates ?? batchUpdates;
+    const partial = updates.partial_only ?? partialOnly;
     setBusy(true);
     setError(null);
     setNotice(null);
     try {
+      const payload: Record<string, string | boolean> = {
+        high_contrast: contrast,
+        batch_updates: batching,
+        partial_only: partial,
+      };
+      // A panel change pins that glass's waveform on the server. Sending the
+      // previous waveform in the same request would overwrite the pin. A
+      // panel without a waveform dropdown runs its pinned recipe, and the
+      // server rejects any waveform for it. The red switch belongs to the
+      // current glass: the server rejects turning it on for a panel without
+      // red ink, so a panel change leaves it out.
+      if (updates.panel === undefined) {
+        if (waveformApplicable) payload.profile = profile;
+        if (threeColorSupported) payload.three_color = tricolor;
+      } else {
+        payload.panel = updates.panel;
+      }
       const response = await apiFetch('/api/system/display-tuning', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ profile, high_contrast: contrast, three_color: tricolor, batch_updates: batching }),
+        body: JSON.stringify(payload),
         requiresAuth: true,
       });
       if (requireLogin(response, () => apply(updates))) return;
@@ -4575,6 +4644,13 @@ function DisplayTuningCard() {
       setHighContrast(typeof data.high_contrast === 'boolean' ? data.high_contrast : contrast);
       setThreeColor(typeof data.three_color === 'boolean' ? data.three_color : tricolor);
       setBatchUpdates(typeof data.batch_updates === 'boolean' ? data.batch_updates : batching);
+      setPartialOnly(typeof data.partial_only === 'boolean' ? data.partial_only : partial);
+      if (typeof data.partial_only_supported === 'boolean') setPartialOnlySupported(data.partial_only_supported);
+      if (typeof data.selected_panel === 'string') setSelectedPanel(data.selected_panel);
+      if (isPanelMode(data.panel_mode)) setPanelMode(data.panel_mode);
+      if (typeof data.waveform_applicable === 'boolean') setWaveformApplicable(data.waveform_applicable);
+      if (typeof data.high_contrast_supported === 'boolean') setHighContrastSupported(data.high_contrast_supported);
+      if (typeof data.three_color_supported === 'boolean') setThreeColorSupported(data.three_color_supported);
       const enabledRed = updates.three_color === true;
       setNotice(
         !data.applied_live
@@ -4594,8 +4670,9 @@ function DisplayTuningCard() {
   // the only control that can persist a waveform for the next boot. Copy
   // adapts when a live controller is known; otherwise the unknown keys explain
   // that the selection is saved for the next init.
-  const copy = DISPLAY_TUNING_COPY_KEYS[activeController ?? 'unknown'];
+  const copy = DISPLAY_TUNING_COPY_KEYS[PANEL_MODE_COPY[panelMode] ?? activeController ?? 'unknown'];
   const selectedProfile = profiles.find((p) => p.key === selected);
+  const selectedPanelChoice = panels.find((p) => p.key === selectedPanel);
 
   return (
     <>
@@ -4609,6 +4686,28 @@ function DisplayTuningCard() {
             <strong>{t('settingsPage.eventLog.errorLabel')}</strong> {error}
           </Card>
         )}
+        {panels.length > 0 && (
+          <FormRow
+            label={t('settingsPage.displayTuning.panelLabel')}
+            help={t('settingsPage.displayTuning.panelHelp')}
+          >
+            <Select
+              value={selectedPanel}
+              onChange={(e) => apply({ panel: e.target.value })}
+              disabled={busy}
+              options={panels.map((p) => ({ value: p.key, label: p.label }))}
+            />
+          </FormRow>
+        )}
+        {selectedPanelChoice && selectedPanelChoice.url && (
+          <p className="text-muted mb-4" style={{ fontSize: '0.85em' }}>
+            {t('settingsPage.displayTuning.panelSource')}{' '}
+            <a href={selectedPanelChoice.url} target="_blank" rel="noreferrer">
+              {selectedPanelChoice.source}
+            </a>
+          </p>
+        )}
+        {waveformApplicable && (
         <FormRow
           label={t('settingsPage.displayTuning.waveformLabel')}
           help={t('settingsPage.displayTuning.waveformHelp')}
@@ -4620,7 +4719,8 @@ function DisplayTuningCard() {
             options={profiles.map((p) => ({ value: p.key, label: p.label }))}
           />
         </FormRow>
-        {selectedProfile && (
+        )}
+        {waveformApplicable && selectedProfile && (
           <p className="text-muted mb-4" style={{ fontSize: '0.85em' }}>
             {t('settingsPage.displayTuning.waveformSource')} {selectedProfile.url ? (
               <a href={selectedProfile.url} target="_blank" rel="noreferrer">
@@ -4638,6 +4738,16 @@ function DisplayTuningCard() {
           onChange={(v) => apply({ batch_updates: v })}
           disabled={busy}
         />
+        {partialOnlySupported && (
+          <Toggle
+            label={t('settingsPage.displayTuning.partialOnlyLabel')}
+            help={t('settingsPage.displayTuning.partialOnlyHelp')}
+            checked={partialOnly}
+            onChange={(v) => apply({ partial_only: v })}
+            disabled={busy}
+          />
+        )}
+        {highContrastSupported && (
         <Toggle
           label={t('settingsPage.displayTuning.highContrastLabel')}
           help={t('settingsPage.displayTuning.highContrastHelp')}
@@ -4645,6 +4755,7 @@ function DisplayTuningCard() {
           onChange={(v) => apply({ high_contrast: v })}
           disabled={busy}
         />
+        )}
         {threeColorSupported && (
           <Toggle
             label={t('settingsPage.displayTuning.threeColorLabel')}

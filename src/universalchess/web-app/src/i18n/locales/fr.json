@@ -855,6 +855,17 @@
       "threeColorOn": "Mode trois couleurs activé. Les surlignages rouges se rafraîchissent en ~12-15 s ; les coups normaux restent rapides.",
       "applied": "Appliqué. Le panneau s'est rafraîchi avec le nouveau réglage.",
       "updateFailed": "Impossible de mettre à jour la forme d'onde de l'affichage.",
+      "panelLabel": "Panneau",
+      "panelHelp": "Le module e-paper branché sur l'échiquier. Automatique sonde les contrôleurs Centaur V1 et V2. Choisissez un modèle Good Display lorsque ce panneau précis est branché, car chaque modèle a son contrôleur et ses tensions. Le changement réinitialise le panneau immédiatement.",
+      "panelSource": "Source d'initialisation :",
+      "titleFixed": "Réglage de l'affichage",
+      "descriptionFixed": "Ce panneau utilise la séquence d'initialisation du fabricant. L'écran d'échecs est dessiné en noir et blanc en 128×296 et mis à l'échelle lorsque la dalle fait 168×384. Les panneaux quatre couleurs se mettent à jour en un rafraîchissement complet (environ 11 secondes pour le GDEY029F52, environ 25 secondes pour le GDEY029F51H). Le mode trois couleurs peint les surbrillances rouges existantes à l'encre rouge. L'encre jaune n'est pas utilisée.",
+      "titleBwr": "Réglage de l'affichage",
+      "descriptionBwr": "Ce panneau est noir, blanc et rouge en 128×296. Un rafraîchissement complet (environ 16 secondes) met à jour l'encre rouge. Le rafraîchissement partiel (environ 1,5 seconde) ne met à jour que le noir et le blanc ; l'encre rouge reste jusqu'au prochain rafraîchissement complet. Le mode trois couleurs peint les surbrillances rouges existantes à l'encre rouge.",
+      "titleGray": "Réglage de l'affichage",
+      "descriptionGray": "Ce panneau utilise quatre niveaux de gris : blanc, gris clair, gris foncé et noir. Les teintes qui sont un tramage sur les autres panneaux sont ici un gris uni. Un changement de gris rafraîchit tout le panneau (environ 3 secondes). L'horloge utilise le rafraîchissement partiel rapide (environ 0,3 seconde) et laisse le gris en place.",
+      "partialOnlyLabel": "Rafraîchissement partiel uniquement",
+      "partialOnlyHelp": "Chaque mise à jour utilise le rafraîchissement partiel rapide (environ 0,3 seconde), y compris les coups. Les gris sont dessinés en tramage. Désactivez pour utiliser les quatre niveaux de gris ; changer un gris prend alors environ 3 secondes.",
       "networkError": "Erreur réseau"
     },
     "centaur": {

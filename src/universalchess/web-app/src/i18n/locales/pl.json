@@ -862,6 +862,17 @@
       "threeColorOn": "Tryb trójkolorowy włączony. Czerwone wyróżnienia odświeżają się w ~12-15 s; zwykłe ruchy pozostają szybkie.",
       "applied": "Zastosowano. Panel odświeżył się z nowym ustawieniem.",
       "updateFailed": "Nie udało się zmienić waveformu ekranu.",
+      "panelLabel": "Panel",
+      "panelHelp": "Moduł e-papieru podłączony do szachownicy. Automatyczny sprawdza kontrolery Centaur V1 i V2. Wybierz model Good Display, gdy podłączony jest dokładnie ten panel, bo każdy model ma własny kontroler i napięcia. Zmiana od razu inicjuje panel ponownie.",
+      "panelSource": "Źródło inicjalizacji:",
+      "titleFixed": "Dostrajanie ekranu",
+      "descriptionFixed": "Ten panel używa sekwencji inicjalizacji producenta. Ekran szachowy jest rysowany czarno-biało w 128×296 i skalowany, gdy szkło ma 168×384. Panele czterokolorowe odświeżają się jednym pełnym odświeżeniem (około 11 sekund dla GDEY029F52, około 25 sekund dla GDEY029F51H). Tryb trójkolorowy maluje istniejące czerwone wyróżnienia czerwonym tuszem. Żółty tusz nie jest używany.",
+      "titleBwr": "Dostrajanie ekranu",
+      "descriptionBwr": "Ten panel jest czarny, biały i czerwony w 128×296. Pełne odświeżenie (około 16 sekund) aktualizuje czerwony tusz. Odświeżenie częściowe (około 1,5 sekundy) aktualizuje tylko czerń i biel; czerwony tusz zostaje do następnego pełnego odświeżenia. Tryb trójkolorowy maluje istniejące czerwone wyróżnienia czerwonym tuszem.",
+      "titleGray": "Dostrajanie ekranu",
+      "descriptionGray": "Ten panel używa czterech poziomów szarości: bieli, jasnej szarości, ciemnej szarości i czerni. Odcienie, które na innych panelach są rastrem, są tu jednolitą szarością. Zmiana szarości odświeża cały panel (około 3 sekund). Zegar używa szybkiego odświeżenia częściowego (około 0,3 sekundy) i zostawia szarość na miejscu.",
+      "partialOnlyLabel": "Tylko odświeżenie częściowe",
+      "partialOnlyHelp": "Każda aktualizacja używa szybkiego odświeżenia częściowego (około 0,3 sekundy), także ruchy. Odcienie szarości są rysowane rastrem. Wyłącz, aby użyć czterech poziomów szarości; zmiana szarości trwa wtedy około 3 sekund.",
       "networkError": "Błąd sieci"
     },
     "centaur": {

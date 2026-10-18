@@ -954,6 +954,58 @@ class ResolveActiveDisplayTests(unittest.TestCase):
             (hw.DISPLAY_CONTROLLER, hw.DISPLAY_DRIVER, hw.DISPLAY_MODEL),
         )
 
+    def test_replacement_panel_reports_its_controller_driver_and_model(self):
+        # Why: a replacement glass is identified by the panel key in the
+        # status file; its controller is the chip, not the part number. A
+        # regression shows "GDEW029I6FD" as the controller, labels GDEY029T94
+        # a Centaur V1 panel because both are SSD1680, or falls through to the
+        # Centaur V2 name.
+        cases = (
+            ("UC8151D", "gdew029i6fd",
+             ("UC8151D", "epd2in9d", 'Good Display GDEW029I6FD 2.9" flexible (UC8151D)')),
+            ("SSD1680", "gdey029t94",
+             ("SSD1680", "epd2in9_ssd1680", 'Good Display GDEY029T94 2.9" (SSD1680)')),
+            ("SSD1680", "gdey029z95",
+             ("SSD1680", "epd2in9_ssd1680", 'Good Display GDEY029Z95 2.9" tri-color (SSD1680)')),
+            ("SSD1685", "gdey029t71h",
+             ("SSD1685", "epd2in9_ssd1685", 'Good Display GDEY029T71H 2.9" (SSD1685)')),
+            ("JD79667", "gdey029f51h",
+             ("JD79667", "epd2in9_jd7966x", 'Good Display GDEY029F51H 2.9" four-color (JD79667)')),
+            ("JD79661", "gdey029f52",
+             ("JD79661", "epd2in9_jd7966x", 'Good Display GDEY029F52 2.9" four-color (JD79661)')),
+        )
+        for controller, panel, expected in cases:
+            with self.subTest(panel=panel):
+                self.assertEqual(hw.resolve_active_display(controller, panel), expected)
+
+    def test_centaur_controllers_keep_their_names_when_no_panel_is_recorded(self):
+        # Why: a status file from before the panel key existed has only the
+        # controller. How a regression manifests: SSD1680 stops resolving to
+        # the V1 panel, or an unknown chip is given a replacement glass's name.
+        self.assertEqual(
+            hw.resolve_active_display("SSD1680", None),
+            ("SSD1680", "epd2in9_ssd1680", hw.DISPLAY_MODEL_SSD1680),
+        )
+        self.assertEqual(
+            hw.resolve_active_display("SSD1685", None),
+            (hw.DISPLAY_CONTROLLER, hw.DISPLAY_DRIVER, hw.DISPLAY_MODEL),
+        )
+
+    def test_replacement_panel_reports_its_native_size(self):
+        # The System card reports the glass size, not the 128x296 chess
+        # framebuffer. A regression keeps "128 x 296" for a panel whose RAM
+        # is 168x384.
+        info = hw.collect_hardware_info(
+            CollectHardwareInfoTests._source(
+                "6.12.47+rpt-rpi-v7",
+                _LOG_A1,
+                {"initialized": True, "active_controller": "SSD1685", "panel": "gdey029t71h"},
+            )
+        )
+        self.assertEqual(info.display_resolution, "168 x 384")
+        self.assertEqual(info.display_model, 'Good Display GDEY029T71H 2.9" (SSD1685)')
+        self.assertEqual(info.display_controller, "SSD1685")
+
     def test_v1_and_v2_models_differ(self):
         # Guards the actual user-visible fix: the V1 panel must not be labeled a
         # V2 panel. If the two model strings ever collapse, the card would again

@@ -3,7 +3,7 @@ Text display widget.
 """
 
 from PIL import Image, ImageDraw, ImageFont
-from .framework.widget import Widget, DITHER_PATTERNS
+from .framework.widget import Widget
 from enum import Enum
 
 from universalchess.resources import get_font
@@ -376,43 +376,6 @@ class TextWidget(Widget):
             return self.width - text_width
         
         return 0
-    
-    def _create_dither_pattern(self) -> Image.Image:
-        """Create dither pattern based on background level.
-        
-        Uses an 8x8 Bayer matrix for ordered dithering.
-        For transparent backgrounds (-1), returns a white image since
-        the actual compositing is handled via get_mask().
-        """
-        img = Image.new("1", (self.width, self.height), 255)
-        
-        if self.background <= 0:
-            # Transparent (-1) or white (0) - all white
-            return img
-        elif self.background == 5:
-            # Solid black
-            draw = ImageDraw.Draw(img)
-            draw.rectangle([0, 0, self.width, self.height], fill=0)
-            return img
-        
-        # Map background levels 1-4 to shade levels for Bayer patterns
-        # Level 1: ~20% black (shade 3)
-        # Level 2: ~38% black (shade 6)
-        # Level 3: ~50% black (shade 8)
-        # Level 4: ~69% black (shade 11)
-        shade_map = {1: 3, 2: 6, 3: 8, 4: 11}
-        shade = shade_map.get(self.background, 8)
-        
-        pattern = DITHER_PATTERNS.get(shade, DITHER_PATTERNS[0])
-        pixels = img.load()
-        
-        for y in range(self.height):
-            pattern_row = pattern[y % 8]
-            for x in range(self.width):
-                if pattern_row[x % 8] == 1:
-                    pixels[x, y] = 0  # Black pixel
-        
-        return img
     
     def get_mask(self):
         """Get mask for transparent compositing.

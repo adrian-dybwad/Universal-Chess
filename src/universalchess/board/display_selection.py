@@ -46,10 +46,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional
 
-# Controller identities reported to the System card. Kept as plain strings so
-# the web layer needs no import from the hardware/driver modules.
-CONTROLLER_UC8151D = "UC8151D"
-CONTROLLER_SSD1680 = "SSD1680"
+from universalchess.epaper.framework.waveshare.panel_models import (
+    CONTROLLER_SSD1680,
+    CONTROLLER_UC8151D,
+    PANEL_AUTO,
+)
 
 
 @dataclass(frozen=True)
@@ -98,8 +99,15 @@ def hint_from_status(status: Optional[dict]) -> Optional[str]:
     remaining rejections are defensive: this runs before the splash screen, on a
     file written by a separate process that a power cut can tear mid-write, so a
     malformed value must degrade to the shipped order rather than raise.
+
+    A boot of an explicit replacement panel is not a hint either: GDEY029T94
+    records SSD1680, which says nothing about the Centaur glass Automatic
+    will find. A status file without a panel key predates replacement
+    panels and was written by the Automatic probe.
     """
     if not isinstance(status, dict) or not status.get("initialized"):
+        return None
+    if status.get("panel", PANEL_AUTO) != PANEL_AUTO:
         return None
     controller = status.get("active_controller")
     if controller in DEFAULT_CONTROLLER_ORDER:
@@ -210,13 +218,30 @@ def resolve_outcome(
     )
 
 
-# Labels for the Settings diagnostics event log. Keys are CONTROLLER_*.
+# Labels for the Settings diagnostics event log of the Automatic probe.
+# A replacement panel is labeled by ``PanelModel.event_label``.
 PANEL_EVENT_LABEL = {
     CONTROLLER_UC8151D: "UC8151D (V2)",
     CONTROLLER_SSD1680: "SSD1680 (V1)",
 }
 
 EVENT_CATEGORY = "display"
+
+
+def explicit_panel_log_entry(
+    outcome: DisplayOutcome,
+    attempt: DisplayAttempt,
+    label: str,
+) -> tuple[str, str]:
+    """Return ``(level, message)`` for the one init of an explicit replacement panel.
+
+    ``label`` is the panel's ``PanelModel.event_label``. There is no second
+    controller to report: an explicit panel does not fall through.
+    """
+    if outcome.initialized:
+        return "info", f"E-paper panel detected: {label}"
+    error = outcome.error or attempt.error or "unknown error"
+    return "error", f"E-paper init failed ({label}): {error}"
 
 
 def event_log_entry(

@@ -38,6 +38,7 @@ from universalchess.epaper.framework.waveshare.epd2in9d import (
     RefreshInterrupted,
     pack_image_to_buffer,
 )
+from universalchess.epaper.framework.waveshare.panel_models import PanelDriver
 
 
 def _bw_image():
@@ -60,7 +61,7 @@ def _red_image_at(box):
     return img
 
 
-class _FakeEpd:
+class _FakeEpd(PanelDriver):
     """Records which refresh method the scheduler chose for each item."""
 
     def __init__(self, three_color):

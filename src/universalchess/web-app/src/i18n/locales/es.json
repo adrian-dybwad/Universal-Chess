@@ -855,6 +855,17 @@
       "threeColorOn": "Modo de tres colores activado. Los resaltados en rojo se refrescan en ~12-15 s; las jugadas normales siguen rápidas.",
       "applied": "Aplicado. El panel se refrescó con el nuevo ajuste.",
       "updateFailed": "No se pudo actualizar la forma de onda de la pantalla.",
+      "panelLabel": "Panel",
+      "panelHelp": "El módulo de papel electrónico conectado al tablero. Automático sondea los controladores Centaur V1 y V2. Elige un modelo Good Display cuando ese panel exacto esté conectado, porque cada modelo tiene su propio controlador y sus voltajes. El cambio reinicia el panel de inmediato.",
+      "panelSource": "Fuente de inicio:",
+      "titleFixed": "Ajuste de pantalla",
+      "descriptionFixed": "Este panel usa la secuencia de inicio del fabricante. La pantalla de ajedrez se dibuja en blanco y negro a 128×296 y se escala cuando el cristal es de 168×384. Los paneles de cuatro colores se actualizan con un refresco completo (unos 11 segundos en el GDEY029F52 y unos 25 en el GDEY029F51H). El modo de tres colores pinta en tinta roja los resaltes rojos existentes. La tinta amarilla no se usa.",
+      "titleBwr": "Ajuste de pantalla",
+      "descriptionBwr": "Este panel es negro, blanco y rojo a 128×296. Un refresco completo (unos 16 segundos) actualiza la tinta roja. El refresco parcial (unos 1,5 segundos) actualiza solo el blanco y el negro; la tinta roja permanece hasta el siguiente refresco completo. El modo de tres colores pinta en tinta roja los resaltes rojos existentes.",
+      "titleGray": "Ajuste de pantalla",
+      "descriptionGray": "Este panel usa cuatro niveles de gris: blanco, gris claro, gris oscuro y negro. Los tonos que en otros paneles son un tramado son aquí un gris plano. Un cambio de gris refresca todo el panel (unos 3 segundos). El reloj usa el refresco parcial rápido (unos 0,3 segundos) y deja el gris en su sitio.",
+      "partialOnlyLabel": "Solo refresco parcial",
+      "partialOnlyHelp": "Cada actualización usa el refresco parcial rápido (unos 0,3 segundos), incluidas las jugadas. Los grises se dibujan como un tramado. Desactívalo para usar los cuatro niveles de gris; cambiar un gris tarda entonces unos 3 segundos.",
       "networkError": "Error de red"
     },
     "centaur": {

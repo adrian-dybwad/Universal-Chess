@@ -32,7 +32,10 @@
 
 import logging
 import time
+from typing import Optional
 from . import epdconfig
+from .frame_codec import Gray4Frame, bw_partial_keeps_gray, gray4_frame, gray4_frame_from_mono
+from .panel_models import PanelDriver, PanelModel
 from .waveform_profiles import (
     CONTROLLER_UC8151D,
     WaveformProfile,
@@ -42,6 +45,56 @@ from PIL import Image
 import numpy as np
 
 log = logging.getLogger(__name__)
+
+# GxEPD2_4G src/epd/GxEPD2_290_I6FD.cpp, lut_*_4G ("full screen update LUT 0~3 gray").
+# Transcribed from that file. These bytes are the Good Display demo waveform
+# and are not adjusted. Loaded only when gray_levels is 4 (GDEW029I6FD).
+LUT_4G_VCOM = (
+    0x00, 0x0A, 0x00, 0x00, 0x00, 0x01,
+    0x00, 0x14, 0x14, 0x00, 0x00, 0x01,
+    0x00, 0x14, 0x00, 0x00, 0x00, 0x01,
+    0x00, 0x13, 0x0A, 0x01, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00,
+)
+LUT_4G_WW = (
+    0x40, 0x0A, 0x00, 0x00, 0x00, 0x01,
+    0x90, 0x14, 0x14, 0x00, 0x00, 0x01,
+    0x10, 0x14, 0x0A, 0x00, 0x00, 0x01,
+    0xA0, 0x13, 0x01, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+)
+LUT_4G_BW = (
+    0x40, 0x0A, 0x00, 0x00, 0x00, 0x01,
+    0x90, 0x14, 0x14, 0x00, 0x00, 0x01,
+    0x00, 0x14, 0x0A, 0x00, 0x00, 0x01,
+    0x99, 0x0C, 0x01, 0x03, 0x04, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+)
+LUT_4G_WB = (
+    0x40, 0x0A, 0x00, 0x00, 0x00, 0x01,
+    0x90, 0x14, 0x14, 0x00, 0x00, 0x01,
+    0x00, 0x14, 0x0A, 0x00, 0x00, 0x01,
+    0x99, 0x0B, 0x04, 0x04, 0x01, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+)
+LUT_4G_BB = (
+    0x80, 0x0A, 0x00, 0x00, 0x00, 0x01,
+    0x90, 0x14, 0x14, 0x00, 0x00, 0x01,
+    0x20, 0x14, 0x0A, 0x00, 0x00, 0x01,
+    0x50, 0x13, 0x01, 0x00, 0x00, 0x01,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+)
 
 # Experimental "high contrast" override for UC8151D: add this to the profile's
 # VCOM_DC byte (register 0x82), clamped to the 6-bit field max. A more-negative
@@ -174,13 +227,38 @@ def pack_image_to_buffer(image, width, height):
     return [0xFF] * ((width // 8) * height)
 
 
-class EPD:
+class EPD(PanelDriver):
+    """UC8151D driver: the Centaur V2 glass, or GDEW029I6FD when that panel is given.
+
+    ``gray_levels`` is 4 only for GDEW029I6FD. The Automatic V2 probe stays
+    1-bit: both RAM planes are then the old/new differential, not the gray
+    codes. With Partial refresh only on, display() and Clear() use the fast
+    partial and gray drawing is off.
+    """
+
     # Controller family (waveform_profiles.CONTROLLER_*). Lets ``main`` resolve
     # the correct profile for whichever driver actually drove the panel.
     CONTROLLER = CONTROLLER_UC8151D
 
+    def apply_partial_only(self, enabled: bool) -> None:
+        """Use only the fast partial, or restore 4-gray on this glass.
+
+        Ignored on a driver that is not the flexible 4-gray panel. While on,
+        ``gray_levels`` drops to 1 so the UI dithers and the partial LUT is
+        comparing a black-and-white frame. Turning it off restores the
+        panel's gray levels; the next full refresh loads the 4-gray waveform.
+        """
+        if not self.partial_only_supported:
+            return
+        self._set_partial_only(enabled)
+        # 1-bit refreshes run while the switch is on, so the last gray frame is
+        # no longer what the glass shows.
+        self._shown_gray = None
+
     def __init__(self, profile: WaveformProfile = None, high_contrast: bool = False,
-                 three_color: bool = False):
+                 three_color: bool = False, panel: Optional[PanelModel] = None,
+                 partial_only: bool = False):
+        self._adopt_panel(panel, partial_only)
         self.reset_pin = epdconfig.RST_PIN
         self.dc_pin = epdconfig.DC_PIN
         self.busy_pin = epdconfig.BUSY_PIN
@@ -220,6 +298,10 @@ class EPD:
         # matching getbuffer_red's polarity. Re-sent to the red channel so a fast
         # B/W refresh leaves the red layer in a defined (cleared) state.
         self.red_buffer = self._red_blank()
+        # The 4-gray frame on the glass (gray_levels 4 only), recorded after a
+        # refresh completes. The fast partial may run only when it changes no
+        # gray pixel of this frame. None until the first 4-gray refresh.
+        self._shown_gray: Optional[Gray4Frame] = None
 
     def _red_blank(self) -> list:
         """The 'no red' red-channel buffer for the current polarity."""
@@ -470,7 +552,35 @@ class EPD:
         self.send_data2(list(wf.bb))
 
     def getbuffer(self, image):
+        """Pack ``image`` for display(): a Gray4Frame at 4 gray, else a 1-bit buffer.
+
+        Pure. Which waveform a gray frame takes is decided at refresh time
+        against the frame on the glass, not here, so a frame that is packed
+        and never drawn does not become the partial baseline.
+        """
+        if self.gray_levels == 4:
+            return gray4_frame(image, self.width, self.height)
         return pack_image_to_buffer(image, self.width, self.height)
+
+    @staticmethod
+    def _as_gray_frame(buf) -> Gray4Frame:
+        """A Gray4Frame from getbuffer, or a packed 1-bit buffer as one with no gray."""
+        if isinstance(buf, Gray4Frame):
+            return buf
+        return gray4_frame_from_mono(buf)
+
+    def _partial_keeps_gray(self, frame: Gray4Frame) -> bool:
+        """Whether the fast partial can draw ``frame`` over the glass without touching gray.
+
+        A clock tick only flips black and white, and those pixels can take the
+        partial. A pixel that enters, leaves, or moves between gray levels has
+        to run the 4-gray waveform, or the partial LUT paints it solid black or
+        white.
+        """
+        shown = self._shown_gray
+        return shown is not None and bw_partial_keeps_gray(
+            shown.mono, frame.mono, shown.gray_mask, frame.gray_mask,
+        )
 
     def getbuffer_red(self, image):
         """Pack a red-mask image into the panel's red-channel byte buffer.
@@ -531,7 +641,76 @@ class EPD:
         self.red_buffer = list(red_buf)
         self.TurnOnDisplay(should_abort=should_abort)
 
+    def _program_gray4(self):
+        """Load the GxEPD2_4G 4-gray waveform (``_Init_4G``).
+
+        Panel setting 0xbf selects the register LUT. The interval byte 0x17
+        and the five tables are the demo's gray waveform, not the 1-bit
+        partial tables. Power-on follows the tables, as in that init.
+        """
+        self.send_command(0x00)
+        self.send_data(0xbf)
+        self.send_command(0x50)
+        self.send_data(0x17)
+        self.send_command(0x20)
+        self.send_data2(list(LUT_4G_VCOM))
+        self.send_command(0x21)
+        self.send_data2(list(LUT_4G_WW))
+        self.send_command(0x22)
+        self.send_data2(list(LUT_4G_BW))
+        self.send_command(0x23)
+        self.send_data2(list(LUT_4G_WB))
+        self.send_command(0x24)
+        self.send_data2(list(LUT_4G_BB))
+        self.send_command(0x04)
+        self.ReadBusy()
+
+    def _display_gray4(self, frame: Gray4Frame, should_abort=None):
+        """Refresh both planes with the 4-gray waveform.
+
+        ``frame.previous`` is command 0x10 and ``frame.current`` is command
+        0x13. Together they are the 2-bit gray code, so this path does not run
+        the 1-bit differential (that would read the gray bits as an old/new
+        pair and wipe the gray). The window is the full frame, matching
+        ``_setPartialRamArea(0, 0, width, height)`` in GxEPD2_290_I6FD. The
+        frame becomes the partial baseline only once the refresh completes.
+        """
+        self._program_gray4()
+        self.send_command(0x91)
+        self.send_command(0x90)
+        self.send_data(0)
+        self.send_data((self.width - 1) | 0x0007)
+        self.send_data(0)
+        self.send_data(0)
+        self.send_data((self.height - 1) >> 8)
+        self.send_data((self.height - 1) & 0xFF)
+        self.send_data(0x01)
+        self.send_command(0x10)
+        self.send_data2(list(frame.previous))
+        self.send_command(0x13)
+        self.send_data2(list(frame.current))
+        self.send_command(0x92)
+        self.TurnOnDisplay(should_abort=should_abort)
+        self._shown_gray = frame
+        # The fast partial compares 1-bit frames. Its old plane is the
+        # quantization of the gray image just shown, not the gray current
+        # plane: that plane differs from the previous plane on every gray
+        # pixel, and the partial LUT would drive those pixels.
+        self.buffer = list(frame.mono)
+
     def display(self, image, should_abort=None):
+        if self.partial_only:
+            # The scheduler asks for a full refresh on screen changes. This
+            # switch means that request is still the fast partial.
+            self.DisplayPartial(image, should_abort)
+            return
+        if self.gray_levels == 4:
+            # A full refresh on this glass is the 4-gray waveform, even when
+            # only black and white changed. The 1-bit full path below writes
+            # 0x00 to 0x10, which the gray tables read as dark gray or black,
+            # and its OTP waveform drives every gray pixel to black or white.
+            self._display_gray4(self._as_gray_frame(image), should_abort)
+            return
         # Wake the panel in case it was parked (powered off) after a prior
         # refresh. Harmless if init() already powered it on this cycle.
         self.send_command(0x04)
@@ -608,13 +787,25 @@ class EPD:
         self.red_buffer = self._red_blank()
         self.TurnOnDisplay()
 
-    def DisplayPartial(self, image):
+    def DisplayPartial(self, image, should_abort=None):
         """
         Display partial refresh following Waveshare pattern.
         
         Args:
             image: Buffer containing the new/current content (sent to 0x13)
+            should_abort: optional predicate forwarded to the refresh wait
         """
+        gray_frame = None
+        if self.gray_levels == 4:
+            gray_frame = self._as_gray_frame(image)
+            if not self._partial_keeps_gray(gray_frame):
+                self._display_gray4(gray_frame, should_abort)
+                return
+            # GxEPD2_4G mixed update: fast partial on top of gray. The partial
+            # compares the 1-bit quantization, where every gray pixel is equal
+            # in the old and new frames.
+            image = list(gray_frame.mono)
+
         if self.three_color:
             # Tri-color panel: route the B/W frame to the B/W channel and keep
             # the red channel blank (see _display_bw_fast). Never reuse the mono
@@ -651,10 +842,24 @@ class EPD:
         # Store image as buffer for next partial refresh
         self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
 
-        self.TurnOnDisplay()
+        self.TurnOnDisplay(should_abort=should_abort)
+        if gray_frame is not None:
+            self._shown_gray = gray_frame
 
     def Clear(self):
         print("Clearing display")
+        white = [0xFF] * int(self.width * self.height / 8)
+        if self.partial_only:
+            # The partial LUT drives only pixels whose old and new bits differ.
+            # An all-black old plane makes every pixel a black-to-white
+            # transition, so the whole glass is driven to white. White as the
+            # old plane would drive nothing and leave the previous image.
+            self.buffer = [0x00] * len(white)
+            self.DisplayPartial(white)
+            return
+        if self.gray_levels == 4:
+            self._display_gray4(gray4_frame_from_mono(white))
+            return
         # Wake the panel in case it was parked (powered off) after a prior
         # refresh. Harmless if init() already powered it on this cycle.
         self.send_command(0x04)

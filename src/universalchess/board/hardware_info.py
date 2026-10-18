@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from universalchess.board import profile, wireless_capability
+from universalchess.epaper.framework.waveshare import panel_models
 from universalchess.managers import bluez_patch_status
 from universalchess.paths import TMP_DIR
 
@@ -79,16 +80,16 @@ DISPLAY_HEIGHT_PX = 296
 # the DGT Centaur board generation (UC8151D=V2, SSD1680/IL3820=V1).
 DISPLAY_MODEL_SSD1680 = 'Waveshare 2.9" e-Paper (DGT Centaur V1 panel)'
 
-# Map each known controller to the (driver_module, panel_model) it implies. The
-# board may fall back from the default UC8151D (V2) to the SSD1680 (V1) driver at
-# startup, so the System card must report the controller that *actually* drove
-# the panel -- read from the status file's ``active_controller`` -- not the
-# configured default. Keys mirror display_selection.CONTROLLER_* (kept as plain
-# strings so the web process needs no import from the RPi.GPIO-dependent driver
-# modules).
-_CONTROLLER_VARIANTS = {
-    DISPLAY_CONTROLLER: (DISPLAY_DRIVER, DISPLAY_MODEL),
-    "SSD1680": ("epd2in9_ssd1680", DISPLAY_MODEL_SSD1680),
+# Map each Centaur controller the Automatic probe can find to the
+# (driver_module, panel_model) it implies. The board may fall back from the
+# default UC8151D (V2) to the SSD1680 (V1) driver at startup, so the System card
+# must report the controller that *actually* drove the panel -- read from the
+# status file's ``active_controller`` -- not the configured default. A
+# replacement panel is named from ``panel_models`` by the recorded panel key,
+# whose native size is also the one the System card reports.
+_CENTAUR_VARIANTS = {
+    panel_models.CONTROLLER_UC8151D: (DISPLAY_DRIVER, DISPLAY_MODEL),
+    panel_models.CONTROLLER_SSD1680: ("epd2in9_ssd1680", DISPLAY_MODEL_SSD1680),
 }
 
 # --- display operational status -------------------------------------------
@@ -736,20 +737,27 @@ def derive_display_status(status_raw: Optional[dict]) -> tuple[str, str]:
     return DISPLAY_FAILED, "Panel did not initialize (no response on the BUSY line)."
 
 
-def resolve_active_display(active_controller: Optional[str]) -> tuple[str, str, str]:
+def resolve_active_display(
+    active_controller: Optional[str], panel_key: Optional[str] = None,
+) -> tuple[str, str, str]:
     """Return ``(controller, driver_module, panel_model)`` for the live panel.
 
-    Maps the board-reported ``active_controller`` to the driver module and panel
-    model it implies, so the System card reports what actually drove the panel
-    (e.g. the SSD1680 V1 fallback, named a "V1 panel") rather than the configured
-    UC8151D / V2 default. Falls back to the configured default when the board has
-    not reported yet (status file missing) or reported a controller this table
-    does not know -- the card then shows the expected identity instead of a blank
-    or a fabricated name.
+    A replacement panel recorded as ``panel_key`` reports its own chip, driver
+    and name; GDEY029T94 shares the SSD1680 with the V1 glass and must not be
+    named a V1 panel. Otherwise the board-reported ``active_controller`` is a
+    Centaur controller the Automatic probe found, so the System card reports
+    what actually drove the panel (e.g. the SSD1680 V1 fallback, named a
+    "V1 panel") rather than the configured UC8151D / V2 default. Falls back to
+    the configured default when the board has not reported yet (status file
+    missing) or reported a controller this table does not know -- the card then
+    shows the expected identity instead of a blank or a fabricated name.
     """
-    if active_controller and active_controller in _CONTROLLER_VARIANTS:
-        driver, model = _CONTROLLER_VARIANTS[active_controller]
-        return active_controller, driver, model
+    model = panel_models.get_model(panel_key)
+    if model.explicit:
+        return model.controller, model.driver_module, model.system_model
+    if active_controller in _CENTAUR_VARIANTS:
+        driver, name = _CENTAUR_VARIANTS[active_controller]
+        return active_controller, driver, name
     return DISPLAY_CONTROLLER, DISPLAY_DRIVER, DISPLAY_MODEL
 
 
@@ -788,8 +796,9 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
     display_status, display_detail = derive_display_status(status_raw)
     busy_timeout = bool(status_raw.get("busy_timeout")) if status_raw else False
     active_controller = status_raw.get("active_controller") if status_raw else None
+    panel = panel_models.get_model(status_raw.get("panel") if status_raw else None)
     display_controller, display_driver, display_model = resolve_active_display(
-        active_controller
+        active_controller, panel.key
     )
 
     os_pretty_name, os_variant = derive_os_identity(
@@ -815,7 +824,7 @@ def collect_hardware_info(source: HardwareInfoSource) -> HardwareInfo:
         display_model=display_model,
         display_controller=display_controller,
         display_driver=display_driver,
-        display_resolution=format_resolution(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX),
+        display_resolution=format_resolution(panel.native_width, panel.native_height),
         display_status=display_status,
         display_detail=display_detail,
         display_busy_timeout=busy_timeout,
@@ -889,6 +898,7 @@ def write_display_status(
     error: Optional[str] = None,
     busy_timeout: bool = False,
     controller: Optional[str] = None,
+    panel: str = panel_models.PANEL_AUTO,
 ) -> None:
     """Record the e-paper startup outcome for the (separate) web process.
 
@@ -905,6 +915,9 @@ def write_display_status(
             V1-panel signature). Gates the web UI's IL3820 opt-in.
         controller: the controller that drove the panel (e.g. "SSD1680"), or
             None when disabled.
+        panel: the ``[display] panel`` key that was driven. Several glasses
+            share a controller chip, so the chip alone does not say whether
+            the Automatic probe found Centaur glass.
 
     Best-effort: a write failure is logged but never aborts board startup. The
     file is truncated on each write so a prior boot's result never lingers.
@@ -914,6 +927,7 @@ def write_display_status(
         "error": error,
         "busy_timeout": bool(busy_timeout),
         "active_controller": controller,
+        "panel": panel,
         "written_at": time.time(),
     }
     try:

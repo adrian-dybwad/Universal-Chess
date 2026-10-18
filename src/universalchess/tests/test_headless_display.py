@@ -35,6 +35,7 @@ from universalchess.app.pending_work import PendingWork
 from universalchess.board import board
 from universalchess.board.display_selection import DisplayAttempt
 from universalchess.epaper.framework.manager import Manager
+from universalchess.epaper.framework.waveshare.panel_models import PanelDriver
 from universalchess.epaper.framework.widget import Widget
 from universalchess.services import chromecast, event_log
 
@@ -57,12 +58,11 @@ INK_BOX = (0, 0, 40, 60)
 BLACK = 0
 
 
-class _Panel:
+class _Panel(PanelDriver):
     """EPD stand-in that records every call that would reach the hardware."""
 
     width = PANEL_WIDTH
     height = PANEL_HEIGHT
-    gray_levels = 1
     three_color = False
 
     def __init__(self, init_result: int):

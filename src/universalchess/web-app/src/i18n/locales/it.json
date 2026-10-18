@@ -855,6 +855,17 @@
       "threeColorOn": "Modo tre colori acceso. Gli evidenziatori rossi si aggiornano in ~12-15 s; le mosse normali restano veloci.",
       "applied": "Applicato. Il pannello si è aggiornato con la nuova impostazione.",
       "updateFailed": "Impossibile aggiornare il waveform del display.",
+      "panelLabel": "Pannello",
+      "panelHelp": "Il modulo e-paper collegato alla scacchiera. Automatico sonda i controller Centaur V1 e V2. Scegli un modello Good Display quando è collegato esattamente quel pannello, perché ogni modello ha il proprio controller e le proprie tensioni. La modifica reinizializza il pannello subito.",
+      "panelSource": "Sorgente di init:",
+      "titleFixed": "Regolazione del display",
+      "descriptionFixed": "Questo pannello usa la sequenza di inizializzazione del produttore. La schermata degli scacchi è disegnata in bianco e nero a 128×296 e scalata quando il vetro è 168×384. I pannelli a quattro colori si aggiornano con un refresh completo (circa 11 secondi per il GDEY029F52, circa 25 secondi per il GDEY029F51H). La modalità a tre colori dipinge in inchiostro rosso le evidenziazioni rosse già previste. L'inchiostro giallo non è usato.",
+      "titleBwr": "Regolazione del display",
+      "descriptionBwr": "Questo pannello è nero, bianco e rosso a 128×296. Un refresh completo (circa 16 secondi) aggiorna l'inchiostro rosso. Il refresh parziale (circa 1,5 secondi) aggiorna solo bianco e nero; l'inchiostro rosso resta fino al refresh completo successivo. La modalità a tre colori dipinge in inchiostro rosso le evidenziazioni rosse già previste.",
+      "titleGray": "Regolazione del display",
+      "descriptionGray": "Questo pannello usa quattro livelli di grigio: bianco, grigio chiaro, grigio scuro e nero. Le tonalità che sugli altri pannelli sono un dithering sono qui un grigio uniforme. Un cambiamento di grigio aggiorna l'intero pannello (circa 3 secondi). L'orologio usa il refresh parziale veloce (circa 0,3 secondi) e lascia il grigio al suo posto.",
+      "partialOnlyLabel": "Solo refresh parziale",
+      "partialOnlyHelp": "Ogni aggiornamento usa il refresh parziale veloce (circa 0,3 secondi), mosse comprese. I grigi sono disegnati con un dithering. Disattivalo per usare i quattro livelli di grigio; cambiare un grigio richiede allora circa 3 secondi.",
       "networkError": "Errore di rete"
     },
     "centaur": {

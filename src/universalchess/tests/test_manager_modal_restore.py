@@ -22,6 +22,7 @@ import pytest
 
 from universalchess.epaper.framework import manager as manager_module
 from universalchess.epaper.framework.manager import Manager
+from universalchess.epaper.framework.waveshare.panel_models import PanelDriver
 from universalchess.epaper.framework.widget import Widget
 
 STATUS_BAR_HEIGHT = 16
@@ -29,7 +30,7 @@ PANEL_WIDTH = 128
 PANEL_HEIGHT = 296
 
 
-class _FakePanel:
+class _FakePanel(PanelDriver):
     """Minimal EPD stand-in: only geometry and mono mode are needed here."""
 
     width = PANEL_WIDTH

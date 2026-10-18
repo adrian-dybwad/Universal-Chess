@@ -38,12 +38,16 @@ init()-returns-(-1) contract holds for both drivers.
 
 import logging
 import time
+from typing import Optional
 
 from . import epd2in9d, epdconfig
 from .epd2in9d import EPDTimeoutError, RefreshInterrupted, mask_bw_with_red
+from .panel_models import PanelDriver, PanelModel
 from .waveform_profiles import (
     CONTROLLER_SSD16XX,
     DRIVER_DKE_SSD1680,
+    DRIVER_GDEY029T94,
+    DRIVER_GDEY029Z95,
     DRIVER_IL3820,
     WaveformProfile,
     get_profile,
@@ -100,8 +104,8 @@ SSD1680_BWR_COLOR_ACTIVATION = 0xF7
 REFRESH_TIMEOUT_SECONDS = 30.0
 
 
-class EPD:
-    """SSD1680 panel driver exposing the framework's EPD interface."""
+class EPD(PanelDriver):
+    """SSD1680 driver: the Centaur V1 glass, or GDEY029T94 / GDEY029Z95 when given."""
 
     # Controller family (waveform_profiles.CONTROLLER_*). The live profile-apply
     # path (main._process_pending_display_profile) reads this to resolve the
@@ -113,7 +117,8 @@ class EPD:
     CONTROLLER = CONTROLLER_SSD16XX
 
     def __init__(self, profile: WaveformProfile = None, high_contrast: bool = False,
-                 three_color: bool = False):
+                 three_color: bool = False, panel: Optional[PanelModel] = None):
+        self._adopt_panel(panel)
         self.reset_pin = epdconfig.RST_PIN
         self.dc_pin = epdconfig.DC_PIN
         self.busy_pin = epdconfig.BUSY_PIN
@@ -145,6 +150,10 @@ class EPD:
         # init()'s SWRESET wipes 0x26, so a partial cannot rely on a baseline the
         # controller "remembers".
         self.buffer = [0xFF] * int(self.width * self.height / 8)
+        # GDEY029Z95 partials (activation 0x1C) follow the vendor basemap. init()
+        # clears this; the first partial pays for EPD_SetRAMValue_BaseMap (0xF4),
+        # and later partials only write the new black/white frame to 0x24.
+        self._z95_basemap_ready = False
         # Last RED frame sent to the panel (three-color mode), in getbuffer_red
         # mask space (red = 0 bit, no-red = 0xFF byte). Re-sent to 0x26 so a fast
         # B/W refresh leaves the red layer defined. Polarity to the panel is
@@ -309,12 +318,30 @@ class EPD:
         """
         if self.profile.driver == DRIVER_IL3820:
             return 0xC4
+        if self.profile.driver == DRIVER_GDEY029T94:
+            # GxEPD2 _Update_Full (useFastFullUpdate): temperature 0x64, then
+            # 0xD7. The temperature write itself is in TurnOnDisplay.
+            return 0xD7
+        if self.profile.driver == DRIVER_GDEY029Z95:
+            # Good Display EPD_Update: the full tri-color OTP waveform.
+            return SSD1680_BWR_COLOR_ACTIVATION
         if self.profile.driver == DRIVER_DKE_SSD1680 or self.profile.use_otp:
             return 0xF7
         return 0xC7
 
     def TurnOnDisplay(self, should_abort=None):
         """Trigger a full refresh (load LUT/temp + activate) for this driver."""
+        if self.profile.driver == DRIVER_GDEY029T94:
+            # GxEPD2 GxEPD2_290_GDEY029T94::_Update_Full, fast path. The fixed
+            # temperature 0x64 selects the panel's fast OTP waveform; 0xD7
+            # then runs it. This is not the register-LUT 0xC7 path.
+            self.send_command(0x1A)
+            self.send_data(0x64)
+            self.send_command(0x22)
+            self.send_data(0xD7)
+            self.send_command(0x20)
+            self.ReadBusy(REFRESH_TIMEOUT_SECONDS, should_abort=should_abort)
+            return
         self.send_command(0x22)  # display update control 2
         self.send_data(self._full_activation_byte())
         self.send_command(0x20)  # master activation
@@ -404,6 +431,8 @@ class EPD:
                 self._init_il3820()
             elif self.profile.driver == DRIVER_DKE_SSD1680:
                 self._init_dke()
+            elif self.profile.driver == DRIVER_GDEY029Z95:
+                self._init_gdey029z95()
             else:
                 self._init_ssd1680()
         except EPDTimeoutError as e:
@@ -465,7 +494,8 @@ class EPD:
         self.SetCursor(0, 0)
         self.ReadBusy()
 
-        if not self.profile.use_otp:
+        # GDEY029T94 drives both refreshes from OTP (GxEPD2 loads no 0x32 LUT).
+        if self.profile.driver != DRIVER_GDEY029T94 and not self.profile.use_otp:
             self.SetLut(self.profile.full_lut)
 
         # high_contrast runs LAST so its harder source/VCOM voltages override
@@ -606,6 +636,9 @@ class EPD:
         pixel is never driven both black and red (which renders muddy). Both planes
         are stored so a subsequent fast B/W partial can leave 0x26 defined.
         """
+        if self.profile.driver == DRIVER_GDEY029Z95:
+            self._z95_full_refresh(mask_bw_with_red(bw_buf, red_buf), red_buf, should_abort)
+            return
         bw_masked = mask_bw_with_red(bw_buf, red_buf)
         red_set = sum(1 for b in red_buf if b != 0xFF)
         log.info(
@@ -750,6 +783,144 @@ class EPD:
         self.TurnOnDisplayPart()
         self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
 
+    def _z95_scanned(self, buf):
+        """Row-reverse a 1-bit frame for GDEY029Z95 data entry 0x01.
+
+        The vendor init sets the RAM cursor at Y = height-1 and decrements Y,
+        so the first transmitted byte lands on the last row. The chess frame's
+        first byte is the top row. Reversing rows keeps that top row on Y = 0,
+        which is the top on the other 128×296 panels.
+        """
+        stride = self.width // 8
+        rows = [buf[i:i + stride] for i in range(0, len(buf), stride)]
+        scanned = []
+        for row in reversed(rows):
+            scanned.extend(row)
+        return scanned
+
+    def _z95_set_full_window(self):
+        """RAM window from Good Display ``EPD_HW_Init`` (Y starts at the bottom)."""
+        self.send_command(0x44)
+        self.send_data(0x00)
+        self.send_data(self.width // 8 - 1)
+        self.send_command(0x45)
+        self.send_data((self.height - 1) % 256)
+        self.send_data((self.height - 1) // 256)
+        self.send_data(0x00)
+        self.send_data(0x00)
+        self.send_command(0x4E)
+        self.send_data(0x00)
+        self.send_command(0x4F)
+        self.send_data((self.height - 1) % 256)
+        self.send_data((self.height - 1) // 256)
+
+    def _init_gdey029z95(self):
+        """GDEY029Z95 init, from the vendor Arduino demo ``EPD_HW_Init``.
+
+        No register LUT. Data entry is 0x01 (X increment, Y decrement), and the
+        Y window runs from 295 down to 0. BUSY is active-high, same as the
+        other SSD1680 panels. The experimental high-contrast voltages are not
+        in this demo and are not applied.
+        """
+        self._z95_basemap_ready = False
+        self.ReadBusy()
+        self.send_command(0x12)  # SWRESET
+        self.ReadBusy(require_activity=not self._busy_activity_confirmed)
+        self.send_command(0x01)  # driver output control
+        self.send_data((self.height - 1) % 256)
+        self.send_data((self.height - 1) // 256)
+        self.send_data(0x00)
+        self.send_command(0x11)  # data entry mode: X+, Y-
+        self.send_data(0x01)
+        self._z95_set_full_window()
+        self.send_command(0x3C)  # border waveform
+        self.send_data(0x05)
+        self.send_command(0x21)  # display update control 1
+        self.send_data(0x00)
+        self.send_data(0x80)
+        self.send_command(0x18)  # internal temperature sensor
+        self.send_data(0x80)
+        self._z95_set_full_window()
+        self.ReadBusy()
+
+    def _z95_full_refresh(self, bw_buf, red_buf, should_abort):
+        """Full tri-color refresh: B/W -> 0x24, inverted red -> 0x26, activate 0xF7.
+
+        Transcribed from ``EPD_WhiteScreen_ALL`` + ``EPD_Update``. A white
+        screen in that demo is 0xFF on 0x24 and 0x00 on 0x26, which is the
+        inverted no-red mask. Writing the B/W image into 0x26 would paint the
+        white pixels red.
+        """
+        self._z95_basemap_ready = False
+        self._z95_set_full_window()
+        self.send_command(0x24)
+        self.send_data2(self._z95_scanned(bw_buf))
+        self.send_command(0x26)
+        self.send_data2(self._z95_scanned(self._red_for_panel(red_buf)))
+        self.send_command(0x22)
+        self.send_data(SSD1680_BWR_COLOR_ACTIVATION)
+        self.send_command(0x20)
+        self.ReadBusy(REFRESH_TIMEOUT_SECONDS, should_abort=should_abort)
+        self.buffer = list(bw_buf)
+        self.red_buffer = list(red_buf)
+
+    def _z95_basemap(self, bw_buf, red_buf):
+        """One-time partial baseline, from ``EPD_SetRAMValue_BaseMap``.
+
+        The 0xF4 update displays the frame. The following RAM writes are not
+        refreshed; they are the baseline the 0x1C partial waveform diffs
+        against. The vendor demo says skipping this makes partials unstable.
+        The 0x26 write of the black/white frame, overwritten two writes later,
+        is in the vendor sequence (AU-GDEY029Z95-FP-20240819) and is kept to
+        match it byte for byte.
+        """
+        self._z95_set_full_window()
+        self.send_command(0x24)
+        self.send_data2(self._z95_scanned(bw_buf))
+        self.send_command(0x26)
+        self.send_data2(self._z95_scanned(self._red_for_panel(red_buf)))
+        self.send_command(0x22)
+        self.send_data(0xF4)
+        self.send_command(0x20)
+        self.ReadBusy(REFRESH_TIMEOUT_SECONDS)
+        scanned_bw = self._z95_scanned(bw_buf)
+        self._z95_set_full_window()
+        self.send_command(0x26)
+        self.send_data2(scanned_bw)
+        anded = [(bw & red) & 0xFF for bw, red in zip(bw_buf, red_buf)]
+        scanned_and = self._z95_scanned(anded)
+        self._z95_set_full_window()
+        self.send_command(0x24)
+        self.send_data2(scanned_and)
+        self.send_command(0x26)
+        self.send_data2(scanned_and)
+        self._z95_basemap_ready = True
+        self.buffer = list(bw_buf)
+        self.red_buffer = list(red_buf)
+
+    def _display_partial_gdey029z95(self, image):
+        """B/W partial: new frame -> 0x24, activate 0x1C.
+
+        Transcribed from ``EPD_Dis_Part`` / ``EPD_Part_Update``. Red is not
+        updated; the product's 1.5 s partial is black and white only. The
+        first partial after init runs the basemap instead, which already
+        displays this frame.
+        """
+        red = self.red_buffer if self.three_color else self._red_blank()
+        bw = mask_bw_with_red(image, red) if self.three_color else image
+        if not self._z95_basemap_ready:
+            log.info("[EPD SSD1680] GDEY029Z95 basemap (0xF4) before partial")
+            self._z95_basemap(bw, red)
+            return
+        self._z95_set_full_window()
+        self.send_command(0x24)
+        self.send_data2(self._z95_scanned(bw))
+        self.send_command(0x22)
+        self.send_data(0x1C)
+        self.send_command(0x20)
+        self.ReadBusy(REFRESH_TIMEOUT_SECONDS)
+        self.buffer = list(bw)
+
     def display(self, image, should_abort=None):
         """Full refresh, and set the partial-refresh baseline.
 
@@ -760,6 +931,11 @@ class EPD:
         should_abort is forwarded to the refresh wait so a newer queued frame can
         interrupt this full refresh (the scheduler then restarts with new data).
         """
+        if self.profile.driver == DRIVER_GDEY029Z95:
+            # 0x26 is the red plane under 0xF7. The no-red byte on the wire is
+            # 0x00 (vendor EPD_WhiteScreen_White), not a copy of the B/W image.
+            self._z95_full_refresh(image, self._red_blank(), should_abort)
+            return
         log.info("[EPD SSD1680] mono FULL refresh: profile=%s activation=0x%02X",
                  self.profile.key, self._full_activation_byte())
         self.send_command(0x24)  # write RAM (current)
@@ -819,6 +995,9 @@ class EPD:
         partial with red pixels masked white, so their bistable red is held by the
         LUT hold phase (full tri-color refreshes go through display_color).
         """
+        if self.profile.driver == DRIVER_GDEY029Z95:
+            self._display_partial_gdey029z95(image)
+            return
         if self.three_color:
             self._display_bw_fast(image)
             return
@@ -827,6 +1006,9 @@ class EPD:
             return
         if self.profile.driver == DRIVER_DKE_SSD1680:
             self._display_partial_dke(image)
+            return
+        if self.profile.driver == DRIVER_GDEY029T94:
+            self._display_partial_gdey029t94(image)
             return
         if self.profile.use_otp:
             log.info("[EPD SSD1680] partial requested but profile use_otp=True "
@@ -850,6 +1032,21 @@ class EPD:
         self.send_data(0x04)     # IL3820 partial activation
         self.send_command(0x20)  # master activation
         self.ReadBusy()
+        self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
+
+    def _display_partial_gdey029t94(self, image):
+        """GDEY029T94 OTP partial: previous -> 0x26, new -> 0x24, activate 0xFC.
+
+        Transcribed from GxEPD2 ``GxEPD2_290_GDEY029T94::_Update_Part``. No
+        register LUT is loaded. 0x26 is still re-seeded with the frame on the
+        glass (see ``_write_partial_rams``): the OTP partial waveform is
+        differential, and a SWRESET between refreshes clears that bank.
+        """
+        self._write_partial_rams(image)
+        self.send_command(0x22)
+        self.send_data(0xFC)
+        self.send_command(0x20)
+        self.ReadBusy(REFRESH_TIMEOUT_SECONDS)
         self.buffer = image.copy() if hasattr(image, 'copy') else list(image)
 
     def _display_partial_dke(self, image):
@@ -876,6 +1073,12 @@ class EPD:
         OTP activation clears both planes -- writing the B/W blank to 0x26 here
         would paint the whole panel red.
         """
+        if self.profile.driver == DRIVER_GDEY029Z95:
+            # Vendor white clear: 0x24 = 0xFF, 0x26 = 0x00, activation 0xF7.
+            # The mono Clear below would write 0xFF into the red plane.
+            white = [0xFF] * int(self.width * self.height / 8)
+            self._z95_full_refresh(white, self._red_blank(), None)
+            return
         activation = SSD1680_BWR_COLOR_ACTIVATION if self.three_color else self._full_activation_byte()
         log.info("[EPD SSD1680] Clear: three_color=%s profile=%s activation=0x%02X",
                  self.three_color, self.profile.key, activation)

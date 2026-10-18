@@ -113,6 +113,17 @@ class TestHintExtraction(unittest.TestCase):
             with self.subTest(status=status):
                 self.assertIsNone(ds.hint_from_status(status))
 
+    def test_a_replacement_panel_boot_is_not_a_centaur_hint(self):
+        # Why: GDEY029T94 records controller SSD1680 with its panel key. That
+        # says nothing about which Centaur glass Automatic will find. How a
+        # regression manifests: the hint is SSD1680, so the next Automatic boot
+        # probes the V1 driver first on a V2 panel.
+        status = {"initialized": True, "busy_timeout": False,
+                  "active_controller": _SSD, "panel": "gdey029t94"}
+        self.assertIsNone(ds.hint_from_status(status))
+        status["panel"] = "auto"
+        self.assertEqual(ds.hint_from_status(status), _SSD)
+
 
 class TestFallbackIsPreservedUnderHinting(unittest.TestCase):
     """A hint must never remove the escape route to the other controller."""

@@ -848,6 +848,17 @@
       "threeColorOn": "Driekleurmodus aan. Rode markeringen verversen in ~12-15 s; normale zetten blijven snel.",
       "applied": "Toegepast. Het paneel is met de nieuwe instelling ververst.",
       "updateFailed": "De waveform van het scherm kon niet worden gewijzigd.",
+      "panelLabel": "Paneel",
+      "panelHelp": "De e-papermodule die op het bord is aangesloten. Automatisch peilt de Centaur-controllers V1 en V2. Kies een Good Display-model wanneer precies dat paneel is aangesloten, want elk model heeft een eigen controller en spanningen. De wijziging initialiseert het paneel meteen opnieuw.",
+      "panelSource": "Init-bron:",
+      "titleFixed": "Schermafstemming",
+      "descriptionFixed": "Dit paneel gebruikt de initialisatiereeks van de fabrikant. Het schaakscherm wordt in zwart-wit op 128×296 getekend en geschaald wanneer het glas 168×384 is. Vierkleurenpanelen verversen in één volledige verversing (ongeveer 11 seconden voor de GDEY029F52, ongeveer 25 seconden voor de GDEY029F51H). De driekleurenmodus tekent de bestaande rode markeringen in rode inkt. Gele inkt wordt niet gebruikt.",
+      "titleBwr": "Schermafstemming",
+      "descriptionBwr": "Dit paneel is zwart, wit en rood op 128×296. Een volledige verversing (ongeveer 16 seconden) werkt de rode inkt bij. Een gedeeltelijke verversing (ongeveer 1,5 seconde) werkt alleen zwart en wit bij; de rode inkt blijft tot de volgende volledige verversing. De driekleurenmodus tekent de bestaande rode markeringen in rode inkt.",
+      "titleGray": "Schermafstemming",
+      "descriptionGray": "Dit paneel gebruikt vier grijstinten: wit, lichtgrijs, donkergrijs en zwart. Tinten die op andere panelen een raster zijn, zijn hier een egaal grijs. Een wijziging van een grijstint ververst het hele paneel (ongeveer 3 seconden). De klok gebruikt de snelle gedeeltelijke verversing (ongeveer 0,3 seconde) en laat het grijs staan.",
+      "partialOnlyLabel": "Alleen gedeeltelijke verversing",
+      "partialOnlyHelp": "Elke update gebruikt de snelle gedeeltelijke verversing (ongeveer 0,3 seconde), ook zetten. Grijstinten worden als raster getekend. Zet dit uit om de vier grijstinten te gebruiken; een wijziging van een grijstint duurt dan ongeveer 3 seconden.",
       "networkError": "Netwerkfout"
     },
     "centaur": {

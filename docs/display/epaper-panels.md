@@ -181,6 +181,23 @@ panel was detected. The selection is stored in
 controllers; each driver resolves it against its own family, falling back to that
 controller's verified default for a mismatched key — e.g. after a panel swap).
 
+A replacement panel's recipe (`gdey029t94`, `gdey029z95`) is bound to that
+panel (`WaveformProfile.panel`). Automatic never lists, accepts, or loads it,
+even though it shares the SSD16xx family with the V1 glass.
+`panel_models.waveform_for` is the one rule the boot builders, the live
+apply, and the web card use to pick the waveform, so a live change and the
+next boot load the same table. GDEY029Z95 lists the Centaur SSD1680
+waveforms beside its vendor recipe: the SSD1680 driver picks its command
+sequence from the waveform, so a Centaur table on that panel runs the same
+path, including the Waveshare `epd2in9b_V4` three-color refresh, as
+Automatic does on that glass. A panel without a dropdown (GDEW029I6FD,
+GDEY029T71H, the four-color glasses) rejects a waveform POST.
+
+The display-status file records the controller chip and the panel key.
+Several glasses share a chip, so the key is what tells the System card, the
+waveform family, and the next boot's probe hint whether the Automatic probe
+found Centaur glass. Only an Automatic boot seeds the hint.
+
 ### Live apply (no reboot)
 Selecting a profile (or toggling high contrast) **takes effect immediately**:
 
@@ -220,7 +237,12 @@ length** (second LUT byte) plus VCOM_DC (`0x82`) / interval (`0x50`).
 The `uc8151d_waveshare` default emits the stock partial sequence byte-for-byte
 (pinned by `DefaultProfilePreservesStockPartialTests` in
 `tests/test_epd_uc8151d.py`), so a working V2 panel is unchanged. I6FD/T5D **skip
-the PLL write** (`0x30`), matching GxEPD2's partial init exactly.
+the PLL write** (`0x30`), matching GxEPD2's partial init exactly. On the
+GDEW029I6FD panel this partial profile is the fast black-and-white update. A
+change that touches a gray level loads the GxEPD2_4G tables instead. Settings
+offers a Partial refresh only switch for this panel. While it is on, gray
+drawing is off and every refresh, including one the scheduler requested as
+full, uses this partial waveform.
 
 **Built-In behavior:** if the OTP holds a valid waveform the image renders
 (possibly cleaner) but all updates are full-screen flashes; if the OTP is
@@ -273,6 +295,14 @@ least-characterized combination).
 high contrast should be enabled only briefly.
 
 ## Three-color (red/white/black) mode
+
+The switch is offered, saved on, and passed to a driver only for a panel
+choice whose glass has red ink: GDEY029Z95, GDEY029F51H and GDEY029F52
+(`PanelModel.three_color_supported`). Automatic, GDEY029T94, GDEW029I6FD and
+GDEY029T71H are black and white; the builders and the live path ignore a
+switch left on from another panel, and the web POST rejects turning it on
+there. The SSD1680 BWR path below runs when GDEY029Z95 is selected with a
+Centaur SSD1680 waveform; the UC8151D BWR path is not reachable from Settings.
 
 Some 2.9" panels are tri-color **BWR**. Both controller families have a BWR
 variant and both drivers implement three-color mode, because tri-color is a
@@ -354,6 +384,38 @@ the board. The live panel is SSD1680, so the SSD1680 driver is the one to tune
   (the registry is built for this; see its "Data integrity" note).
 - If a profile is confirmed to fix Panel 3 *and* verified non-harmful on Panel 2,
   consider promoting it to a revision-detected default rather than a manual choice.
+
+## Replacement Good Display modules
+
+Settings → Display tuning → Panel selects one of these. Automatic is the
+Centaur V1/V2 probe and does not try them: a wrong command set drives the
+glass with another controller's voltages. The chess UI stays 128×296; a
+168×384 panel receives that frame scaled with nearest-neighbor. Init bytes
+are transcribed from the cited source and are not adjusted.
+
+| SKU | Controller | Native size | Refresh | Source |
+|---|---|---|---|---|
+| GDEW029I6FD | UC8151D | 128×296 | 4-gray full ~3 s; partial ~0.3 s for black/white | GxEPD2_4G `GxEPD2_290_I6FD` `lut_*_4G` when a gray level changes. White, light gray, dark gray, and black are the two RAM planes (0x10 and 0x13). A black-and-white-only change (the clock) uses the `uc8151d_gdew029i6fd` partial LUT; unchanged gray pixels are a no-op on that LUT, which is the library's experimental mixed update. Every other panel keeps the 1-bit dither. |
+| GDEY029T94 | SSD1680 | 128×296 | fast full ~1.5 s, partial | GxEPD2 `GxEPD2_290_GDEY029T94`. OTP fast full writes temperature `0x64` then activates `0xD7`; partial activates `0xFC`. No register LUT. |
+| GDEY029Z95 | SSD1680 | 128×296 | full ~16 s, partial ~1.5 s black/white only | Good Display Arduino demo `EPD_HW_Init` (AU-GDEY029Z95). Data entry `0x01` (Y decrement); the chess frame is row-reversed so the top stays the top. Full activation `0xF7` (red ink). Partial activation `0x1C` after basemap `0xF4`. Red is not updated by the partial. |
+| GDEY029T71H | SSD1685 | 168×384 | partial ~0.3 s | GxEPD2 `GxEPD2_290_GDEY029T71H`. RAM window starts at source S8 (`SOURCE_SHIFT` 8). BUSY is active-high. |
+| GDEY029F51H | JD79667 | 168×384 | full ~25 s, no fast partial | GxEPD2 `GxEPD2_290c_GDEY029F51H`. 2-bit pixels on command `0x10`: black `00`, white `01`, yellow `10`, red `11`. |
+| GDEY029F52 | JD79661 | 128×296 | fast full ~11 s, no partial | Good Display Arduino demo `EPD_init_Fast` (AU-GDEY029F52). Same 2-bit packing. BUSY is active-low. |
+
+Four-color refreshes are one full update of the latest frame. Three-color
+mode maps the existing red highlights onto red ink. Yellow is not used.
+Every frame after the first one following init re-sends the register block
+without a reset, as GxEPD2 `GxEPD2_290c_GDEY029F51H::_refresh` does by
+clearing `_init_display_done`. Power-on `0x04` is dropped while the panel is
+still powered; the power goes off in idle sleep.
+
+Each driver subclasses `panel_models.PanelDriver` and takes its panel model
+in the constructor, so `PANEL_KEY`, `supports_partial`, `gray_levels` and
+the Partial refresh only switch come from the model rather than being set on
+the driver afterwards. Gray drawing follows the image mode: the framebuffer
+is 8-bit only while GDEW029I6FD is driven with four levels, widget sprites
+take the canvas mode, and `gray.draws_gray(image)` picks flat gray or the
+Bayer dither.
 
 ## Key source files
 

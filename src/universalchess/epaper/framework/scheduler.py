@@ -88,6 +88,9 @@ class Scheduler:
         # the first three-color frame. Used to detect when red appears, changes,
         # or clears so the slow full tri-color refresh runs only then.
         self._last_red_buffer = None
+        # Held while a refresh or idle sleep drives the panel, and by
+        # run_with_panel, so a live driver change never lands mid-refresh.
+        self._panel_lock = threading.RLock()
     
     def set_batch_updates(self, enabled: bool) -> None:
         """Enable/disable update batching live (no reboot).
@@ -108,6 +111,32 @@ class Scheduler:
         flag makes the next refresh re-init even when already in full mode.
         """
         self._force_reinit = True
+
+    def run_with_panel(self, operation):
+        """Run ``operation`` while no refresh or idle sleep is using the driver.
+
+        A refresh reads ``self._epd`` several times (init, getbuffer, display).
+        A driver change from another thread in the middle of that would send
+        part of one refresh with one command set and the rest with another.
+        Returns what ``operation`` returns.
+        """
+        with self._panel_lock:
+            return operation()
+
+    def adopt_initialized_epd(self, epd) -> None:
+        """Point later refreshes at a driver whose init() has just succeeded.
+
+        Call inside :meth:`run_with_panel`. Used when Display tuning selects
+        another panel. The driver's RAM baseline is not the frame on the glass,
+        so the next partial first establishes one; init() is not run again.
+        """
+        self._epd = epd
+        self._force_reinit = False
+        self._baseline_established = False
+        self._in_partial_mode = False
+        self._deep_asleep = False
+        self._last_red_buffer = None
+        self._partial_refresh_count = 0
 
     def start(self) -> None:
         """Start the refresh scheduler thread."""
@@ -256,7 +285,8 @@ class Scheduler:
         deep sleep. Errors are swallowed during shutdown races (SPI may be closing).
         """
         try:
-            self._epd.idle_sleep()
+            with self._panel_lock:
+                self._epd.idle_sleep()
         except Exception as e:
             error_msg = str(e).lower()
             is_shutdown_error = 'closed' in error_msg or 'uninitialized' in error_msg or 'gpio' in error_msg
@@ -318,12 +348,38 @@ class Scheduler:
                 traceback.print_exc()
     
     def _process_batch(self, batch: list) -> None:
+        """Process a batch of refresh requests, holding the panel lock throughout."""
+        with self._panel_lock:
+            self._refresh_batch(batch)
+
+    def _refresh_batch(self, batch: list) -> None:
         """Process a batch of refresh requests.
         
         Each item in the batch is processed separately to ensure rapid updates
         (like menu navigation) display all intermediate states, not just the final state.
         Each item carries its own image snapshot captured at render time.
         """
+        # Panels with no fast partial (the four-color glasses) cannot replay a
+        # burst: each refresh is a full update of 11–25 s. Coalesce to the last
+        # frame and always take the full path. Every driver states
+        # supports_partial through panel_models.PanelDriver.
+        if not self._epd.supports_partial:
+            if self._stop_event.is_set():
+                for item in batch:
+                    if not item[1].done():
+                        item[1].set_result("shutdown")
+                return
+            *superseded, last = batch
+            for s_full, s_future, _s_img, _s_red, _s_clock in superseded:
+                if not s_future.done():
+                    s_future.set_result("coalesced")
+            full, future, image, red_image, _clock = last
+            if getattr(self._epd, "three_color", False):
+                self._process_three_color(True, future, image, red_image)
+            else:
+                self._execute_full_refresh_single(True, future, image)
+            return
+
         # Three-color mode: COALESCE the batch to its final composite frame. Each
         # tri-color full refresh is ~14s, and one logical change (e.g. a single
         # move) emits several widget updates (board + clock + analysis + status),

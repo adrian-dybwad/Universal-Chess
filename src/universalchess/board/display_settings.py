@@ -44,6 +44,22 @@ def read_waveform_profile_key() -> str:
     return str(Settings.read('display', 'waveform_profile', '')).strip()
 
 
+def read_panel_key() -> str:
+    """Return the stored panel-model key, or ``auto`` when unset or unknown.
+
+    ``auto`` is the Centaur V1/V2 probe. An explicit Good Display key selects
+    that module's driver and does not fall through to another controller.
+    Unknown values degrade to ``auto`` so a stale key cannot select a driver
+    that was removed.
+    """
+    from universalchess.board.settings import Settings
+    from universalchess.epaper.framework.waveshare import panel_models
+    stored = str(Settings.read('display', 'panel', panel_models.PANEL_AUTO)).strip()
+    if panel_models.is_known_panel(stored):
+        return stored
+    return panel_models.PANEL_AUTO
+
+
 def read_selection() -> Tuple[str, bool]:
     """Return ``(waveform_profile_key, high_contrast)``, both as stored."""
     return read_waveform_profile_key(), read_flag('high_contrast')

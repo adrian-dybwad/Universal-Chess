@@ -260,7 +260,16 @@ class Widget(ABC):
         if self._background_shade == 0:
             # Pure white background - already white from Image.new()
             return
-        
+
+        from universalchess.epaper.gray import draws_gray, shade_luma
+        if draws_gray(sprite):
+            from PIL import ImageDraw
+            ImageDraw.Draw(sprite).rectangle(
+                (0, 0, self.width - 1, self.height - 1),
+                fill=shade_luma(self._background_shade),
+            )
+            return
+
         pattern = DITHER_PATTERNS.get(self._background_shade, DITHER_PATTERNS[0])
         pixels = sprite.load()
         for y in range(self.height):
@@ -289,9 +298,10 @@ class Widget(ABC):
         # calling invalidate_cache() between the check and the paste
         sprite = self._cached_sprite
         if sprite is None:
-            # Cache miss - render to new sprite
+            # Cache miss - render to new sprite, in the canvas mode so gray is
+            # drawn flat only on the 4-gray panel's 8-bit frame.
             generation = self._sprite_generation
-            sprite = Image.new('1', (self.width, self.height), 255)
+            sprite = Image.new(canvas.mode, (self.width, self.height), 255)
             self.render(sprite)
             # The position can change while render() is still drawing. Storing
             # the sprite then resurrects the picture invalidate_cache just threw

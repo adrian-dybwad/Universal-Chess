@@ -34,6 +34,7 @@ from PIL import Image
 
 from universalchess.epaper.framework.widget import Widget
 from universalchess.epaper.framework.manager import Manager
+from universalchess.epaper.framework.waveshare.panel_models import PanelDriver
 
 
 def _count_red(image):
@@ -140,7 +141,7 @@ class _FakeScheduler:
         pass
 
 
-class _FakeEpd:
+class _FakeEpd(PanelDriver):
     """Minimal EPD stand-in exposing only what Manager._do_update reads."""
 
     def __init__(self, three_color=False):

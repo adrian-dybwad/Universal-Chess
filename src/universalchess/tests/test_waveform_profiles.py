@@ -94,6 +94,8 @@ class WaveformProfileRegistryTests(unittest.TestCase):
             wp.DRIVER_SSD1680: {"full": EXPECTED_LUT_LEN, "partial": EXPECTED_LUT_LEN},
             wp.DRIVER_IL3820: {"full": 30, "partial": 30},
             wp.DRIVER_DKE_SSD1680: {"full": 0, "partial": 153},
+            wp.DRIVER_GDEY029T94: {"full": 0, "partial": 0},
+            wp.DRIVER_GDEY029Z95: {"full": 0, "partial": 0},
             wp.DRIVER_UC8151D: {"full": 0, "partial": 0},
         }
         for profile in wp.all_profiles():
@@ -210,6 +212,51 @@ class Uc8151dProfileTests(unittest.TestCase):
         self.assertTrue(wp.is_known_profile("uc8151d_t5d", wp.CONTROLLER_UC8151D))
         self.assertFalse(wp.is_known_profile("uc8151d_t5d", wp.CONTROLLER_SSD16XX))
         self.assertTrue(wp.is_known_profile("uc8151d_t5d"))  # no controller: any
+
+
+# Profiles transcribed for one replacement glass. Their init and activation
+# bytes belong to that module, not to the Centaur V1 panel of the same family.
+PANEL_BOUND_PROFILES = {"gdey029t94": "gdey029t94", "gdey029z95": "gdey029z95"}
+
+
+class PanelBoundProfileTests(unittest.TestCase):
+    """A replacement panel's recipe is offered and accepted only for that panel.
+
+    Why this exists: GDEY029T94 and GDEY029Z95 share the SSD16xx family with
+    the Centaur V1 panel. Filtering by family alone listed both in the V1
+    dropdown and accepted them, so the stock glass could be driven with the
+    Z95 tri-color sequence (0xF7 activation, Y-decrement data entry).
+
+    How a regression manifests: a panel-bound key appears in the stock
+    listing, validates for the stock glass, or loads there instead of the
+    family default; or it stops resolving for its own panel.
+    """
+
+    def test_stock_glass_neither_lists_nor_accepts_a_panel_bound_profile(self):
+        stock_keys = {p["key"] for p in wp.profiles_metadata(wp.CONTROLLER_SSD16XX)}
+        every_key = {p["key"] for p in wp.profiles_metadata()}
+        for key in PANEL_BOUND_PROFILES:
+            with self.subTest(key=key):
+                self.assertNotIn(key, stock_keys)
+                self.assertNotIn(key, every_key)
+                self.assertFalse(wp.is_known_profile(key, wp.CONTROLLER_SSD16XX))
+                self.assertFalse(wp.is_known_profile(key))
+                self.assertEqual(
+                    wp.get_profile(key, wp.CONTROLLER_SSD16XX).key,
+                    wp.DEFAULT_PROFILE_KEY_BY_CONTROLLER[wp.CONTROLLER_SSD16XX],
+                )
+        self.assertIn("gdem029t94", stock_keys)
+
+    def test_a_panel_bound_profile_resolves_only_for_its_own_panel(self):
+        for key, panel in PANEL_BOUND_PROFILES.items():
+            other = next(p for p in PANEL_BOUND_PROFILES.values() if p != panel)
+            with self.subTest(key=key):
+                own = {p["key"] for p in wp.profiles_metadata(wp.CONTROLLER_SSD16XX, panel=panel)}
+                self.assertIn(key, own)
+                self.assertIn("gdem029t94", own)
+                self.assertTrue(wp.is_known_profile(key, wp.CONTROLLER_SSD16XX, panel=panel))
+                self.assertEqual(wp.get_profile(key, wp.CONTROLLER_SSD16XX, panel=panel).key, key)
+                self.assertFalse(wp.is_known_profile(key, wp.CONTROLLER_SSD16XX, panel=other))
 
 
 if __name__ == "__main__":

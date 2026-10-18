@@ -890,6 +890,54 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   and build `no-syzygy` (no clang dependency). Prebuilt binaries are produced for
   arm64 and armhf.
 
+- **Good Display 2.9\" replacement panels**: Settings → Display tuning
+  can select GDEW029I6FD, GDEY029T94, GDEY029Z95, GDEY029T71H, GDEY029F51H,
+  or GDEY029F52. Automatic still probes the Centaur V1/V2 controllers and does
+  not try these, because each glass has its own controller and voltages.
+  The chess screen stays 128×296 and is scaled onto the 168×384 panels.
+  GDEW029I6FD is a 4-gray flexible panel. When it is selected, shades that
+  other panels dither are drawn as white, light gray, dark gray, and black.
+  A change to a gray level loads the GxEPD2_4G 4-gray waveform (about 3
+  seconds). The clock and other black-and-white changes use that panel's
+  fast partial (about 0.3 seconds); unchanged gray pixels are left undriven,
+  which is the experimental mixed update from GxEPD2_4G. A Partial refresh
+  only switch for this panel skips that 4-gray waveform. Every update,
+  including a piece move, uses the fast partial, and shades are dithered
+  until the switch is turned off. Every other panel
+  stays black and white with the existing dither. GDEY029T94 uses the SSD1680 fast OTP refresh
+  (full activation 0xD7, partial 0xFC). GDEY029T71H is an SSD1685 168×384
+  black/white panel with partial refresh. GDEY029F51H (JD79667, ~25 s) and
+  GDEY029F52 (JD79661, ~11 s fast) are four-color and refresh the whole
+  frame; red highlights use the red ink when three-color mode is on, and
+  yellow ink is not used. Each four-color frame after the first re-sends the
+  panel's register block before the image, as GxEPD2 does after every
+  refresh, and powers the panel on only when idle sleep has powered it off.
+  GDEY029Z95 is an SSD1680 black/white/red panel:
+  a full refresh (~16 s, activation 0xF7) updates red ink, and the 1.5 s
+  partial (activation 0x1C) updates black and white only. On GDEW029I6FD a
+  full refresh always uses the 4-gray waveform, so a black-and-white change
+  never erases the shades, and the fast partial is used only when no gray
+  pixel differs from the frame actually on the glass. With Partial refresh
+  only, clearing the screen drives every pixel to white. The GDEY029T94 and
+  GDEY029Z95 recipes are offered, accepted, and loaded only while that panel
+  is selected; Automatic on a V1 board never lists them, although they share
+  the SSD1680 waveform family. GDEY029Z95 also offers the Centaur SSD1680
+  waveforms, which drive that glass with three-color mode on (the
+  Waveshare GDEM029T94 table gives the steadiest clock there); its own
+  vendor recipe stays the default. A panel with no waveform choice rejects a
+  waveform change, and a high-contrast setting left on from another panel is
+  not applied to a panel that does not offer it. The boot path and a live change pick the waveform by the
+  same rule, so a waveform chosen on GDEY029T94 survives a reboot and
+  GDEW029I6FD keeps its own recipe live as well as at boot. Choosing a panel
+  re-inits it immediately, after any refresh in progress finishes. If the
+  chosen panel does not answer, the working driver stays in use; when it
+  does, the System card reports the panel's name, its controller chip, and
+  its native size. The display status records the panel beside the chip, so
+  a replacement panel's boot does not change which Centaur controller
+  Automatic probes first. The Settings diagnostics line for a replacement
+  panel names that panel once. Returning to Automatic probes both Centaur
+  controllers, as at boot.
+
 - **Three-color (red/white/black) e-paper mode**: Opt-in `[display] three_color`
   switch for tri-color BWR panels, implemented in both the UC8151D (V2) and
   SSD1680 (V1) drivers (tri-color is a property of the panel, not the controller)
@@ -1333,6 +1381,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Changed
 
+- **Three-color mode is offered only for glass with red ink**: The
+  Three-color (red) switch was shown for Automatic and GDEY029T94, whose
+  glass is black and white, and appeared on every panel for the moment
+  before Display tuning loaded. It is now shown only for GDEY029Z95,
+  GDEY029F51H and GDEY029F52. On any other panel a switch left on from one
+  of those is not applied at boot or live, the card reports it off, and a
+  request to turn it on is rejected. Choosing another panel no longer
+  carries the previous panel's red setting in the same request.
+
 - **Per-engine Hash / Threads stay hidden while Use shared defaults is
   on, and share the device slider caps**: the overlay used Stockfish's
   advertised range (Hash 2048, Threads 1024) next to Shared engine
@@ -1396,6 +1453,8 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 - **A new web build was detected two different ways, and neither followed the reload-or-prompt rule**: a page with a service worker waited for a new worker to install, poll, and take control; a page without one (an untrusted certificate) compared the script name on `/events`. `build.sh` and `deploy-to-pi.sh` stamped `sw.js` with the build time, so every publish installed a new worker and looked like a new build even with the frontend unchanged. Without a worker, a changed script name always showed the banner, even with no game. A flag stored by Reload to stop a worker reload loop was never cleared when registration failed, so the banner stayed up on the build the page had just loaded. Both paths are replaced by one: the build scripts stamp a hash of the built files other than `sw.js` into `index.html` and `sw.js`, the server sends the hash from `index.html` on disk in the `/events` snapshot, and the page compares it with its own. When they differ, the page reloads if no game is in progress and shows the banner during a game. Reload tells a waiting worker to take over and then reloads; the worker fetches navigations from the network first, so the reload reaches the new build with or without a worker. A tab that already reloaded for a build and still has the old one shows the banner instead of reloading again. The footer shows this page's build, and the build on disk when it differs.
 
 - **A new web build reloaded the page mid-game when the tab was hidden**: the update rule treated a hidden tab as safe to reload, so switching to another window during a game reloaded the board with no banner. A game in progress now always gets the banner, and the reload happens on tap or once the game ends.
+
+- **Changing the waveform or three-color mode could land in the middle of a panel refresh**: Display tuning changed the driver on the web request's thread while the refresh thread might be sending a frame, so one refresh could start with one waveform or channel mapping and finish with the other. The change now waits for any refresh or idle sleep in progress, and the panel is then redrawn in the new mode.
 
 - **A website-board game resumed a move behind, then waited on the physical pieces**: playing from the board tab applies the opponent's reply without anyone moving a piece. Resume replayed that reply while the panel was still drawing the move before it, stored the unfinished picture, and left the e-paper there. It then entered correction mode because the piece scan did not match. A render that is invalidated while it is still drawing no longer becomes the cached picture, and resume asks for one more draw of the position it reached. A game whose latest stored move was played on the website board resumes at that saved position, reply included, instead of correction mode.
 
