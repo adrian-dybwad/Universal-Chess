@@ -1399,6 +1399,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   the shared card, and they are shown only after Use shared defaults is
   turned off.
 
+- **The number box beside each Settings slider is sized to its text**:
+  the box next to the engine, shared-default and tablebase sliders was a
+  fixed 72 px wide with the browser's up/down arrows inside it. It is now
+  4.5 em wide with no arrows, and its digits are equal width, so the
+  value keeps its position as the slider moves. A value is still typed
+  into the box or set with the slider.
+
 - **Player engine choice is Profile, not ELO / Style**: The Players
   picker (and Original Centaur's matching control) listed engine
   profiles as "ELO / Style" or "Strength", so a Rodent personality and

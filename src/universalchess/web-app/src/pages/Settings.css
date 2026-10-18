@@ -524,9 +524,18 @@
 }
 
 .slider-control .slider-number {
-  width: 72px;
+  width: 4.5em;
   flex-shrink: 0;
+  padding: 0.2em 0.4em;
   text-align: right;
+  font-variant-numeric: tabular-nums;
+  -moz-appearance: textfield;
+}
+
+.slider-control .slider-number::-webkit-outer-spin-button,
+.slider-control .slider-number::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 }
 
 /* Auto-save status indicator. Value settings save automatically on change, so a
