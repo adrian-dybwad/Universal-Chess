@@ -1,30 +1,23 @@
 /**
- * How the client should apply a newly-downloaded app bundle once one is waiting.
+ * How the client should apply a newly published web build.
  *
- * - `reload`: activate the new bundle and reload the page now.
+ * - `reload`: reload the page onto the new build now.
  * - `prompt`: leave the running page alone and surface a banner so the user
  *   chooses when to reload.
  */
 export type UpdateAction = 'reload' | 'prompt';
 
 /**
- * Decide whether a waiting app update may be applied automatically.
+ * Decide whether a new web build may be loaded automatically.
  *
- * Auto-reload is only safe when no one is mid-play on this tab: either there is
- * no game in progress, or the tab is backgrounded (nobody is watching). In any
- * other case the page belongs to an active game in the foreground, so the
- * decision defers to the user via a prompt rather than yanking the board out
- * from under them.
+ * Auto-reload happens only when there is no game in progress. A game in
+ * progress always gets the prompt, whether or not the tab is visible: a hidden
+ * tab used to count as safe, and switching to another window during a game
+ * reloaded the board with no banner.
  *
- * Callers must only invoke this once an update is actually waiting; it does not
- * itself track update availability.
+ * Callers must only invoke this once a new build is known; it does not itself
+ * track update availability.
  */
-export function decideUpdateAction(input: {
-  gameInProgress: boolean;
-  documentHidden: boolean;
-}): UpdateAction {
-  if (!input.gameInProgress || input.documentHidden) {
-    return 'reload';
-  }
-  return 'prompt';
+export function decideUpdateAction(input: { gameInProgress: boolean }): UpdateAction {
+  return input.gameInProgress ? 'prompt' : 'reload';
 }

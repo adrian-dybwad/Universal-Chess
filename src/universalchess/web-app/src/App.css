@@ -34,3 +34,9 @@
 .footer a:hover {
   color: #8a3490;
 }
+
+.footer-build {
+  color: #7a7a7a;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.8rem;
+}

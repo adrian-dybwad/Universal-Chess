@@ -140,6 +140,8 @@ RUNTIME_CREATED_DIRS=(syzygy)
 # Source dir resolved relative to this script, so it works from any CWD.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_DIR="${SCRIPT_DIR}/../src/universalchess/"
+# shellcheck source=lib/web-build-hash.sh
+. "${SCRIPT_DIR}/lib/web-build-hash.sh"
 
 EXCLUDES=(
 	--exclude='.venv'
@@ -184,7 +186,7 @@ run_rsync() {
 # and Vite emits to web-app/dist), so without this the deploy would push whatever
 # bundle was last staged there. Mirrors scripts/build.sh's stage + sw.js stamp.
 build_react() {
-	local web_app_dir react_dist build_ts
+	local web_app_dir react_dist build_id
 	web_app_dir="${SRC_DIR}web-app"
 	react_dist="${SRC_DIR}web/react-app"
 	if ! command -v npm >/dev/null 2>&1; then
@@ -205,17 +207,8 @@ build_react() {
 	mkdir -p "$react_dist"
 	# --delete prunes old hashed bundles locally so stale assets are not staged.
 	rsync -a --delete "${web_app_dir}/dist/" "${react_dist}/"
-	# Stamp the service-worker cache version so PWA clients fetch the new bundle
-	# instead of a cached one. GNU sed needs no backup arg; BSD/macOS sed needs ''.
-	build_ts="$(date +%Y%m%d%H%M%S)"
-	if [[ -f "${react_dist}/sw.js" ]]; then
-		if sed --version >/dev/null 2>&1; then
-			sed -i "s/__BUILD_TIMESTAMP__/${build_ts}/g" "${react_dist}/sw.js"
-		else
-			sed -i '' "s/__BUILD_TIMESTAMP__/${build_ts}/g" "${react_dist}/sw.js"
-		fi
-		echo "Stamped sw.js CACHE_VERSION=${build_ts}"
-	fi
+	build_id="$(stamp_web_build "${web_app_dir}/dist" "$react_dist")"
+	echo "Stamped web build id ${build_id}"
 }
 
 while [[ $# -gt 0 ]]; do

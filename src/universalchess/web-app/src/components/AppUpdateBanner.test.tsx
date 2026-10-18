@@ -5,36 +5,28 @@ import '@testing-library/jest-dom/vitest';
 import type { GameState } from '../types/game';
 
 /**
- * Guards the web-app self-update UX: a redeployed bundle must reach open
- * clients. Detection is a service worker "waiting" build (mocked here at the
- * boundary); this component owns the policy of reloading automatically when
- * safe and prompting otherwise. The regressions this pins:
- *  - an idle/backgrounded client silently stays on a stale build (no auto-reload)
- *  - a live game is reloaded out from under the player mid-move (over-eager)
- *  - the banner never clears once conditions become safe (stuck prompt)
+ * Guards the new-web-version rule. With no game in progress the page reloads
+ * onto the new build. During a game it shows the banner and reloads only on a
+ * tap or when the game ends. The signal is the build id on /events, the same
+ * whether or not a service worker registered.
  */
 
 const mocks = vi.hoisted(() => ({
-  applyServiceWorkerUpdate: vi.fn(() => true),
-  blocked: false,
-  workerMissing: false,
-  captured: { onUpdateReady: null as null | (() => void) },
+  activateWaitingWorker: vi.fn(),
 }));
 
 vi.mock('../utils/swRegistration', () => ({
-  startServiceWorkerUpdates: (onUpdateReady: () => void) => {
-    mocks.captured.onUpdateReady = onUpdateReady;
-  },
-  applyServiceWorkerUpdate: mocks.applyServiceWorkerUpdate,
-  subscribeAutoReloadBlocked: () => () => {},
-  getAutoReloadBlocked: () => mocks.blocked,
-  subscribeServiceWorkerMissing: () => () => {},
-  getServiceWorkerMissing: () => mocks.workerMissing,
+  activateWaitingWorker: mocks.activateWaitingWorker,
 }));
 
 import { AppUpdateBanner } from './AppUpdateBanner';
 import { useGameStore } from '../stores/gameStore';
 import { setLiveStatus, __resetLiveStatus } from '../stores/liveStatusStore';
+import { BUILD_ID_META_NAME } from '../utils/webBuild';
+
+const RUNNING_BUILD = '1111aaaa2222bbbb';
+const NEW_BUILD = '3333cccc4444dddd';
+const RELOAD_TARGET_SESSION_KEY = 'uc:web-build-reload-target';
 
 function makeGameState(overrides: Partial<GameState> = {}): GameState {
   return {
@@ -64,9 +56,27 @@ function setGame(gameState: GameState | null): void {
   });
 }
 
-function signalUpdateReady(): void {
+function setRunningBuild(buildId: string | null): void {
+  document.head.querySelector(`meta[name="${BUILD_ID_META_NAME}"]`)?.remove();
+  if (buildId === null) return;
+  const meta = document.createElement('meta');
+  meta.name = BUILD_ID_META_NAME;
+  meta.content = buildId;
+  document.head.appendChild(meta);
+}
+
+function publishDeployedBuild(webBuild: string | null): void {
   act(() => {
-    mocks.captured.onUpdateReady?.();
+    setLiveStatus({
+      activity: { active: false, activities: [] },
+      engine: null,
+      syzygy: null,
+      engineDefaults: null,
+      wifi: null,
+      bluetooth: null,
+      updates: null,
+      webBuild,
+    });
   });
 }
 
@@ -77,165 +87,114 @@ function setVisibility(state: 'visible' | 'hidden'): void {
   });
 }
 
+function reloadButton(): HTMLElement | null {
+  return screen.queryByRole('button', { name: 'Reload' });
+}
+
+const reloadMock = vi.fn();
+
 beforeEach(() => {
-  mocks.applyServiceWorkerUpdate.mockReset();
-  mocks.applyServiceWorkerUpdate.mockReturnValue(true);
-  mocks.blocked = false;
-  mocks.workerMissing = false;
+  mocks.activateWaitingWorker.mockReset();
+  reloadMock.mockReset();
+  vi.stubGlobal('location', { reload: reloadMock });
+  sessionStorage.clear();
   __resetLiveStatus();
-  mocks.captured.onUpdateReady = null;
   useGameStore.setState({ gameState: null });
+  setRunningBuild(RUNNING_BUILD);
   setVisibility('visible');
 });
 
 afterEach(() => {
   cleanup();
-  document.body.innerHTML = '';
-  Reflect.deleteProperty(navigator, 'serviceWorker');
+  setRunningBuild(null);
+  vi.unstubAllGlobals();
 });
 
 describe('AppUpdateBanner', () => {
-  it('renders nothing and does not reload before an update is ready', () => {
-    // Baseline: with no waiting build the component is inert. If it rendered or
-    // reloaded here, every page load would flash a banner or reload-loop.
+  it('does nothing when the board reports the build this page is running', () => {
+    // Why: a republish with an unchanged frontend keeps the same build id.
+    // How a regression manifests: a banner or a reload for an unchanged build.
     setGame(liveGame);
     const { container } = render(<AppUpdateBanner />);
+    publishDeployedBuild(RUNNING_BUILD);
     expect(container).toBeEmptyDOMElement();
-    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
+    expect(reloadMock).not.toHaveBeenCalled();
   });
 
-  it('auto-reloads and shows no banner when the board is idle', () => {
-    // No game in progress: reloading is harmless, so it must happen without a
-    // prompt. A regression would strand idle boards (e.g. a kiosk on the home
-    // page) on the old bundle indefinitely.
-    render(<AppUpdateBanner />);
-    signalUpdateReady();
-    expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+  it.each([
+    { label: 'the board has not reported a build', running: RUNNING_BUILD, deployed: null },
+    { label: 'this page has no build id (dev server)', running: null, deployed: NEW_BUILD },
+  ])('does nothing when $label', ({ running, deployed }) => {
+    // Why: with one side unknown there is nothing to compare. How a
+    // regression manifests: the page reloads or prompts on every snapshot.
+    setRunningBuild(running);
+    const { container } = render(<AppUpdateBanner />);
+    publishDeployedBuild(deployed);
+    expect(container).toBeEmptyDOMElement();
+    expect(reloadMock).not.toHaveBeenCalled();
   });
 
-  it('shows the reload prompt instead of reloading during a live game', () => {
-    // The core safety case: a visible, in-progress game must NOT be reloaded
-    // automatically. The banner appears and applyServiceWorkerUpdate stays
-    // untouched until the user (or a later safe condition) acts.
+  it('reloads onto a new build with no banner when no game is in progress', () => {
+    // Why: an idle board must not sit on an old frontend. How a regression
+    // manifests: reload is not called, or the banner appears.
+    const { container } = render(<AppUpdateBanner />);
+    publishDeployedBuild(NEW_BUILD);
+    expect(reloadMock).toHaveBeenCalledTimes(1);
+    expect(mocks.activateWaitingWorker).toHaveBeenCalledTimes(1);
+    expect(sessionStorage.getItem(RELOAD_TARGET_SESSION_KEY)).toBe(NEW_BUILD);
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('prompts during a game and reloads only on the tap', () => {
+    // Why: a game in progress is never reloaded without the player. How a
+    // regression manifests: reload is called before the tap, or the banner
+    // is missing.
     setGame(liveGame);
     render(<AppUpdateBanner />);
-    signalUpdateReady();
-    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
-    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
-  });
+    publishDeployedBuild(NEW_BUILD);
+    expect(reloadMock).not.toHaveBeenCalled();
+    expect(reloadButton()).toBeInTheDocument();
 
-  it('reloads when the user clicks Reload during a live game', () => {
-    // The explicit user-driven path from the prompt. Clicking must pass
-    // userInitiated so apply reloads in the tap's call stack; the auto path
-    // waits for controllerchange and must not be used here.
-    setGame(liveGame);
-    render(<AppUpdateBanner />);
-    signalUpdateReady();
     act(() => {
-      screen.getByRole('button', { name: 'Reload' }).click();
+      reloadButton()!.click();
     });
-    expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledTimes(1);
-    expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledWith({ userInitiated: true });
+    expect(reloadMock).toHaveBeenCalledTimes(1);
+    expect(mocks.activateWaitingWorker).toHaveBeenCalledTimes(1);
   });
 
-  it('shows Reload when auto-apply is blocked', () => {
-    // After a failed auto-reload the idle client would otherwise sit on the
-    // stale bundle with no prompt. The blocked flag is read from the SW
-    // module (not setState in an effect) so Reload stays reachable.
-    mocks.blocked = true;
-    render(<AppUpdateBanner />);
-    signalUpdateReady();
-    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
-    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
-  });
-
-  it('auto-reloads once a live game ends while the prompt is showing', () => {
-    // Reactivity guard: a banner shown during play must resolve itself the
-    // instant the game finishes, without needing the user to click. A
-    // regression would leave the prompt stuck after the game is over.
+  it('keeps prompting during a game when the tab is hidden', () => {
+    // Why: switching to another window hides the tab, and a hidden tab used
+    // to count as safe to reload mid-game. How a regression manifests:
+    // reload is called when the tab is hidden.
     setGame(liveGame);
     render(<AppUpdateBanner />);
-    signalUpdateReady();
-    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
+    publishDeployedBuild(NEW_BUILD);
+    setVisibility('hidden');
+    expect(reloadMock).not.toHaveBeenCalled();
+    expect(reloadButton()).toBeInTheDocument();
+  });
+
+  it('reloads once the game ends while the banner is showing', () => {
+    // Why: the prompt only defers the reload until it is safe. How a
+    // regression manifests: the banner stays up after the game is over.
+    setGame(liveGame);
+    render(<AppUpdateBanner />);
+    publishDeployedBuild(NEW_BUILD);
+    expect(reloadMock).not.toHaveBeenCalled();
 
     setGame(makeGameState({ pgn: '1. e4 e5', move_number: 2, game_over: true }));
-    expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledTimes(1);
-    expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
+    expect(reloadMock).toHaveBeenCalledTimes(1);
+    expect(reloadButton()).not.toBeInTheDocument();
   });
 
-  it('auto-reloads a backgrounded tab even during a live game', () => {
-    // Backgrounding means no one is watching, so it is safe to reload mid-game
-    // (state re-syncs from the server on load). This pins that hiding the tab
-    // dismisses the prompt by applying the update.
-    setGame(liveGame);
+  it('shows the banner instead of reloading again when a reload did not reach the new build', () => {
+    // Why: a cache in front of the board can serve the old page after the
+    // reload. How a regression manifests: reload is called again, which
+    // repeats on every snapshot.
+    sessionStorage.setItem(RELOAD_TARGET_SESSION_KEY, NEW_BUILD);
     render(<AppUpdateBanner />);
-    signalUpdateReady();
-    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
-
-    setVisibility('hidden');
-    expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledTimes(1);
-  });
-
-  it('shows the reload banner when the script on disk changes and no worker controls the page', () => {
-    // An untrusted certificate leaves the page with no controlling worker, so
-    // onUpdateReady never fires. Auto-reload goes through that worker and
-    // shows nothing. The /events script src is the notice: the banner appears
-    // and Reload is what refreshes. A regression leaves the idle tab on the
-    // old bundle with no banner.
-    document.body.innerHTML = '<script type="module" src="/assets/index-old.js"></script>';
-    render(<AppUpdateBanner />);
-    expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
-
-    act(() => {
-      setLiveStatus({
-        activity: { active: false, activities: [] },
-        engine: null,
-        syzygy: null,
-        engineDefaults: null,
-        wifi: null,
-        bluetooth: null,
-        updates: null,
-        webClient: '/assets/index-new.js',
-      });
-    });
-    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument();
-    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
-
-    act(() => {
-      screen.getByRole('button', { name: 'Reload' }).click();
-    });
-    expect(mocks.applyServiceWorkerUpdate).toHaveBeenCalledWith({ userInitiated: true });
-  });
-
-  it('ignores a streamed script change while a service worker controls the page', () => {
-    // A controlling worker is the update path. Treating the script src as a
-    // second notice would prompt on every deploy before that worker is waiting.
-    // A regression shows Reload here with applyServiceWorkerUpdate uncalled.
-    const listeners = new Set<() => void>();
-    Object.defineProperty(navigator, 'serviceWorker', {
-      configurable: true,
-      value: {
-        controller: {},
-        addEventListener: (_type: string, listener: () => void) => listeners.add(listener),
-        removeEventListener: (_type: string, listener: () => void) => listeners.delete(listener),
-      },
-    });
-    document.body.innerHTML = '<script type="module" src="/assets/index-old.js"></script>';
-    render(<AppUpdateBanner />);
-    act(() => {
-      setLiveStatus({
-        activity: { active: false, activities: [] },
-        engine: null,
-        syzygy: null,
-        engineDefaults: null,
-        wifi: null,
-        bluetooth: null,
-        updates: null,
-        webClient: '/assets/index-new.js',
-      });
-    });
-    expect(screen.queryByRole('button', { name: 'Reload' })).not.toBeInTheDocument();
-    expect(mocks.applyServiceWorkerUpdate).not.toHaveBeenCalled();
+    publishDeployedBuild(NEW_BUILD);
+    expect(reloadMock).not.toHaveBeenCalled();
+    expect(reloadButton()).toBeInTheDocument();
   });
 });

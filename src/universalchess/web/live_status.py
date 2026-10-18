@@ -103,7 +103,7 @@ class LiveStatusSchedule:
         read_wifi: Callable[[], dict],
         read_bluetooth: Callable[[], dict],
         read_updates: Callable[[], dict],
-        read_web_client: Optional[Callable[[], object]] = None,
+        read_web_build: Optional[Callable[[], object]] = None,
         read_capability: Callable[[], object],
         clock: Callable[[], float] = time.monotonic,
         activity_interval_seconds: float = ACTIVITY_INTERVAL_SECONDS,
@@ -119,10 +119,11 @@ class LiveStatusSchedule:
         self._wifi = _Source(read_wifi, radio_interval_seconds)
         self._bluetooth = _Source(read_bluetooth, radio_interval_seconds)
         self._updates = _Source(read_updates, updates_interval_seconds)
-        # The page the browser loaded. Read on the update cadence so a deploy
-        # is noticed by a tab whose service worker never registered.
-        self._web_client = (
-            _Source(read_web_client, updates_interval_seconds) if read_web_client is not None else None
+        # The build id of the web app on disk. An open tab compares it with the
+        # build it loaded, which is how a publish is noticed with or without a
+        # service worker. Read on the update cadence.
+        self._web_build = (
+            _Source(read_web_build, updates_interval_seconds) if read_web_build is not None else None
         )
         self._read_capability = read_capability
         self._clock = clock
@@ -140,7 +141,7 @@ class LiveStatusSchedule:
         wifi = self._wifi.read_if_due(now) if has_wifi else None
         bluetooth = self._bluetooth.read_if_due(now) if has_bluetooth else None
         updates = self._updates.read_if_due(now)
-        web_client = self._web_client.read_if_due(now) if self._web_client is not None else None
+        web_build = self._web_build.read_if_due(now) if self._web_build is not None else None
         return {
             "type": EVENT_TYPE,
             "activity": activity,
@@ -150,7 +151,7 @@ class LiveStatusSchedule:
             "wifi": wifi,
             "bluetooth": bluetooth,
             "updates": updates,
-            "web_client": web_client,
+            "web_build": web_build,
         }
 
 
@@ -274,7 +275,7 @@ def _default_schedule() -> LiveStatusSchedule:
             read_wifi=_read_wifi,
             read_bluetooth=_read_bluetooth,
             read_updates=_read_updates,
-            read_web_client=_read_web_client,
+            read_web_build=_read_web_build,
             read_capability=_read_capability,
         )
     return _default
@@ -341,26 +342,33 @@ def _read_bluetooth() -> dict:
     return bt.get_status()
 
 
-def module_script_src(html: str) -> Optional[str]:
-    """Return the ``src`` of the first ``<script type="module">`` in ``html``.
+# Left in index.html until scripts/lib/web-build-hash.sh stamps the build.
+_UNSTAMPED_BUILD_ID = "__BUILD_ID__"
 
-    That URL is the deployed client. Vite content-hashes it, so a new build
-    is a different string. Attribute order varies (``type`` before ``src``,
-    or the reverse), so the tag is matched as a whole.
+
+def build_id_from_html(html: str) -> Optional[str]:
+    """Return the ``uc-build`` meta content in ``html``, or None when absent or unstamped.
+
+    The build scripts stamp a hash of the built files there. Attribute order
+    varies, so the tag is matched as a whole.
     """
     import re
 
-    for tag in re.findall(r"<script\b[^>]*>", html, flags=re.IGNORECASE):
-        if not re.search(r"""\btype\s*=\s*["']module["']""", tag, flags=re.IGNORECASE):
+    for tag in re.findall(r"<meta\b[^>]*>", html, flags=re.IGNORECASE):
+        if not re.search(r"""\bname\s*=\s*["']uc-build["']""", tag, flags=re.IGNORECASE):
             continue
-        src = re.search(r"""\bsrc\s*=\s*["']([^"']+)["']""", tag, flags=re.IGNORECASE)
-        if src:
-            return src.group(1)
+        content = re.search(r"""\bcontent\s*=\s*["']([^"']*)["']""", tag, flags=re.IGNORECASE)
+        if content is None:
+            return None
+        build_id = content.group(1).strip()
+        if not build_id or build_id == _UNSTAMPED_BUILD_ID:
+            return None
+        return build_id
     return None
 
 
-def _read_web_client() -> Optional[str]:
-    """The module script the on-disk web app would load, or None if it is absent."""
+def _read_web_build() -> Optional[str]:
+    """The build id of the on-disk web app, or None if it is absent or unstamped."""
     from universalchess.web.app import get_react_app_dir
 
     react_dir = get_react_app_dir()
@@ -371,7 +379,7 @@ def _read_web_client() -> Optional[str]:
         html = index.read_text(encoding="utf-8")
     except OSError:
         return None
-    return module_script_src(html)
+    return build_id_from_html(html)
 
 
 def _read_updates() -> dict:

@@ -28,7 +28,7 @@ beforeEach(() => {
       has_pending_update: true,
       available_version: '2.5.0',
     },
-    webClient: null,
+    webBuild: null,
   });
 });
 

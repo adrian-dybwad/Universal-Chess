@@ -1,8 +1,7 @@
 // Service Worker for Universal Chess PWA
-// Cache version - increment on each release to bust old caches
-// This will be replaced by the build script with a timestamp or build hash
-const CACHE_VERSION = '__BUILD_TIMESTAMP__';
-// Redeploy probe. A byte change here is what a registered worker treats as a new build.
+// Cache version. scripts/lib/web-build-hash.sh replaces the placeholder with
+// the build id, a hash of the built files, so it changes only when they do.
+const CACHE_VERSION = '__BUILD_ID__';
 const CACHE_NAME = `universal-chess-${CACHE_VERSION}`;
 
 // Assets to cache on install.
@@ -29,8 +28,9 @@ const STATIC_ASSETS = [
 // of hijacking pages that are already running the previous bundle: activating
 // immediately would let the service worker serve new, content-hashed assets to
 // a page still executing old code (a version-skew hazard) with no reload. The
-// page decides when to activate by posting SKIP_WAITING (see the message
-// handler below), driven by the app-update policy in the React app. On a
+// page posts SKIP_WAITING (see the message handler below) just before it
+// reloads onto a new build, which the React app does only when no game is in
+// progress or on a Reload tap. On a
 // first-ever install there is no active worker to replace, so the browser
 // activates this one right away regardless.
 function reportLoadError(error) {

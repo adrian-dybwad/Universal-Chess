@@ -47,7 +47,7 @@ beforeEach(() => {
     wifi: null,
     bluetooth: null,
     updates: status,
-    webClient: null,
+    webBuild: null,
   });
   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
     if (url === '/api/updates/status') return jsonResponse(status);

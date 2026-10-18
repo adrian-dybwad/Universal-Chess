@@ -5,6 +5,8 @@ import { useDeviceLanguage } from './i18n/useDeviceLanguage';
 import { BackgroundActivityBanner } from './components/BackgroundActivityBanner';
 import { UpdateBanner } from './components/UpdateBanner';
 import { AppUpdateBanner } from './components/AppUpdateBanner';
+import { useLiveStatus } from './stores/liveStatusStore';
+import { runningWebBuild } from './utils/webBuild';
 import { Navbar } from './components/Navbar';
 import { DocumentTitle } from './components/DocumentTitle';
 import { GameStateProvider } from './components/GameStateProvider';
@@ -60,6 +62,14 @@ export function AppRoutes() {
 function AppShell() {
   const { t } = useTranslation();
   useDeviceLanguage();
+  // The new-build notice compares these two ids: the build this page loaded,
+  // and the build in index.html on disk from /events. The id is a hash of the
+  // built files, so a republish that does not change the frontend keeps it.
+  // The notice runs in the loaded bundle, so a fix to it takes effect on the
+  // deploy after the one that ships it.
+  const loadedBuild = runningWebBuild();
+  const diskBuild = useLiveStatus()?.webBuild ?? null;
+  const diskDiffers = diskBuild !== null && diskBuild !== loadedBuild;
 
   // Publish the sticky chrome's height so in-page sticky elements (the coach
   // remark on a phone) sit just below the nav rather than sliding under it.
@@ -117,6 +127,18 @@ function AppShell() {
               </a>
               {' • '}
               <Link to="/licenses">{t('footer.licenses')}</Link>
+              {loadedBuild !== null && (
+                <>
+                  <br />
+                  <span className="footer-build">{loadedBuild}</span>
+                  {diskDiffers && (
+                    <>
+                      {' → '}
+                      <span className="footer-build">{diskBuild}</span>
+                    </>
+                  )}
+                </>
+              )}
             </p>
           </div>
         </footer>

@@ -4,26 +4,26 @@ import '@testing-library/jest-dom/vitest';
 import { render, cleanup } from '@testing-library/react';
 import { ServiceWorkerWarning } from './ServiceWorkerWarning';
 import {
-  startServiceWorkerUpdates,
-  __resetServiceWorkerUpdates,
+  registerServiceWorker,
+  __resetServiceWorker,
 } from '../utils/swRegistration';
 
 /**
  * Guards the status-bar warning that the service worker did not load.
  *
  * Why this exists: register() fails on an untrusted certificate and the page
- * keeps running with no update detection. How a regression manifests: the
+ * keeps running with no offline cache. How a regression manifests: the
  * warning icon is absent after that failure, or it is present when
  * registration succeeded.
  */
 
 beforeEach(() => {
-  __resetServiceWorkerUpdates();
+  __resetServiceWorker();
 });
 
 afterEach(() => {
   cleanup();
-  __resetServiceWorkerUpdates();
+  __resetServiceWorker();
   vi.unstubAllGlobals();
 });
 
@@ -42,7 +42,7 @@ function stubRegister(register: () => Promise<unknown>): void {
 describe('ServiceWorkerWarning', () => {
   it('shows a warning after the worker script cannot be fetched', async () => {
     stubRegister(() => Promise.reject(new Error('An SSL certificate error occurred when fetching the script.')));
-    startServiceWorkerUpdates(vi.fn());
+    registerServiceWorker();
     await Promise.resolve();
     await Promise.resolve();
 
@@ -61,7 +61,7 @@ describe('ServiceWorkerWarning', () => {
       update: vi.fn(),
       addEventListener: vi.fn(),
     }));
-    startServiceWorkerUpdates(vi.fn());
+    registerServiceWorker();
     await Promise.resolve();
     await Promise.resolve();
 

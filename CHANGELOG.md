@@ -23,11 +23,9 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   service worker did not load." in the selected language, followed by the
   browser's own error. The same warning covers a script that fails while
   installing and an update check that cannot fetch the worker. A tab in
-  that state still notices a new web bundle: the `/events` snapshot names
-  the module script on disk, and a difference from the script this page
-  loaded shows the reload banner. The check is that no service worker
-  controls the page, so the banner still appears when registration never
-  reports a failure. Reload refreshes onto the build on disk.
+  that state still notices a new web build, because the check compares the
+  build id in the `/events` snapshot with the page's own and does not
+  depend on the worker.
 
 - **Shared engine defaults (HIARCS-style)**: Hash, Threads, and Move Overhead
   were labelled engine-wide but lived in each engine's ``[DEFAULT]`` and on
@@ -1394,6 +1392,10 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   was also a stray way to power the board off.
 
 ### Fixed
+
+- **A new web build was detected two different ways, and neither followed the reload-or-prompt rule**: a page with a service worker waited for a new worker to install, poll, and take control; a page without one (an untrusted certificate) compared the script name on `/events`. `build.sh` and `deploy-to-pi.sh` stamped `sw.js` with the build time, so every publish installed a new worker and looked like a new build even with the frontend unchanged. Without a worker, a changed script name always showed the banner, even with no game. A flag stored by Reload to stop a worker reload loop was never cleared when registration failed, so the banner stayed up on the build the page had just loaded. Both paths are replaced by one: the build scripts stamp a hash of the built files other than `sw.js` into `index.html` and `sw.js`, the server sends the hash from `index.html` on disk in the `/events` snapshot, and the page compares it with its own. When they differ, the page reloads if no game is in progress and shows the banner during a game. Reload tells a waiting worker to take over and then reloads; the worker fetches navigations from the network first, so the reload reaches the new build with or without a worker. A tab that already reloaded for a build and still has the old one shows the banner instead of reloading again. The footer shows this page's build, and the build on disk when it differs.
+
+- **A new web build reloaded the page mid-game when the tab was hidden**: the update rule treated a hidden tab as safe to reload, so switching to another window during a game reloaded the board with no banner. A game in progress now always gets the banner, and the reload happens on tap or once the game ends.
 
 - **A website-board game resumed a move behind, then waited on the physical pieces**: playing from the board tab applies the opponent's reply without anyone moving a piece. Resume replayed that reply while the panel was still drawing the move before it, stored the unfinished picture, and left the e-paper there. It then entered correction mode because the piece scan did not match. A render that is invalidated while it is still drawing no longer becomes the cached picture, and resume asks for one more draw of the position it reached. A game whose latest stored move was played on the website board resumes at that saved position, reply included, instead of correction mode.
 

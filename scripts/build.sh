@@ -12,6 +12,8 @@ set -euo pipefail
 #   ./build.sh clean        - Clean build artifacts
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=lib/web-build-hash.sh
+. "${SCRIPT_DIR}/lib/web-build-hash.sh"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 # Parse arguments
@@ -332,10 +334,6 @@ function buildReactApp {
         fi
     fi
     
-    # Generate build timestamp for cache busting
-    local build_timestamp
-    build_timestamp="$(date +%s)"
-    
     # Install dependencies and build
     local build_status=0
     (
@@ -366,17 +364,9 @@ function buildReactApp {
         mkdir -p "${react_dist}"
         cp -r "${web_app_dir}/dist/"* "${react_dist}/"
         
-        # Replace the cache version placeholder in sw.js with the build timestamp
-        # This ensures each build has a unique cache name, forcing cache refresh
-        if [ -f "${react_dist}/sw.js" ]; then
-            # Use portable sed syntax (works on both macOS and Linux)
-            if [[ "$OSTYPE" == "darwin"* ]]; then
-                sed -i '' "s/__BUILD_TIMESTAMP__/${build_timestamp}/g" "${react_dist}/sw.js"
-            else
-                sed -i "s/__BUILD_TIMESTAMP__/${build_timestamp}/g" "${react_dist}/sw.js"
-            fi
-            echo "::: Service worker cache version set to ${build_timestamp}"
-        fi
+        local build_id
+        build_id="$(stamp_web_build "${web_app_dir}/dist" "${react_dist}")"
+        echo "::: Web build id ${build_id}"
         
         echo "::: React app built and staged at ${react_dist}"
     else

@@ -80,4 +80,18 @@ describe('App chrome stickiness', () => {
     expect(appTsx).toMatch(/--app-chrome-height/);
     expect(appTsx).toMatch(/ResizeObserver/);
   });
+
+  it('prints the loaded build id in the footer', () => {
+    // The update notice runs in the bundle already on screen. The footer shows
+    // that build id so a republish can be checked against this tab. How a
+    // regression manifests: the footer has no 1111aaaa2222bbbb, so the open
+    // page cannot be told apart from the build just published.
+    const meta = document.createElement('meta');
+    meta.name = 'uc-build';
+    meta.content = '1111aaaa2222bbbb';
+    document.head.appendChild(meta);
+    render(<App />);
+    expect(document.querySelector('.footer-build')).toHaveTextContent('1111aaaa2222bbbb');
+    meta.remove();
+  });
 });

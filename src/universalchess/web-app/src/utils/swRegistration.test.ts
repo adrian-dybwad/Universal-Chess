@@ -1,20 +1,17 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
-  startServiceWorkerUpdates,
-  applyServiceWorkerUpdate,
-  subscribeAutoReloadBlocked,
-  getAutoReloadBlocked,
+  activateWaitingWorker,
   getServiceWorkerMissing,
   getServiceWorkerLoadError,
-  __resetServiceWorkerUpdates,
+  registerServiceWorker,
+  __resetServiceWorker,
 } from './swRegistration';
 
 /**
- * Guards the service-worker update apply path. The banner's Reload button is
- * only useful if this module actually navigates onto the waiting build; the
- * React tests mock this boundary, so a dead apply (post SKIP_WAITING and wait
- * forever for controllerchange) would leave Reload looking like a no-op.
+ * Guards the service-worker boundary: registration, the load-error text the
+ * navbar shows, and handing a waiting worker control before a reload. Update
+ * detection is not here; it is the build id on /events.
  */
 
 type Listener = EventListenerOrEventListenerObject;
@@ -29,272 +26,92 @@ function listenerFn(listener: Listener): (event?: Event) => void {
 }
 
 function installServiceWorkerMock(options: {
-  waiting?: { postMessage: ReturnType<typeof vi.fn>; state?: string } | null;
-  controller?: object | null;
+  waiting?: { postMessage: ReturnType<typeof vi.fn> } | null;
 } = {}) {
-  const waiting = options.waiting ?? null;
-  const controller =
-    options.controller === undefined ? { scriptURL: '/sw.js' } : options.controller;
-
-  const registrationListeners = new Map<string, Listener[]>();
-  const containerListeners = new Map<string, Listener[]>();
-
   const registration = {
-    waiting,
+    waiting: options.waiting ?? null,
     installing: null as { addEventListener: ReturnType<typeof vi.fn>; state: string } | null,
     scope: '/',
-    update: vi.fn(),
-    addEventListener: vi.fn((type: string, listener: Listener) => {
-      const list = registrationListeners.get(type) ?? [];
-      list.push(listener);
-      registrationListeners.set(type, list);
-    }),
+    addEventListener: vi.fn(),
   };
-
   const container = {
-    controller,
+    controller: null,
     register: vi.fn(async () => registration),
-    addEventListener: vi.fn((type: string, listener: Listener) => {
-      const list = containerListeners.get(type) ?? [];
-      list.push(listener);
-      containerListeners.set(type, list);
-    }),
-    removeEventListener: vi.fn((type: string, listener: Listener) => {
-      const list = containerListeners.get(type) ?? [];
-      containerListeners.set(
-        type,
-        list.filter((entry) => entry !== listener),
-      );
-    }),
-    dispatchControllerChange() {
-      for (const listener of containerListeners.get('controllerchange') ?? []) {
-        listenerFn(listener)();
-      }
-    },
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
   };
-
   Object.defineProperty(navigator, 'serviceWorker', {
     configurable: true,
     value: container,
   });
-
-  return { registration, container, waiting };
+  return { registration, container };
 }
 
-const reloadMock = vi.fn();
+async function settleRegistration(): Promise<void> {
+  await Promise.resolve();
+  await Promise.resolve();
+}
 
 beforeEach(() => {
-  __resetServiceWorkerUpdates();
-  reloadMock.mockReset();
-  vi.stubGlobal('location', { reload: reloadMock, href: 'http://localhost/' });
-  sessionStorage.clear();
+  __resetServiceWorker();
 });
 
 afterEach(() => {
-  __resetServiceWorkerUpdates();
-  vi.unstubAllGlobals();
-  vi.useRealTimers();
+  __resetServiceWorker();
+  Reflect.deleteProperty(navigator, 'serviceWorker');
 });
 
-describe('applyServiceWorkerUpdate', () => {
-  it('reloads immediately on a user tap even while a worker is waiting', async () => {
-    // Why: Reload is a user gesture. Waiting for controllerchange before
-    // navigating drops that gesture, and iOS Safari (and some kiosk Chromium
-    // builds) then ignore location.reload(), so the button appears to do
-    // nothing. How a regression manifests: SKIP_WAITING is posted and reload
-    // is never called until a later controllerchange that may never come.
+describe('activateWaitingWorker', () => {
+  it('tells a waiting worker to take over', async () => {
+    // Why: a board tab never closes, so a new worker would otherwise wait
+    // forever and a changed sw.js would never run. How a regression
+    // manifests: SKIP_WAITING is not posted.
     const waiting = { postMessage: vi.fn() };
-    const { container } = installServiceWorkerMock({ waiting });
-    const onUpdateReady = vi.fn();
-    startServiceWorkerUpdates(onUpdateReady);
-    await Promise.resolve();
-    expect(onUpdateReady).toHaveBeenCalledTimes(1);
+    installServiceWorkerMock({ waiting });
+    registerServiceWorker();
+    await settleRegistration();
 
-    applyServiceWorkerUpdate({ userInitiated: true });
-
+    activateWaitingWorker();
     expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
-    expect(reloadMock).toHaveBeenCalledTimes(1);
-    container.dispatchControllerChange();
-    expect(reloadMock).toHaveBeenCalledTimes(1);
   });
 
-  it('still reloads on a user tap after a previous auto-apply that did not navigate', async () => {
-    // Why: auto-apply sets an in-flight flag and posts SKIP_WAITING. If
-    // controllerchange never fires, that flag used to make the later Reload
-    // tap a no-op. How a regression manifests: the second call (userInitiated)
-    // does not increment the reload mock.
-    const waiting = { postMessage: vi.fn() };
-    installServiceWorkerMock({ waiting });
-    startServiceWorkerUpdates(vi.fn());
-    await Promise.resolve();
+  it('does nothing when registration failed', async () => {
+    // Why: with an untrusted certificate there is no registration, and the
+    // caller reloads right after this. How a regression manifests: this
+    // throws and the reload never runs.
+    const { container } = installServiceWorkerMock();
+    container.register.mockRejectedValue(new Error('An SSL certificate error occurred when fetching the script.'));
+    registerServiceWorker();
+    await settleRegistration();
 
-    applyServiceWorkerUpdate();
-    expect(reloadMock).not.toHaveBeenCalled();
-
-    applyServiceWorkerUpdate({ userInitiated: true });
-    expect(reloadMock).toHaveBeenCalledTimes(1);
+    expect(() => activateWaitingWorker()).not.toThrow();
   });
 
-  it('notifies subscribers when a second auto-apply is refused', async () => {
-    // Why: the banner reads blocked via useSyncExternalStore. If apply
-    // refuses without notifying, Reload never appears after a failed
-    // in-page auto-apply. How a regression manifests: the listener stays at
-    // 0 and getAutoReloadBlocked stays false.
-    const waiting = { postMessage: vi.fn() };
-    installServiceWorkerMock({ waiting });
-    startServiceWorkerUpdates(vi.fn());
-    await Promise.resolve();
-
-    const listener = vi.fn();
-    subscribeAutoReloadBlocked(listener);
-    expect(getAutoReloadBlocked()).toBe(false);
-
-    applyServiceWorkerUpdate();
-    expect(getAutoReloadBlocked()).toBe(false);
-    expect(listener).not.toHaveBeenCalled();
-
-    applyServiceWorkerUpdate();
-    expect(getAutoReloadBlocked()).toBe(true);
-    expect(listener).toHaveBeenCalled();
-  });
-
-  it('auto-apply posts SKIP_WAITING and reloads once the waiting worker takes control', async () => {
-    // Why: idle / backgrounded clients must still activate the waiting build
-    // without a tap. Reloading before skipWaiting finishes would loop the
-    // banner. How a regression manifests: reload runs before controllerchange,
-    // or never runs after it.
-    const waiting = { postMessage: vi.fn() };
-    const { container } = installServiceWorkerMock({ waiting });
-    startServiceWorkerUpdates(vi.fn());
-    await Promise.resolve();
-
-    const didReload = applyServiceWorkerUpdate();
-    expect(didReload).toBe(true);
-    expect(waiting.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
-    expect(reloadMock).not.toHaveBeenCalled();
-
-    container.dispatchControllerChange();
-    expect(reloadMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('auto-apply reloads after a short wait if controllerchange never fires', async () => {
-    // Why: some browsers never emit controllerchange after skipWaiting, which
-    // would leave an idle kiosk on the stale bundle with no banner. How a
-    // regression manifests: advancing past the fallback delay leaves reload
-    // at zero calls.
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    const waiting = { postMessage: vi.fn() };
-    installServiceWorkerMock({ waiting });
-    startServiceWorkerUpdates(vi.fn());
-    await Promise.resolve();
-
-    applyServiceWorkerUpdate();
-    expect(reloadMock).not.toHaveBeenCalled();
-
-    vi.advanceTimersByTime(1000);
-    expect(reloadMock).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not auto-reload-loop when a previous attempt already reloaded this tab', async () => {
-    // Why: reloading before the waiting worker activates would show the banner
-    // again on the next load and auto-apply forever. How a regression
-    // manifests: the second auto-apply (fresh module state, same sessionStorage)
-    // returns true and calls reload again.
-    vi.useFakeTimers({ toFake: ['setTimeout'] });
-    const waiting = { postMessage: vi.fn() };
-    installServiceWorkerMock({ waiting });
-    startServiceWorkerUpdates(vi.fn());
-    await Promise.resolve();
-
-    applyServiceWorkerUpdate();
-    vi.advanceTimersByTime(1000);
-    expect(reloadMock).toHaveBeenCalledTimes(1);
-
-    __resetServiceWorkerUpdates();
-    startServiceWorkerUpdates(vi.fn());
-    await Promise.resolve();
-    reloadMock.mockClear();
-
-    const didReload = applyServiceWorkerUpdate();
-    expect(didReload).toBe(false);
-    expect(reloadMock).not.toHaveBeenCalled();
-  });
-
-  it('reloads immediately when auto-applying with no waiting worker', () => {
-    // Why: service workers unsupported, or the waiting reference was lost,
-    // must still honour "get onto the newest code". How a regression
-    // manifests: apply returns without calling reload.
-    installServiceWorkerMock({ waiting: null });
-    startServiceWorkerUpdates(vi.fn());
-
-    const didReload = applyServiceWorkerUpdate();
-    expect(didReload).toBe(true);
-    expect(reloadMock).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('startServiceWorkerUpdates', () => {
-  it('does not treat the first install as an update', async () => {
-    // Why: a waiting worker with no controller is the initial install, not a
-    // new build. Notifying then would flash the banner (or auto-reload) on
-    // every first visit. How a regression manifests: onUpdateReady runs.
-    const waiting = { postMessage: vi.fn() };
-    installServiceWorkerMock({ waiting, controller: null });
-    const onUpdateReady = vi.fn();
-    startServiceWorkerUpdates(onUpdateReady);
-    await Promise.resolve();
-    expect(onUpdateReady).not.toHaveBeenCalled();
-  });
-
-  it('notifies when an installing worker reaches installed while a controller exists', async () => {
-    // Why: registration.waiting can still be null in the installed statechange
-    // (a Chromium race). The installing worker is already the waiting build
-    // and must be the SKIP_WAITING target. How a regression manifests:
-    // onUpdateReady never runs, so the banner never appears after a redeploy.
-    const installing = {
-      state: 'installing',
-      postMessage: vi.fn(),
-      addEventListener: vi.fn(),
+  it('does not throw when the waiting worker is already gone', async () => {
+    // Why: a redundant worker throws on postMessage. How a regression
+    // manifests: the exception escapes and the caller's reload never runs.
+    const waiting = {
+      postMessage: vi.fn(() => {
+        throw new Error('InvalidStateError');
+      }),
     };
-    const { registration } = installServiceWorkerMock({ waiting: null });
-    registration.installing = installing;
+    installServiceWorkerMock({ waiting });
+    registerServiceWorker();
+    await settleRegistration();
 
-    const stateListeners: Listener[] = [];
-    installing.addEventListener.mockImplementation((type: string, listener: Listener) => {
-      if (type === 'statechange') stateListeners.push(listener);
-    });
-
-    const onUpdateReady = vi.fn();
-    startServiceWorkerUpdates(onUpdateReady);
-    await Promise.resolve();
-    expect(onUpdateReady).not.toHaveBeenCalled();
-
-    const updatefound = (
-      registration.addEventListener as ReturnType<typeof vi.fn>
-    ).mock.calls.find((call: unknown[]) => call[0] === 'updatefound')?.[1] as
-      | Listener
-      | undefined;
-    expect(updatefound).toBeDefined();
-    listenerFn(updatefound!)();
-
-    installing.state = 'installed';
-    for (const listener of stateListeners) listenerFn(listener)();
-
-    expect(onUpdateReady).toHaveBeenCalledTimes(1);
-    applyServiceWorkerUpdate({ userInitiated: true });
-    expect(installing.postMessage).toHaveBeenCalledWith({ type: 'SKIP_WAITING' });
+    expect(() => activateWaitingWorker()).not.toThrow();
   });
+});
 
+describe('registerServiceWorker', () => {
   it('records a failed registration so the navbar can warn', async () => {
-    // Why: an untrusted certificate rejects register() with SecurityError
-    // after the page itself has loaded. Nothing else surfaces that, so an
-    // open tab never learns a new build exists. How a regression manifests:
+    // Why: an untrusted certificate rejects register() after the page has
+    // loaded, and nothing else shows it. How a regression manifests:
     // getServiceWorkerMissing stays false after register rejects.
     const { container } = installServiceWorkerMock();
     container.register.mockRejectedValue(new Error('An SSL certificate error occurred when fetching the script.'));
-    startServiceWorkerUpdates(vi.fn());
-    await Promise.resolve();
-    await Promise.resolve();
+    registerServiceWorker();
+    await settleRegistration();
     expect(getServiceWorkerMissing()).toBe(true);
     expect(getServiceWorkerLoadError()).toBe(
       'An SSL certificate error occurred when fetching the script.',
@@ -305,10 +122,9 @@ describe('startServiceWorkerUpdates', () => {
     // Why: cache.addAll rejects after register() has already resolved, and
     // the page otherwise has no text for that failure. How a regression
     // manifests: getServiceWorkerLoadError stays null after SW_LOAD_ERROR.
-    const { container } = installServiceWorkerMock({ controller: null });
-    startServiceWorkerUpdates(vi.fn());
-    await Promise.resolve();
-    await Promise.resolve();
+    const { container } = installServiceWorkerMock();
+    registerServiceWorker();
+    await settleRegistration();
     expect(getServiceWorkerLoadError()).toBeNull();
 
     const onMessage = (
@@ -332,14 +148,23 @@ describe('startServiceWorkerUpdates', () => {
         if (type === 'statechange') listeners.push(listener);
       }),
     };
-    const { registration } = installServiceWorkerMock({ controller: null });
-    registration.installing = installing as unknown as typeof registration.installing;
-    startServiceWorkerUpdates(vi.fn());
-    await Promise.resolve();
-    await Promise.resolve();
+    const { registration } = installServiceWorkerMock();
+    registration.installing = installing;
+    registerServiceWorker();
+    await settleRegistration();
 
     installing.state = 'redundant';
     for (const listener of listeners) listenerFn(listener)();
     expect(getServiceWorkerLoadError()).toBe('The service worker stopped while installing.');
+  });
+
+  it('registers only once', async () => {
+    // Why: StrictMode and remounts call this more than once. How a
+    // regression manifests: register is called twice.
+    const { container } = installServiceWorkerMock();
+    registerServiceWorker();
+    registerServiceWorker();
+    await settleRegistration();
+    expect(container.register).toHaveBeenCalledTimes(1);
   });
 });

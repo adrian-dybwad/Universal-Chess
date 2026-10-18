@@ -125,7 +125,7 @@ function mockFetch(postStatus: number, status: InstallStatus, engine: EngineDefi
     wifi: null,
     bluetooth: null,
     updates: null,
-    webClient: null,
+    webBuild: null,
   });
   const calls: RecordedCall[] = [];
   const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
