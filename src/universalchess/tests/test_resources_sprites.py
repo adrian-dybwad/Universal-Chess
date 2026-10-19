@@ -15,43 +15,17 @@ behavior the menu and board widget rely on:
    1-bit mode, and caches per-name so different selections return different
    images and a missing sheet yields None.
 
-Note on PIL: several other test modules replace PIL with a MagicMock at import
-time and never restore it, which also breaks PIL's lazy BMP plugin registration
-for the rest of the session. These tests therefore avoid BMP disk encoding: the
-discovery tests touch empty files (filenames are all that matter), and the
-loader tests stub get_image() - the filesystem/decode boundary - returning real
-in-memory images built with Image.new (which does not need plugins).
+The discovery tests touch empty files, since only filenames matter, and the
+loader tests stub get_image() -- the filesystem/decode boundary -- returning
+in-memory images built with Image.new.
 """
 
-import os
-import sys
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
-import universalchess.resources as resources_mod
 from universalchess.resources import ResourceLoader
-
-Image = None  # bound to the real PIL.Image by the autouse fixture below
-
-
-@pytest.fixture(autouse=True)
-def _real_pil():
-    """Bind the real PIL.Image (for Image.new) regardless of mock pollution.
-
-    Other test modules replace PIL with a MagicMock in sys.modules at import
-    time; whichever import of resources.py happened under that mock leaves
-    resources_mod.Image bound to the mock for the rest of the session. Restore a
-    real PIL and rebind it both here and in resources so get_chess_piece_preview
-    (which calls Image.new for its mask) works.
-    """
-    global Image
-    for name in ("PIL.ImageFont", "PIL.ImageDraw", "PIL.Image", "PIL"):
-        sys.modules.pop(name, None)
-    import PIL.Image as real_image
-    Image = real_image
-    resources_mod.Image = real_image
-    yield
 
 
 def _touch_sheet(directory: str, identifier: str) -> None:

@@ -13,7 +13,7 @@ observable state to a JSON dict for the web. Why these matter:
 import sys
 import types
 import unittest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from universalchess.connectivity import chromecast as cast
 
@@ -29,16 +29,14 @@ class _FakeCast:
         self.device = _FakeDevice(name, cast_type)
 
 
-def _install_fake_pychromecast(casts, browser):
-    """Install a fake pychromecast module returning the given casts/browser."""
-    module = types.ModuleType("pychromecast")
-    module.get_chromecasts = lambda timeout=None: (casts, browser)
-    sys.modules["pychromecast"] = module
-
-
 class TestDiscover(unittest.TestCase):
-    def tearDown(self):
-        sys.modules.pop("pychromecast", None)
+    def _install_fake_pychromecast(self, casts, browser):
+        """Install a fake pychromecast module for this test only."""
+        module = types.ModuleType("pychromecast")
+        module.get_chromecasts = lambda timeout=None: (casts, browser)
+        patcher = patch.dict(sys.modules, {"pychromecast": module})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def test_dedupes_sorts_and_stops_browser(self):
         """discover returns unique sorted names and stops the discovery browser.
@@ -48,7 +46,7 @@ class TestDiscover(unittest.TestCase):
         an mDNS listener running. Asserts the result and the stop call.
         """
         browser = MagicMock()
-        _install_fake_pychromecast(
+        self._install_fake_pychromecast(
             [_FakeCast("Living Room"), _FakeCast("Bedroom"), _FakeCast("Living Room")],
             browser,
         )
@@ -65,7 +63,7 @@ class TestDiscover(unittest.TestCase):
         device survives.
         """
         browser = MagicMock()
-        _install_fake_pychromecast(
+        self._install_fake_pychromecast(
             [
                 _FakeCast("Living Room TV", cast_type="cast"),
                 _FakeCast("Kitchen Speaker", cast_type="audio"),
@@ -83,21 +81,19 @@ class TestDiscover(unittest.TestCase):
         the picker empty. Only the known audio types should be excluded.
         """
         browser = MagicMock()
-        _install_fake_pychromecast([_FakeCast("Mystery Cast", cast_type=None)], browser)
+        self._install_fake_pychromecast([_FakeCast("Mystery Cast", cast_type=None)], browser)
         assert cast.discover(log=MagicMock()) == ["Mystery Cast"]
 
     def test_missing_pychromecast_returns_empty(self):
         """A missing pychromecast yields [] (import guarded), not an exception.
 
         Failure manifestation: the discover endpoint would 500 on a host without
-        pychromecast instead of reporting no devices.
+        pychromecast instead of reporting no devices. A ``None`` entry in
+        sys.modules makes ``import pychromecast`` raise ImportError whether or not
+        the package is installed here.
         """
-        sys.modules.pop("pychromecast", None)
-        # Force import to fail by inserting a sentinel that raises on attribute use
-        # is unnecessary: simply ensure the real module is absent in this env.
-        if "pychromecast" in sys.modules:
-            self.skipTest("pychromecast installed in this environment")
-        assert cast.discover(log=MagicMock()) == []
+        with patch.dict(sys.modules, {"pychromecast": None}):
+            assert cast.discover(log=MagicMock()) == []
 
 
 class TestStatusPayload(unittest.TestCase):

@@ -19,6 +19,8 @@ pytest.importorskip("chess")
 import chess
 import chess.pgn
 
+from universalchess.services import chess_clock as clock_service_module
+from universalchess.services.chess_clock import ChessClockService
 from universalchess.services.chess_game import ChessGameService
 from universalchess.state.chess_clock import reset_chess_clock
 from universalchess.state.chess_game import reset_chess_game
@@ -30,10 +32,17 @@ from universalchess.tests.fake_clock import FakeMonotonic
 def live(monkeypatch):
     """A ChessGameService over a fresh game state with a hand-advanced clock.
 
+    The clock-service singleton is replaced for the test, not just the clock
+    state: the service, not the state, holds the time control the PGN reads to
+    decide whether to write [%clk]. A service left configured as timed by an
+    earlier test made the untimed case here export clock comments, and the
+    timed case here leaked 5+0 to whatever ran next.
+
     Broadcasting is stubbed out: these tests are about the PGN text, and the
     real broadcast opens a unix socket.
     """
     reset_chess_clock()
+    monkeypatch.setattr(clock_service_module, "_instance", ChessClockService())
     state = reset_chess_game()
     clock = FakeMonotonic()
     state._now_monotonic = clock

@@ -10,80 +10,13 @@ The Board > Sprites radio list needs two new IconButtonWidget capabilities:
    the button's main icon, composited through a transparency mask so it sits on
    the menu background instead of painting a white box.
 
-These run on non-RPi hosts, so IconButtonWidget is imported without executing
-the epaper package __init__ (which would touch hardware), mirroring
-test_star_icon.
 """
 
-import sys
-import types
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
+from PIL import Image
 
-Image = None  # bound to the real PIL.Image by the autouse fixture below
-
-
-@pytest.fixture(autouse=True)
-def _real_pil_and_fresh_epaper():
-    """Restore real PIL and force epaper modules to rebind it.
-
-    Other test modules replace PIL with a MagicMock in sys.modules; any epaper
-    module imported under that mock keeps mock PIL bound. Restore a real PIL,
-    rebind the test-global Image, and drop cached epaper modules so they re-bind
-    real PIL when re-imported below (otherwise widget.render works on mocks and
-    composites nothing).
-
-    Every sys.modules entry this file removes or replaces -- including the stub
-    packages ``_import_icon_button_widget`` installs -- is put back afterwards.
-    Leaving them out corrupts later tests in a way that is hard to trace: a
-    ``universalchess.epaper`` package popped here is re-imported by whoever needs
-    it next, but the ``universalchess`` package object still holds the *original*
-    epaper module as its ``epaper`` attribute, and that one still holds the
-    original submodules. From then on ``import universalchess.epaper.x as m``
-    (which walks parent attributes) and ``from universalchess.epaper.x import y``
-    (which reads sys.modules) see two different modules, so patching one has no
-    effect on the other.
-    """
-    global Image
-    pil_names = ("PIL.ImageFont", "PIL.ImageDraw", "PIL.Image", "PIL")
-    epaper_names = [m for m in sys.modules if m.startswith("universalchess.epaper")]
-    saved = {name: sys.modules[name] for name in (*pil_names, *epaper_names) if name in sys.modules}
-
-    for name in pil_names:
-        sys.modules.pop(name, None)
-    import PIL.Image as real_image
-    import PIL.ImageDraw  # noqa: F401  (ensure real submodule is registered)
-    import PIL.ImageFont  # noqa: F401
-    Image = real_image
-    for name in epaper_names:
-        sys.modules.pop(name, None)
-    try:
-        yield
-    finally:
-        for name in [m for m in sys.modules if m.startswith("universalchess.epaper")]:
-            del sys.modules[name]
-        for name in (*pil_names, *epaper_names):
-            sys.modules.pop(name, None)
-        sys.modules.update(saved)
-
-
-def _import_icon_button_widget():
-    """Import IconButtonWidget without importing the epaper package __init__."""
-    epaper_pkg = types.ModuleType("universalchess.epaper")
-    epaper_dir = Path(__file__).resolve().parents[1] / "epaper"
-    epaper_pkg.__path__ = [str(epaper_dir)]
-    sys.modules["universalchess.epaper"] = epaper_pkg
-
-    framework_pkg = types.ModuleType("universalchess.epaper.framework")
-    framework_dir = epaper_dir / "framework"
-    framework_pkg.__path__ = [str(framework_dir)]
-    sys.modules["universalchess.epaper.framework"] = framework_pkg
-
-    from universalchess.epaper.icon_button import IconButtonWidget  # type: ignore
-
-    return IconButtonWidget
+from universalchess.epaper.icon_button import IconButtonWidget
 
 
 def test_radio_checked_draws_outer_and_inner_circle():
@@ -93,7 +26,6 @@ def test_radio_checked_draws_outer_and_inner_circle():
     ellipses (outer ring + inner dot); an empty one renders only the ring. If the
     fill were dropped the active sheet would be indistinguishable from the rest.
     """
-    IconButtonWidget = _import_icon_button_widget()
     widget = IconButtonWidget(
         0, 0, 160, 60,
         update_callback=lambda *a, **k: None,
@@ -117,7 +49,6 @@ def test_render_with_icon_image_composites_preview_onto_button():
     the left icon region. Without the image path (or mask), the icon area would
     stay blank/white and this assertion fails.
     """
-    IconButtonWidget = _import_icon_button_widget()
 
     # 16x16 preview: a solid black blob with a matching opaque mask.
     preview = Image.new("1", (16, 16), 1)  # white
@@ -156,7 +87,6 @@ def test_empty_vertical_label_skips_text_and_centers_the_icon():
     still runs) or icon_y is start_y + icon_size/2 instead of the content
     midpoint (the 4px text gap still lifts the glyph).
     """
-    IconButtonWidget = _import_icon_button_widget()
     width, height = 64, 56
     icon_size = 32
     widget = IconButtonWidget(
@@ -231,7 +161,6 @@ def test_zero_border_width_does_not_stroke_the_frame():
     How a regression manifests: the four corners of the margin-inset
     rectangle are black, so a width-0 button is boxed again.
     """
-    IconButtonWidget = _import_icon_button_widget()
     bordered = _play_sized_button(IconButtonWidget, border_width=2)
     bordered_sprite = Image.new("1", (128, 140), 1)
     bordered.render(bordered_sprite)
@@ -256,7 +185,6 @@ def test_zero_border_width_selected_does_not_stroke_the_frame():
     (the outline) instead of the Bayer dither, which has white pixels in
     that column at shade 12.
     """
-    IconButtonWidget = _import_icon_button_widget()
     widget = _play_sized_button(IconButtonWidget, border_width=0, selected=True)
     sprite = Image.new("1", (128, 140), 1)
     widget.render(sprite)
@@ -292,7 +220,6 @@ def test_selected_universal_logo_keeps_black_ink_and_white_halo():
     white (inverted), or a pixel on the 1px ring around it is black (dither
     touching the body).
     """
-    IconButtonWidget = _import_icon_button_widget()
     from universalchess.epaper.icon_button import set_knight_logo
 
     size, ink_origin, ink_size = 32, 12, 8
@@ -334,7 +261,6 @@ def test_selected_universal_logo_mattes_enclosed_face_and_neck():
     How a regression manifests: the centre of a black ring (paper inside
     the profile, not in the ink mask) is black from the Bayer dither.
     """
-    IconButtonWidget = _import_icon_button_widget()
     from universalchess.epaper.icon_button import set_knight_logo
 
     size = 32

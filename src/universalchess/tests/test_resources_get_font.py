@@ -20,8 +20,6 @@ loader is registered. These tests pin:
    is shared rather than rebuilt per caller (the regression being fixed).
 """
 
-import sys
-
 import pytest
 
 import universalchess.resources as resources_mod
@@ -29,19 +27,12 @@ from universalchess.resources import ResourceLoader, get_font, set_resource_load
 
 
 @pytest.fixture(autouse=True)
-def _real_pil_and_clean_singleton():
-    """Bind the real PIL.ImageFont and isolate the app-wide loader singleton.
+def _clean_singleton():
+    """Isolate the app-wide loader singleton.
 
-    Other test modules replace PIL with a MagicMock in sys.modules at import
-    time and never restore it; rebind the real PIL so load_default/truetype work.
-    Also save/clear/restore the module global so each test starts with no
+    Saves, clears, and restores the module global so each test starts with no
     registered loader and leaves none behind for unrelated tests.
     """
-    for name in ("PIL.ImageFont", "PIL.ImageDraw", "PIL.Image", "PIL"):
-        sys.modules.pop(name, None)
-    import PIL.ImageFont as real_font
-    resources_mod.ImageFont = real_font
-
     saved = resources_mod._resource_loader
     resources_mod._resource_loader = None
     yield

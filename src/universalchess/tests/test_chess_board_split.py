@@ -19,72 +19,10 @@ move glyphs are layout-aware, and (6) that LEGACY sheets are classified and
 rendered unchanged.
 """
 
-import sys
-import pytest
-from unittest.mock import MagicMock
 from concurrent.futures import Future
+from unittest.mock import MagicMock
 
-
-Image = ImageDraw = ImageChops = None  # bound by the autouse fixture
-
-
-_PIL_MODULE_NAMES = (
-    "PIL", "PIL.Image", "PIL.ImageDraw", "PIL.ImageChops",
-    "PIL.ImageFont", "PIL.ImageFilter",
-)
-
-
-@pytest.fixture(autouse=True)
-def _real_pil():
-    """Bind real PIL into the modules under test, then fully restore on teardown.
-
-    Other test modules replace PIL with a MagicMock in sys.modules and never
-    restore it, which leaves already-imported modules bound to the mock. This
-    fixture temporarily installs real PIL and rebinds it in the render modules so
-    crop/paste/dither run for real here.
-
-    Crucially it snapshots the prior sys.modules entries and the rebinding
-    modules' attributes and restores them on teardown. Without that, popping PIL
-    would leak a duplicate PIL module to later-collected test modules -- breaking
-    ones that patch Image.open or expect a mocked PIL (e.g. the chromecast and
-    clock suites), which is exactly the leakage this heals for itself.
-    """
-    import universalchess.epaper.chess_board as cb
-    import universalchess.epaper.move_render as mr
-    import universalchess.resources as rl
-
-    saved_modules = {name: sys.modules.get(name) for name in _PIL_MODULE_NAMES}
-    saved_attrs = [
-        (cb, "Image", cb.Image), (cb, "ImageDraw", cb.ImageDraw),
-        (cb, "ImageChops", cb.ImageChops), (cb, "ImageFilter", cb.ImageFilter),
-        (mr, "Image", mr.Image), (rl, "Image", rl.Image),
-    ]
-
-    for name in _PIL_MODULE_NAMES:
-        sys.modules.pop(name, None)
-    import PIL.Image as real_image
-    import PIL.ImageDraw as real_draw
-    import PIL.ImageChops as real_chops
-    import PIL.ImageFilter as real_filter
-
-    cb.Image, cb.ImageDraw, cb.ImageChops, cb.ImageFilter = (
-        real_image, real_draw, real_chops, real_filter,
-    )
-    mr.Image = real_image
-    rl.Image = real_image
-
-    global Image, ImageDraw, ImageChops
-    Image, ImageDraw, ImageChops = real_image, real_draw, real_chops
-    try:
-        yield
-    finally:
-        for obj, attr, value in saved_attrs:
-            setattr(obj, attr, value)
-        for name, module in saved_modules.items():
-            if module is None:
-                sys.modules.pop(name, None)
-            else:
-                sys.modules[name] = module
+from PIL import Image, ImageDraw
 
 
 TILE = 16
