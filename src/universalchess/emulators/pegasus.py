@@ -227,6 +227,9 @@ class Pegasus:
 
         With a game manager the occupancy is the board that leads (the game's
         while the web board is in charge), sent in hardware order.
+
+        An unreadable occupancy sends no dump and returns False. An all-empty
+        dump in its place would tell the app every piece was lifted.
         """
         log.info(f"[Pegasus Board dump] getting board state")
         if self.manager is not None:
@@ -240,20 +243,17 @@ class Pegasus:
             bs = board.getBoardState()
         
         if bs is None:
-            log.error("[Pegasus Board dump] getBoardState() returned None!")
-            # Return empty board as fallback
-            bs_occupancy = [0x00] * 64
-        else:
-            # Log raw board state for debugging
-            log.info(f"[Pegasus Board dump] raw state: {' '.join(f'{b:02x}' for b in bs)}")
-            # Transform to simple occupancy: 0x00 = empty, 0x01 = occupied
-            # Centaur returns 0x00 for empty, non-zero for occupied pieces
-            bs_occupancy = [0x01 if b != 0 else 0x00 for b in bs]
-            log.info(f"[Pegasus Board dump] occupancy: {' '.join(f'{b:02x}' for b in bs_occupancy)}")
-            # Count occupied vs empty
-            occupied = sum(1 for b in bs_occupancy if b != 0x00)
-            log.info(f"[Pegasus Board dump] {occupied}/64 squares occupied")
-        
+            log.error("[Pegasus Board dump] Occupancy unreadable - sending no board dump")
+            return False
+
+        log.info(f"[Pegasus Board dump] raw state: {' '.join(f'{b:02x}' for b in bs)}")
+        # Transform to simple occupancy: 0x00 = empty, 0x01 = occupied
+        # Centaur returns 0x00 for empty, non-zero for occupied pieces
+        bs_occupancy = [0x01 if b != 0 else 0x00 for b in bs]
+        log.info(f"[Pegasus Board dump] occupancy: {' '.join(f'{b:02x}' for b in bs_occupancy)}")
+        occupied = sum(1 for b in bs_occupancy if b != 0x00)
+        log.info(f"[Pegasus Board dump] {occupied}/64 squares occupied")
+
         self.send_packet(command.BOARD_DUMP_RESP, bs_occupancy)
         return True
 

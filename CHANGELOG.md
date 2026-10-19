@@ -1799,6 +1799,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   board, and the app sees no physical events until the pieces match the
   game again.
 
+- **A failed board read reached the DGT app as an empty board**: when the
+  Pegasus emulator could not read occupancy for a board-dump request, it
+  sent 64 empty squares, which the app takes as every piece lifted from a
+  real board. No dump is sent when occupancy is unreadable, so the app is
+  never told about a position that was not read.
+
 - **Web Lichess lobby hid nothing when no accounts were saved**: Settings →
   Players still drew Rated, Ongoing Games, Challenges, and Seek New Game
   against an empty store, so the card offered play controls that cannot

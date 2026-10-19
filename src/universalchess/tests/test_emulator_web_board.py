@@ -169,6 +169,46 @@ def test_pegasus_board_dump_reports_the_reported_occupancy_in_hardware_order(
     assert packets == [expected]
 
 
+def _unreadable_through_manager(game_manager, _board_stub, _monkeypatch):
+    game_manager.reported_occupancy.return_value = None
+    return game_manager
+
+
+def _unreadable_hardware_without_manager(_game_manager, board_stub, monkeypatch):
+    monkeypatch.setattr(board_stub, "getBoardState", lambda: None)
+    return None
+
+
+@pytest.mark.parametrize(
+    "make_unreadable",
+    [
+        pytest.param(_unreadable_through_manager, id="manager-occupancy-unreadable"),
+        pytest.param(_unreadable_hardware_without_manager, id="hardware-unreadable"),
+    ],
+)
+def test_pegasus_board_dump_sends_nothing_when_occupancy_is_unreadable(
+    game_manager, board_stub, monkeypatch, make_unreadable
+):
+    """A failed board read is not reported as an empty board.
+
+    An all-empty dump tells the DGT app every piece was lifted, which it acts on
+    as a real position. With nothing readable there is no dump to give, so none
+    is sent and the packet is reported unhandled. Regression: packets holds one
+    64-zero payload, or board_dump returns True.
+    """
+    manager = make_unreadable(game_manager, board_stub, monkeypatch)
+    emulator = Pegasus(sendMessage_callback=MagicMock(), manager=manager)
+    packets = []
+    monkeypatch.setattr(
+        emulator, "send_packet", lambda _kind, payload=b"": packets.append(list(payload))
+    )
+
+    handled = emulator.board_dump()
+
+    assert packets == []
+    assert handled is False
+
+
 def test_pegasus_hands_the_lit_reply_to_the_game(game_manager):
     """A mode-5 LED packet's fields go to GameManager as chess squares.
 
