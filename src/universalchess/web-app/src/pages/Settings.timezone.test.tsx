@@ -9,8 +9,8 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
 
 /**
  * Guards the System-tab Timezone selector:
- *  - it renders populated from the runtime-injected `timezones` option set and
- *    shows the persisted zone;
+ *  - it renders populated from GET /api/system/timezones (not the menu schema)
+ *    and shows the persisted zone;
  *  - changing it POSTs to the dedicated /api/system/timezone endpoint (which
  *    persists + applies to the OS clock), NOT the generic /api/settings save.
  *
@@ -18,7 +18,20 @@ import menuSchemaFixture from '../test/fixtures/menuSchema';
  * through the generic save (which would not apply the OS change).
  */
 
-const menuSchema: unknown = menuSchemaFixture;
+// The fixture still carries a timezone stand-in. This test strips it so a
+// selector that reads the catalog instead of GET /api/system/timezones has no
+// Asia/Tokyo option and fails.
+const menuSchema: unknown = (() => {
+  const schema = structuredClone(menuSchemaFixture) as { optionSets: Record<string, unknown> };
+  delete schema.optionSets.timezones;
+  return schema;
+})();
+
+const TIMEZONE_OPTIONS = [
+  { value: 'UTC', label: 'UTC' },
+  { value: 'Asia/Tokyo', label: 'Asia/Tokyo' },
+  { value: 'Europe/Oslo', label: 'Europe/Oslo' },
+];
 
 const idleEngineStatus = {
   active: false, installing: false, engine: null, display_name: null,
@@ -70,6 +83,9 @@ beforeEach(() => {
     if (url === '/api/menu-schema') return jsonResponse(menuSchema);
     if (url === '/api/settings' && method === 'GET') return jsonResponse(settingsPayload());
     if (url === '/api/settings' && method === 'POST') { posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') }); return jsonResponse({ success: true }); }
+    if (url === '/api/system/timezones' && method === 'GET') {
+      return jsonResponse({ timezones: TIMEZONE_OPTIONS });
+    }
     if (url === '/api/system/timezone' && method === 'POST') {
       posts.push({ url, body: JSON.parse((init?.body as string) ?? '{}') });
       return jsonResponse({ success: true, timezone: 'Asia/Tokyo', applied: true });
@@ -122,10 +138,11 @@ function findTimezoneSelect(): HTMLSelectElement {
 }
 
 describe('System tab timezone selector', () => {
-  it('renders the persisted zone with options from the injected list', async () => {
+  it('renders the persisted zone with options from the timezone endpoint', async () => {
     renderSystemTab();
-    // Populated from the runtime-injected `timezones` option set; a regression
-    // that dropped the injection or the field would leave no UTC-valued select.
+    // Populated from GET /api/system/timezones. A regression that read the menu
+    // schema instead would leave no Asia/Tokyo option, because this test strips
+    // that list from the schema it serves.
     const select = await waitFor(findTimezoneSelect);
     expect(select.value).toBe('UTC');
     const values = Array.from(select.options).map((o) => o.value);

@@ -43,10 +43,11 @@ _APPLY_TIMEOUT_SECONDS = 30
 # How long a sync-flag reading is reused before the OS is consulted again.
 #
 # Reading the flags costs a fork and a DBus round trip, which is the most
-# expensive thing either caller does: GET /api/settings reads them on every
-# Settings page load and is unauthenticated, and the board reads them on every
-# rebuild of its System menu. Five seconds collapses the burst a single page load
-# produces while staying short enough that a state changed outside the UI -- by
+# expensive thing either caller does: GET /api/system/time reads them when the
+# System tab or the Device Clock card is open (unauthenticated), and the board
+# reads them on every rebuild of its System menu. Five seconds collapses the
+# burst one of those views produces while staying short enough that a state
+# changed outside the UI -- by
 # `timedatectl` at a shell, or by timesyncd flipping NTPSynchronized on its own
 # once it reaches a server -- shows up promptly. Changes made through this module
 # do not wait for it: they drop the cache outright.

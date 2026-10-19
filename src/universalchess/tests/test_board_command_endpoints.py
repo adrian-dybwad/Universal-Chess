@@ -73,6 +73,49 @@ def test_positions_endpoint_returns_categories_with_fens(client):
             assert pos["fen"] and len(pos["fen"].split()) == 6
 
 
+def test_positions_summary_lists_names_and_counts_without_fens(client):
+    """?summary=1 is the sidebar: category names and counts, no FENs.
+
+    Why: the Positions page used to download every position before it could
+    show the category list. How a regression manifests: the summary carries
+    fen strings, so opening the page transfers the whole catalog again.
+    """
+    resp = client.get("/api/positions?summary=1")
+    assert resp.status_code == 200
+    categories = json.loads(resp.data)["categories"]
+    assert categories
+    names = []
+    for category in categories:
+        assert set(category) == {"name", "count"}
+        assert isinstance(category["count"], int) and category["count"] >= 0
+        names.append(category["name"])
+    assert "puzzles" in names
+
+
+def test_positions_category_query_returns_only_that_category(client):
+    """?category= returns one category's positions, not the rest of the file.
+
+    Why: the open category is the only board data the page draws. How a
+    regression manifests: the response includes other categories, or a known
+    category 404s. An unknown name is 404 with no positions attached.
+    """
+    resp = client.get("/api/positions?category=puzzles")
+    assert resp.status_code == 200
+    body = json.loads(resp.data)
+    assert "categories" not in body
+    category = body["category"]
+    assert category["name"] == "puzzles"
+    assert category["count"] == len(category["positions"])
+    assert category["positions"]
+    for pos in category["positions"]:
+        assert set(pos.keys()) == {"name", "fen", "hint"}
+        assert len(pos["fen"].split()) == 6
+
+    missing = client.get("/api/positions?category=not_a_category")
+    assert missing.status_code == 404
+    assert json.loads(missing.data) == {"category": None}
+
+
 def test_setup_position_rejects_invalid_fen(client, monkeypatch):
     """An invalid FEN must be rejected with 400 and never sent to the board.
 

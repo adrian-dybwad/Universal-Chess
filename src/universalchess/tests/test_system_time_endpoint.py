@@ -106,36 +106,26 @@ def test_get_time_passes_unknown_sync_state_through_as_null(client, monkeypatch)
     assert body["ntp_synchronised"] is None
 
 
-@pytest.mark.parametrize("enabled,expected", [(True, "True"), (False, "False")])
-def test_settings_payload_reports_the_live_network_sync_state(
-    client, monkeypatch, enabled, expected
-):
-    """/api/settings reports system.ntp_enabled from the live OS, not the ini.
+def test_settings_payload_does_not_probe_live_device_state(client, monkeypatch):
+    """GET /api/settings does not read the clock, the zone, or the USB gadget.
 
-    Why: the Settings page's Network Time toggle initialises from this payload,
-    and the state is owned by systemd -- nothing is persisted in centaur.ini, so
-    there is no stored value that could be shown instead. How a regression
-    manifests: the toggle sits in the wrong position on load and only corrects
-    itself once the user moves it, which reads as the setting not sticking.
+    Why: those reads fork timedatectl, walk zoneinfo, or run ip/nmcli/systemctl.
+    The settings document is fetched on every page, and again when Settings
+    opens. The System tab reads the clock from GET /api/system/time and the zone
+    list from GET /api/system/timezones; Connectivity reads the gadget from
+    GET /api/system/usb-gadget. How a regression manifests: opening Sound or
+    Players waits several seconds on a probe the screen does not show.
     """
-    _patch_status(monkeypatch, ntp_enabled=enabled)
+    def forbid(*_args, **_kwargs):
+        raise AssertionError("GET /api/settings probed live device state")
+
+    monkeypatch.setattr("universalchess.services.system_time_service.get_status", forbid)
+    monkeypatch.setattr("universalchess.services.timezone_service.get_timezone", forbid)
+    monkeypatch.setattr("universalchess.services.usb_gadget_service.get_status", forbid)
+
     resp = client.get("/api/settings")
     assert resp.status_code == 200
-    assert json.loads(resp.data)["system"]["ntp_enabled"] == expected
-
-
-def test_settings_payload_omits_network_sync_state_when_it_is_unknown(client, monkeypatch):
-    """An undeterminable state leaves the key out rather than guessing.
-
-    Why: the payload is stringly-typed with no null, so reporting "False" for
-    "could not tell" would put a definite position on a toggle the device never
-    reported -- the Device Clock card is what states "Unknown" honestly. How a
-    regression manifests: a board whose state could not be read shows Network
-    Time as off while the card beside it says Unknown.
-    """
-    _patch_status(monkeypatch, ntp_enabled=None)
-    resp = client.get("/api/settings")
-    assert "ntp_enabled" not in json.loads(resp.data)["system"]
+    assert "ntp_enabled" not in json.loads(resp.data).get("system", {})
 
 
 @pytest.mark.parametrize("path,payload", [

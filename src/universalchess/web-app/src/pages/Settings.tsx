@@ -505,14 +505,14 @@ function parseRawSettings(data: SettingsData): FormSettings {
       // English source locale when unset.
       ui_language: data.system?.ui_language || 'en',
       // Whether the device keeps time from the internet. Owned by systemd, not
-      // centaur.ini, and changed only through the dedicated /api/system/ntp
-      // endpoint. The key is absent when the board could not read the state; the
-      // toggle then sits off while the Device Clock card reports it as unknown,
-      // and moving the toggle sends an explicit value either way.
+      // centaur.ini. GET /api/settings does not probe it; the System tab fills
+      // this from GET /api/system/time. Until that returns the toggle sits off,
+      // and the Device Clock card says Unknown when the read fails. Moving the
+      // toggle sends an explicit value either way, through /api/system/ntp.
       ntp_enabled: parseConfigBool(data.system?.ntp_enabled, false),
-      // Desired USB Ethernet gadget mode. Overlaid from the live service on
-      // GET /api/settings (seeded to client when boot is prepared and unset).
-      // Changed only through /api/system/usb-gadget.
+      // Desired USB Ethernet gadget mode. The Connectivity card reads the live
+      // value from GET /api/system/usb-gadget when that tab is open; this is
+      // only the ini copy, used if a save path still sees the key.
       usb_gadget_mode: data.system?.usb_gadget_mode || 'off',
     },
   };
@@ -619,6 +619,10 @@ export function Settings() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const activeTab = parseSettingsTab(tabParam);
+  // Latest tab for callbacks that run after an await (auto-save) and must not
+  // pull data for a tab the user has already left.
+  const activeTabRef = useRef(activeTab);
+  activeTabRef.current = activeTab;
   // The Engines tab shows the profile editor when the URL names an engine
   // (`?engine=`), including the Players/Centaur shortcut. Sidebar Chess Engines
   // navigates to /settings/engines with no query and closes it.
@@ -653,6 +657,10 @@ export function Settings() {
   // here fit to show a user.
   const [engineLevels, setEngineLevels] = useState<{ [key: string]: MenuOption[] }>({});
   const [spriteSheets, setSpriteSheets] = useState<SpriteSheetRef[]>([{ id: 'default', version: '' }]);
+  // Full IANA list for the System tab selector. Loaded from
+  // GET /api/system/timezones only while that tab is open; the menu catalog
+  // does not carry it.
+  const [timezoneOptions, setTimezoneOptions] = useState<MenuOption[]>([]);
   // Every registered AI agent (built-in + user modules) from GET /api/agents,
   // with its non-secret config (model/base URL) and whether a key is stored. Backs
   // the Agents tab list and the Game tab's agent selector.
@@ -716,6 +724,29 @@ export function Settings() {
   // is still saving. Kept in a ref so the merge effect reads the latest set
   // without re-subscribing.
   const pendingFormKeysRef = useRef<Set<string>>(new Set());
+  // Clock and NTP from GET /api/system/time. They are not in the settings
+  // document, so a settings refresh must not put the toggle back to its default
+  // or replace the live zone with the ini copy.
+  const liveClockRef = useRef<{ timezone?: string; ntp_enabled?: boolean } | null>(null);
+  const withLiveClock = useCallback((form: FormSettings): FormSettings => {
+    const live = liveClockRef.current;
+    if (!live) return form;
+    const patch: Partial<FormSettings['system']> = {};
+    if (
+      typeof live.timezone === 'string' && live.timezone
+      && !pendingFormKeysRef.current.has('system.timezone')
+    ) {
+      patch.timezone = live.timezone;
+    }
+    if (
+      typeof live.ntp_enabled === 'boolean'
+      && !pendingFormKeysRef.current.has('system.ntp_enabled')
+    ) {
+      patch.ntp_enabled = live.ntp_enabled;
+    }
+    if (Object.keys(patch).length === 0) return form;
+    return { ...form, system: { ...form.system, ...patch } };
+  }, []);
   // Latest saveSettings closure, so the debounced timer (and the per-agent Save)
   // always persist the current formSettings rather than a value captured when the
   // timer was scheduled.
@@ -777,29 +808,17 @@ export function Settings() {
     }
   }, []);
 
-  // Fetch the mutable settings state. Reused for the initial load and the SSE
-  // refresh, so it must only fetch things that actually change at runtime
-  // (settings values, engine install state, sprite sheets) -- never the catalog.
+  // Fetch the mutable settings document. Reused for the initial load and the
+  // SSE refresh. Engine lists, sprite sheets, accounts, agents, and live device
+  // probes are not part of this: each is requested by the tab that displays it.
   const fetchSettings = useCallback(async () => {
-    const [settingsData, enginesData, spritesData] = await Promise.all([
-      apiFetch('/api/settings').then((r) => r.json()),
-      apiFetch('/api/engines/all').then((r) => r.json()),
-      apiFetch('/api/sprites').then((r) => r.json()).catch(() => ['default']),
-    ]);
+    const settingsData = await apiFetch('/api/settings').then((r) => r.json());
     setRawSettings(settingsData);
-    setEngines(enginesData);
-    // Only engines that can actually play are offered as opponents: an installed
-    // engine missing its required files (a Maia awaiting repair) is excluded so
-    // it is not selectable until repaired.
-    setInstalledEngines(enginesData.filter((e: EngineDefinition) => e.installed && !e.needs_repair));
-    setSpriteSheets(parseSpriteSheets(spritesData));
-    await fetchAccounts();
-
-    const parsed = parseRawSettings(settingsData);
+    const parsed = withLiveClock(parseRawSettings(settingsData));
     setFormSettings(parsed);
     setOriginalSettings(parsed);
-    return { settingsData, enginesData };
-  }, [fetchAccounts]);
+    return { settingsData };
+  }, [withLiveClock]);
 
   // Fetch every registered agent and seed the per-agent edit forms. The API key
   // edit starts blank (write-only); model/base URL are seeded from the stored
@@ -850,14 +869,16 @@ export function Settings() {
     if (!initialLoadedRef.current) return;
     const raw = useSettingsStore.getState().raw;
     if (!raw) return;
-    const incoming = parseRawSettings(raw as SettingsData);
+    const incoming = withLiveClock(parseRawSettings(raw as SettingsData));
     setFormSettings((prev) => mergeFormPreservingPending(prev, incoming, pendingFormKeysRef.current));
     setOriginalSettings((prev) => mergeFormPreservingPending(prev, incoming, pendingFormKeysRef.current));
-    void fetchAgents();
+    if (activeTabRef.current === 'game' || activeTabRef.current === 'agents') {
+      void fetchAgents();
+    }
     // Runs on each store revision bump (a remote refresh). fetchAgents is a
     // stable useCallback, so listing it does not cause extra runs; parse/merge
     // helpers are module-level and the store/refs are read imperatively.
-  }, [storeRevision, fetchAgents]);
+  }, [storeRevision, fetchAgents, withLiveClock]);
 
   // Re-fetch the catalog when the device UI language changes so the Settings
   // field labels, help, and option labels switch to the new locale. Skipped on
@@ -932,23 +953,20 @@ export function Settings() {
   // the state update inside loadEngineLevels happens after the awaited fetch, not
   // synchronously within the effect body (data fetching, not a render cascade).
   useEffect(() => {
+    if (activeTab !== 'players') return;
     void (async () => {
       if (formSettings.player1.engine) await loadEngineLevels(formSettings.player1.engine);
       if (formSettings.player2.engine) await loadEngineLevels(formSettings.player2.engine);
-      if (formSettings.game.analysis_engine) await loadEngineLevels(formSettings.game.analysis_engine);
     })();
-  }, [formSettings.player1.engine, formSettings.player2.engine, formSettings.game.analysis_engine, loadEngineLevels]);
-
-  // Load the agent list on mount.
-  useEffect(() => {
-    void fetchAgents();
-  }, [fetchAgents]);
+  }, [activeTab, formSettings.player1.engine, formSettings.player2.engine, loadEngineLevels]);
 
   // Fetch the live model list for each agent that supports listing and has a key
   // stored. The endpoint uses each agent's *saved* key (server-side), so this runs
-  // when the agent set/keys change (after a save). Agents without a key or that use
-  // a free-text model get no fetch; their dropdown falls back to Default-only.
+  // when the agent set/keys change (after a save). Only the Agents tab shows the
+  // dropdown; other tabs must not call the provider. Agents without a key or that
+  // use a free-text model get no fetch; their dropdown falls back to Default-only.
   useEffect(() => {
+    if (activeTab !== 'agents') return;
     let cancelled = false;
     void (async () => {
       const results: Record<string, string[]> = {};
@@ -977,7 +995,7 @@ export function Settings() {
     return () => {
       cancelled = true;
     };
-  }, [agents]);
+  }, [activeTab, agents]);
 
   // Fetch the selectable coaches and the coach the current selection resolves to.
   // The resolved coach depends on the *saved* selection and player Elos (server
@@ -985,6 +1003,7 @@ export function Settings() {
   // player Elos change. Failures leave the list empty; the render falls back to
   // an Auto-only selector.
   useEffect(() => {
+    if (activeTab !== 'game') return;
     let cancelled = false;
     void (async () => {
       try {
@@ -1002,6 +1021,7 @@ export function Settings() {
       cancelled = true;
     };
   }, [
+    activeTab,
     originalSettings.game.coach_id,
     originalSettings.player1.elo,
     originalSettings.player2.elo,
@@ -1233,9 +1253,11 @@ export function Settings() {
       setOriginalSettings(formSettings);
       // Refresh agents so a newly saved API key flips the agent to configured
       // right away -- the Game tab's Coach/Agent controls read that flag, and it
-      // is not carried in /api/settings (keys are write-only). Without this the
-      // just-saved agent stays hidden until a full page reload.
-      await fetchAgents();
+      // is not carried in /api/settings (keys are write-only). Other tabs do not
+      // show that flag, so they do not wait on the agent list.
+      if (activeTabRef.current === 'game' || activeTabRef.current === 'agents') {
+        await fetchAgents();
+      }
       return true;
     } catch (e) {
       console.error('Failed to save settings:', e);
@@ -1321,13 +1343,75 @@ export function Settings() {
   // player/analysis dropdowns. Returns the fetched list so callers can inspect
   // it (e.g. to resolve a display name) without waiting for the state update.
   const refreshEngines = useCallback(async (): Promise<EngineDefinition[]> => {
-    const enginesData: EngineDefinition[] = await apiFetch('/api/engines/all').then((r) => r.json());
+    const raw = await apiFetch('/api/engines/all').then((r) => r.json());
+    const enginesData: EngineDefinition[] = Array.isArray(raw) ? raw : [];
     setEngines(enginesData);
     // Exclude installed-but-incomplete engines (a Maia awaiting repair) from the
     // playable set, mirroring the initial load.
     setInstalledEngines(enginesData.filter((e) => e.installed && !e.needs_repair));
     return enginesData;
   }, []);
+
+  // Data that only one tab displays. The page shell (catalog + settings
+  // document) is already on screen; these requests must not delay it, and a
+  // tab that does not show the data must not make them.
+  useEffect(() => {
+    const wantsEngines = activeTab === 'players' || activeTab === 'game' || activeTab === 'engines';
+    const wantsAccounts = activeTab === 'players' || activeTab === 'lichess';
+    const wantsAgents = activeTab === 'game' || activeTab === 'agents';
+    const wantsSprites = activeTab === 'display';
+    if (wantsEngines) {
+      void refreshEngines().catch(() => {
+        // The shell is already up. A missed catalog leaves the engine
+        // dropdowns empty; it must not surface as an unhandled rejection.
+      });
+    }
+    if (wantsAccounts) void fetchAccounts();
+    if (wantsAgents) void fetchAgents();
+    if (!wantsSprites && activeTab !== 'system') return;
+
+    let cancelled = false;
+    void (async () => {
+      if (wantsSprites) {
+        try {
+          const spritesData = await apiFetch('/api/sprites').then((r) => r.json());
+          if (!cancelled) setSpriteSheets(parseSpriteSheets(spritesData));
+        } catch {
+          // Keep the default sheet already in state.
+        }
+      }
+      if (activeTab !== 'system') return;
+      try {
+        const [timeRes, zonesRes] = await Promise.all([
+          apiFetch('/api/system/time'),
+          apiFetch('/api/system/timezones'),
+        ]);
+        if (cancelled) return;
+        if (timeRes.ok) {
+          const time = await timeRes.json() as { timezone?: unknown; ntp_enabled?: unknown };
+          const next = { ...(liveClockRef.current ?? {}) };
+          if (typeof time.timezone === 'string' && time.timezone) next.timezone = time.timezone;
+          if (typeof time.ntp_enabled === 'boolean') next.ntp_enabled = time.ntp_enabled;
+          liveClockRef.current = next;
+          if (!cancelled) {
+            setFormSettings((prev) => withLiveClock(prev));
+            setOriginalSettings((prev) => withLiveClock(prev));
+          }
+        }
+        if (zonesRes.ok) {
+          const zones = await zonesRes.json() as { timezones?: MenuOption[] };
+          if (!cancelled && Array.isArray(zones.timezones) && zones.timezones.length > 0) {
+            setTimezoneOptions(zones.timezones);
+          }
+        }
+      } catch {
+        // The toggle stays at its default and the clock card reports its own failure.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, refreshEngines, fetchAccounts, fetchAgents, withLiveClock]);
 
   // The stream is the ongoing source, shared by every open browser. A local
   // copy covers the moment after this page starts an install, before the next
@@ -2013,7 +2097,9 @@ export function Settings() {
         } as unknown as Partial<FormSettings['system']>);
     },
   );
-  systemMenuCtx.registerProvider('timezones', () => optionSet('timezones'));
+  systemMenuCtx.registerProvider('timezones', () =>
+    timezoneOptions.length > 0 ? timezoneOptions : optionSet('timezones'),
+  );
 
   // Per-slot Players context: each card is rendered from the shared catalog
   // container `settings.player_detail` (the same nodes the board renders), so the

@@ -55,22 +55,21 @@ def test_get_timezone_returns_persisted_value(client, monkeypatch):
     assert json.loads(resp.data) == {"timezone": "Europe/Oslo"}
 
 
-def test_settings_payload_timezone_reflects_live_os_zone(client, monkeypatch):
-    """/api/settings reports system.timezone from the live OS zone, not the ini.
+def test_timezones_list_is_its_own_endpoint(client):
+    """GET /api/system/timezones returns the full IANA list.
 
-    Why: the web Settings selector initialises from this payload. The device
-    timezone is owned by the OS clock; the centaur.ini key is only a fallback and
-    is unset on a device whose zone was set during imaging (so the defaults merge
-    fills in "UTC"). How a regression manifests: system.timezone comes straight
-    from the ini/default and shows "UTC" while the board clock (and
-    /api/system/timezone) report the real zone -- the exact mismatch reported.
+    Why: the System tab selector needs every zone, and /api/menu-schema no
+    longer embeds them. How a regression manifests: the selector is empty, or
+    opening any other settings tab downloads the list anyway.
     """
-    from universalchess.services import timezone_service
-    monkeypatch.setattr(timezone_service, "get_timezone", lambda: "America/Denver")
-    resp = client.get("/api/settings")
+    from universalchess.services.timezone_service import list_timezones
+
+    resp = client.get("/api/system/timezones")
     assert resp.status_code == 200
-    body = json.loads(resp.data)
-    assert body["system"]["timezone"] == "America/Denver"
+    served = json.loads(resp.data)["timezones"]
+    assert served == [{"value": tz, "label": tz} for tz in list_timezones()]
+    values = {item["value"] for item in served}
+    assert "UTC" in values and "Europe/Oslo" in values
 
 
 def test_post_requires_auth(client):

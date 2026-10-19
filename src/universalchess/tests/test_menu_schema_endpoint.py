@@ -79,28 +79,16 @@ def test_menu_schema_serves_generated_time_control_preset_options(client):
     assert "time_control_presets" not in get_catalog().raw_menu().get("optionSets", {})
 
 
-def test_menu_schema_injects_full_timezone_option_set(client):
-    """The payload carries a full IANA timezones option set at serve time.
+def test_menu_schema_does_not_embed_the_timezone_list(client):
+    """The catalog payload does not carry the full IANA timezone list.
 
-    field.system.timezone references the "timezones" provider; the web selector
-    needs the full zone list, injected here from the stdlib (single source), not
-    authored in menu.json. How a regression manifests: dropping the injection
-    leaves the web timezone dropdown empty, or the list omits common zones.
+    Building that list walks the zoneinfo tree. Only the System tab's selector
+    needs it, from GET /api/system/timezones. How a regression manifests: opening
+    Sound or Players waits on that walk because /api/menu-schema embeds every zone.
     """
-    from universalchess.services.timezone_service import list_timezones
-
     resp = client.get("/api/menu-schema")
     data = json.loads(resp.data)
-    served = data["optionSets"].get("timezones")
-    assert served == [{"value": tz, "label": tz} for tz in list_timezones()]
-    # UTC and a representative zone must be present so the selector is usable.
-    values = {o["value"] for o in served}
-    assert "UTC" in values and "Europe/Oslo" in values
-
-    # Generated only at serve time; must not leak into the shared cached catalog.
-    from universalchess.menus.catalog import get_catalog
-
-    assert "timezones" not in get_catalog().raw_menu().get("optionSets", {})
+    assert "timezones" not in data["optionSets"]
 
 
 def test_menu_schema_includes_known_field_help(client):

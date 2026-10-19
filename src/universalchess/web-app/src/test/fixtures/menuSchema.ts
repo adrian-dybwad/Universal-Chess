@@ -11,10 +11,13 @@ import runtimeOptionSets from './runtimeOptionSets.json';
  * real file means a catalog change is exercised immediately, and there is no
  * second copy to forget.
  *
- * `timezones` and `time_control_presets` are the exception: the server builds
- * them per request from the device (the IANA database and the time-control
- * catalog), so they are absent from `menu.json` and are supplied here to match
- * what the UI actually receives.
+ * `time_control_presets` is the exception the server still injects: it builds
+ * that list per request from the time-control catalog, so it is absent from
+ * `menu.json` and is supplied here to match what the UI receives.
+ * `timezones` used to be injected the same way. The product now loads that
+ * list from GET /api/system/timezones when the System tab is open. The fixture
+ * still carries a short list so a test that renders the selector without
+ * mocking that endpoint has options; a test of the endpoint itself strips it.
  */
 export const menuSchemaFixture = {
   ...catalog,

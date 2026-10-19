@@ -45,6 +45,19 @@ _ZONEINFO_MARKER = "zoneinfo/"
 # Injected in tests so the sudo invocation can be asserted without root.
 CommandRunner = Callable[[Sequence[str], float], "subprocess.CompletedProcess"]
 
+# available_timezones() stats every file under the zoneinfo tree. That walk is
+# the slow part of building the System-tab selector; the set does not change
+# for the life of the process, so it is kept after the first read.
+_zone_names: Optional[frozenset[str]] = None
+
+
+def _zone_name_set() -> frozenset[str]:
+    """IANA names from the stdlib zoneinfo database, loaded once per process."""
+    global _zone_names
+    if _zone_names is None:
+        _zone_names = frozenset(available_timezones())
+    return _zone_names
+
 
 def _default_runner(args: Sequence[str], timeout: float) -> "subprocess.CompletedProcess":
     # argv list (no shell); args is always ["sudo", "-n", <pinned helper>, <zone>]
@@ -56,12 +69,12 @@ def _default_runner(args: Sequence[str], timeout: float) -> "subprocess.Complete
 
 def list_timezones() -> List[str]:
     """Return all IANA timezone names, sorted (always includes ``UTC``)."""
-    return sorted(available_timezones())
+    return sorted(_zone_name_set())
 
 
 def is_valid_timezone(tz: str) -> bool:
     """Whether ``tz`` is a known IANA timezone name."""
-    return tz in available_timezones()
+    return tz in _zone_name_set()
 
 
 def _canonical_zone(tz: str) -> Optional[str]:
@@ -78,7 +91,7 @@ def _canonical_zone(tz: str) -> Optional[str]:
     path (CWE-78). A membership check alone leaves the same tainted string in
     play; sourcing the value from the zoneinfo set is the actual barrier.
     """
-    return next((zone for zone in available_timezones() if zone == tz), None)
+    return next((zone for zone in _zone_name_set() if zone == tz), None)
 
 
 def _read_os_timezone() -> Optional[str]:

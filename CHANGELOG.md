@@ -1502,6 +1502,21 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   listed again until the idle wait. A running download is now reread
   within a second, and the card follows that sample's percent.
 
+- **Settings and Positions waited on data the open page does not show**:
+  opening either page blocked until one request had probed the device and
+  downloaded everything. Settings held the spinner until `GET /api/settings`
+  had asked systemd for the clock and NTP flags and had probed the USB
+  gadget, the menu schema had walked the full timezone list, and the page
+  had also fetched the engine catalog, sprites, and accounts. Positions
+  downloaded every position's FEN and then mounted a chessboard for each
+  tile near the viewport. `GET /api/settings` is now the ini document plus
+  the UI language. The System tab reads the clock and the timezone list
+  from their own endpoints; the Connectivity USB card still reads the
+  gadget when that card is open. The engine catalog, accounts, agents,
+  coaches, and sprites load only for the tab that shows them. The Positions
+  sidebar asks for category names and counts, and only the open category's
+  positions are fetched. Each tile draws a small board from the FEN.
+
 - **The web app downloaded its script again on every page load**: the Vite
   bundle's filename changes when its contents change, and the server meant
   to let the browser keep those files. Flask's file sender marks every file

@@ -1,9 +1,8 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { Card } from '../components/ui';
 import { BoardUnreachableCard } from '../components/BoardUnreachableCard';
-import { ChessBoard } from '../components/ChessBoard';
 import { useLoginRetry } from '../components/useLoginRetry';
 import { MenuIcon } from '../components/MenuIcon';
 import { useGameStore } from '../stores/gameStore';
@@ -18,9 +17,11 @@ interface PositionEntry {
   hint: string | null;
 }
 
-interface PositionCategory {
+interface PositionCategorySummary {
   name: string;
-  positions: PositionEntry[];
+  count?: number;
+  /** Present when the response already bundled positions (older payloads and tests). */
+  positions?: PositionEntry[];
 }
 
 /** Title-case an INI key like "scholars_mate" -> "Scholars Mate". */
@@ -49,54 +50,75 @@ function positionLabel(
 }
 
 /**
- * Parse a UCI hint (e.g. "e2e4" or "a7a8q") into from/to squares for a board
- * arrow. Returns null when there is no hint or it is too short to be a move, so
- * hint-less positions (most puzzles/endgames) simply render without an arrow.
+ * Parse a UCI hint (e.g. "e2e4" or "a7a8q") into from/to squares. Returns null
+ * when there is no hint or it is too short to be a move, so hint-less positions
+ * render without highlighted squares.
  */
 function parseHint(hint: string | null): { from: string; to: string } | null {
   if (!hint || hint.length < 4) return null;
   return { from: hint.slice(0, 2), to: hint.slice(2, 4) };
 }
 
+const PIECE_GLYPH: Record<string, string> = {
+  K: '\u2654', Q: '\u2655', R: '\u2656', B: '\u2657', N: '\u2658', P: '\u2659',
+  k: '\u265A', q: '\u265B', r: '\u265C', b: '\u265D', n: '\u265E', p: '\u265F',
+};
+
+/** Sixty-four squares, rank 8 first, from a FEN placement. Empty string is an empty square. */
+function fenSquares(fen: string): string[] {
+  const placement = fen.split(' ')[0] ?? '';
+  const squares: string[] = [];
+  for (const row of placement.split('/')) {
+    for (const ch of row) {
+      if (ch >= '1' && ch <= '8') {
+        const empty = Number(ch);
+        for (let i = 0; i < empty; i++) squares.push('');
+      } else {
+        squares.push(PIECE_GLYPH[ch] ?? '');
+      }
+    }
+  }
+  while (squares.length < 64) squares.push('');
+  return squares.slice(0, 64);
+}
+
+function squareName(index: number): string {
+  const file = String.fromCharCode(97 + (index % 8));
+  const rank = 8 - Math.floor(index / 8);
+  return `${file}${rank}`;
+}
+
 /**
- * Lazily-mounted preview board for a single position.
+ * Decorative preview drawn from the FEN.
  *
- * The Positions page can list dozens of positions at once; mounting a
- * react-chessboard for every one eagerly is needlessly heavy. This mounts the
- * real board only once its tile scrolls near the viewport (IntersectionObserver
- * with a margin so it is ready before it is seen), reserving a square
- * placeholder beforehand so the grid does not reflow. The board is decorative
- * and non-interactive here (pointer-events are disabled via CSS) so clicks fall
- * through to the surrounding tile that sets the position up.
+ * A react-chessboard per tile is the slow part of this page once the payload
+ * is small: each one mounts a board, pieces, and arrows. The tile only needs
+ * the position to be recognizable, so this is an 8x8 grid of glyphs. Clicks
+ * fall through to the surrounding tile (pointer-events are off).
  */
 function PositionPreview({ fen, hint }: { fen: string; hint: string | null }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
-  const arrow = useMemo(() => parseHint(hint), [hint]);
-
-  useEffect(() => {
-    const el = ref.current;
-    if (!el || visible) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setVisible(true);
-          observer.disconnect();
-        }
-      },
-      { rootMargin: '200px' }
-    );
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [visible]);
+  const squares = useMemo(() => fenSquares(fen), [fen]);
+  const hintSquares = useMemo(() => {
+    const parsed = parseHint(hint);
+    return parsed ? new Set([parsed.from, parsed.to]) : new Set<string>();
+  }, [hint]);
 
   return (
-    <div ref={ref} className="position-board" aria-hidden="true">
-      {visible ? (
-        <ChessBoard fen={fen} maxBoardWidth={240} showBestMove={arrow} />
-      ) : (
-        <div className="position-board-placeholder" />
-      )}
+    <div className="position-mini-board" aria-hidden="true">
+      {squares.map((glyph, index) => {
+        const name = squareName(index);
+        const light = (Math.floor(index / 8) + (index % 8)) % 2 === 0;
+        const classes = [
+          'position-mini-square',
+          light ? 'light' : 'dark',
+          hintSquares.has(name) ? 'hint' : '',
+        ].filter(Boolean).join(' ');
+        return (
+          <span key={name} className={classes}>
+            {glyph}
+          </span>
+        );
+      })}
     </div>
   );
 }
@@ -105,10 +127,14 @@ function PositionPreview({ fen, hint }: { fen: string; hint: string | null }) {
  * Positions page.
  *
  * A sub-nav (like Settings): a left sidebar lists the predefined-position
- * categories (GET /api/positions) and the content pane shows the selected
- * category's positions, each a clickable board preview. The active category is
- * driven by the URL (/positions/:category); /positions defaults to the first
- * category so the pane is never empty.
+ * categories and the content pane shows the selected category's positions,
+ * each a clickable board preview. The sidebar comes from
+ * GET /api/positions?summary=1 (names and counts, no FENs). The open category
+ * is then GET /api/positions?category=<name>. A response that already embeds
+ * positions (the unparameterized catalog, and the fixtures the tests serve)
+ * is used as-is so the page does not ask twice. The active category is driven
+ * by the URL (/positions/:category); /positions defaults to the first category
+ * so the pane is never empty.
  * Selecting a position sets it up on the physical board (POST
  * /api/board/setup-position). When a game is in progress a confirmation is shown
  * first because setting up a position ends that game (recorded as abandoned on
@@ -122,8 +148,13 @@ export function Positions() {
   const { category: categoryParam } = useParams();
   const navigate = useNavigate();
   const { t } = useTranslation();
-  const [categories, setCategories] = useState<PositionCategory[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [summaries, setSummaries] = useState<PositionCategorySummary[]>([]);
+  const [positionsByCategory, setPositionsByCategory] = useState<Record<string, PositionEntry[]>>({});
+  // True when the index response already included positions, so switching
+  // categories must not issue a second request for data we already have.
+  const [bundled, setBundled] = useState(false);
+  const [indexLoading, setIndexLoading] = useState(true);
+  const [reloadToken, setReloadToken] = useState(0);
   const [loadFailed, setLoadFailed] = useState(false);
   const [status, setStatus] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
   const [pending, setPending] = useState<PositionEntry | null>(null);
@@ -144,15 +175,15 @@ export function Positions() {
   // player-facing categories (puzzles, endgames, ...) regardless of their order
   // in positions.ini. Other categories keep their file order.
   const orderedCategories = useMemo(
-    () => [...categories].sort((a, b) => Number(a.name === 'test') - Number(b.name === 'test')),
-    [categories]
+    () => [...summaries].sort((a, b) => Number(a.name === 'test') - Number(b.name === 'test')),
+    [summaries]
   );
 
   // When a category is in the URL, resolve it to the loaded category (or null
   // if it does not exist, e.g. a stale bookmark).
   const selectedCategory = useMemo(
-    () => (categoryParam ? categories.find((c) => c.name === categoryParam) ?? null : null),
-    [categories, categoryParam]
+    () => (categoryParam ? summaries.find((c) => c.name === categoryParam) ?? null : null),
+    [summaries, categoryParam]
   );
 
   // The category whose positions the content pane shows. With no category in the
@@ -160,35 +191,80 @@ export function Positions() {
   // defaulting to its first tab). A URL naming a missing category resolves to
   // null so the pane can show a clear "not found" instead of silently swapping.
   const activeCategory = categoryParam ? selectedCategory : orderedCategories[0] ?? null;
+  const activePositions = activeCategory ? positionsByCategory[activeCategory.name] : undefined;
 
   const gameState = useGameStore((s) => s.gameState);
   // Setting up a position would end a live game, so we confirm first when one
   // is in progress (see isGameInProgress for the exact definition).
   const gameInProgress = isGameInProgress(gameState);
 
-  const loadPositions = useCallback(async (): Promise<void> => {
-    setLoading(true);
-    try {
-      const response = await apiFetch('/api/positions');
-      const data = await response.json();
-      if (data?.error) throw new Error(data.error);
-      setCategories(Array.isArray(data?.categories) ? data.categories : []);
-      setLoadFailed(false);
-    } catch (e) {
-      console.error('Failed to load positions:', e);
-      setLoadFailed(true);
-    } finally {
-      setLoading(false);
-    }
+  const reloadPositions = useCallback(() => {
+    setIndexLoading(true);
+    setReloadToken((n) => n + 1);
   }, []);
 
-  // Load once, on mount. The rule reports any effect that calls a function able
-  // to setState, without following it past the first await; every write in the
-  // loader happens after the response, so there is no cascading render to avoid.
+  // Sidebar first. A payload that already lists positions is the whole catalog;
+  // otherwise only the open category is fetched below.
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadPositions();
-  }, [loadPositions]);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await apiFetch('/api/positions?summary=1');
+        const data = await response.json();
+        if (data?.error) throw new Error(data.error);
+        const cats: PositionCategorySummary[] = Array.isArray(data?.categories) ? data.categories : [];
+        if (cancelled) return;
+        const hasEmbedded = cats.some((c) => Array.isArray(c.positions));
+        setSummaries(cats);
+        if (hasEmbedded) {
+          const map: Record<string, PositionEntry[]> = {};
+          for (const category of cats) {
+            map[category.name] = Array.isArray(category.positions) ? category.positions : [];
+          }
+          setPositionsByCategory(map);
+          setBundled(true);
+        } else {
+          setPositionsByCategory({});
+          setBundled(false);
+        }
+        setLoadFailed(false);
+      } catch (e) {
+        console.error('Failed to load positions:', e);
+        if (!cancelled) setLoadFailed(true);
+      } finally {
+        if (!cancelled) setIndexLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [reloadToken]);
+
+  // Positions for the category the pane is showing. Skipped when the index
+  // already included them, and when that category is already in hand.
+  useEffect(() => {
+    const name = activeCategory?.name;
+    if (indexLoading || loadFailed || bundled || !name) return;
+    if (positionsByCategory[name]) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const response = await apiFetch(`/api/positions?category=${encodeURIComponent(name)}`);
+        const data = await response.json();
+        if (cancelled) return;
+        const positions = response.ok && Array.isArray(data?.category?.positions)
+          ? data.category.positions
+          : [];
+        setPositionsByCategory((prev) => ({ ...prev, [name]: positions }));
+      } catch (e) {
+        console.error('Failed to load position category:', e);
+        if (!cancelled) setPositionsByCategory((prev) => ({ ...prev, [name]: [] }));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeCategory?.name, bundled, indexLoading, loadFailed, positionsByCategory]);
 
   const sendSetup = useCallback(async (entry: PositionEntry): Promise<void> => {
     setStatus(null);
@@ -250,7 +326,7 @@ export function Positions() {
           setAddFen('');
           setAddHint('');
           setStatus({ kind: 'success', text: t('positions.addSuccess', { name: payload.name }) });
-          await loadPositions();
+          reloadPositions();
         } else {
           // 400s carry a user-safe validation message from the server.
           setAddError(data.error || t('positions.addFailed'));
@@ -263,7 +339,7 @@ export function Positions() {
       }
     };
     await submit();
-  }, [requireLogin, t, loadPositions]);
+  }, [requireLogin, t, reloadPositions]);
 
   const onAddSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -309,7 +385,7 @@ export function Positions() {
     </div>
   );
 
-  if (loading) {
+  if (indexLoading) {
     return (
       <div className="page container--lg">
         <div className="loading">{t('positions.loading')}</div>
@@ -352,9 +428,9 @@ export function Positions() {
       <div className="page">
         {loadFailed ? (
           <div className="container--lg">
-            <BoardUnreachableCard onRetry={() => void loadPositions()} />
+            <BoardUnreachableCard onRetry={reloadPositions} />
           </div>
-        ) : categories.length === 0 ? (
+        ) : summaries.length === 0 ? (
           <div className="container--lg">
             <Card variant="muted">{t('positions.none')}</Card>
           </div>
@@ -441,10 +517,12 @@ export function Positions() {
                 </Card>
               )}
 
-              {activeCategory ? (
+              {activeCategory && activePositions ? (
                 <div className="positions-grid">
-                  {activeCategory.positions.map(renderPositionTile)}
+                  {activePositions.map(renderPositionTile)}
                 </div>
+              ) : activeCategory ? (
+                <div className="loading">{t('positions.loading')}</div>
               ) : (
                 <Card variant="muted">{t('positions.notFound')}</Card>
               )}

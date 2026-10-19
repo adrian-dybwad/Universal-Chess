@@ -158,11 +158,12 @@ def test_status_reports_the_device_epoch():
 
 # -- caching the sync flags ---------------------------------------------------
 #
-# The flags are read by GET /api/settings (unauthenticated, on every Settings
-# page load) and by the board on every rebuild of its System menu. Each read used
-# to fork a timedatectl subprocess, which on a Pi Zero is the most expensive
-# thing either path does and, on the unauthenticated endpoint, is a fork any LAN
-# client could ask for at will. These tests pin the window that collapses them.
+# The flags are read by GET /api/system/time (unauthenticated, when the System
+# tab or Device Clock card is open) and by the board on every rebuild of its
+# System menu. Each read used to fork a timedatectl subprocess, which on a Pi
+# Zero is the most expensive thing either path does and, on the unauthenticated
+# endpoint, is a fork any LAN client could ask for at will. These tests pin the
+# window that collapses them.
 
 
 def test_repeated_reads_consult_timedatectl_once_within_the_cache_window():

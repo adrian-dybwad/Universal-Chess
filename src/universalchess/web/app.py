@@ -2406,36 +2406,18 @@ def get_all_settings():
                 if key not in result[section]:
                     result[section][key] = value
 
-    # The device timezone is owned by the OS clock, not centaur.ini: the ini key
-    # is only a fallback cache, and get_timezone() reads the live OS zone
-    # (/etc/timezone). Surface that here so the web Settings selector matches the
-    # board clock instead of showing the stale ini/default value (which is "UTC"
-    # on any device whose zone was set outside our UI, e.g. during imaging).
-    from universalchess.services.timezone_service import get_timezone
-    result.setdefault("system", {})["timezone"] = get_timezone()
-
     # Surface the device UI locale from the language service (which normalises an
     # empty/unsupported ini value to a real, renderable locale) so the web app
     # initialises react-i18next to the same language the board renders, rather
-    # than trusting the raw ini value.
+    # than trusting the raw ini value. This is an ini read. Live clock, NTP, and
+    # USB-gadget probes are not: each forks a process or walks zoneinfo, and only
+    # the System tab (GET /api/system/time, GET /api/system/timezone,
+    # GET /api/system/timezones) and the Connectivity USB card
+    # (GET /api/system/usb-gadget) need them. Putting them here made every
+    # Settings open, and every other page that reads /api/settings, wait on work
+    # it does not show.
     from universalchess.services.language_service import get_language
     result.setdefault("system", {})["ui_language"] = get_language()
-
-    # Network time sync is owned by systemd; nothing about it is persisted in
-    # centaur.ini, so the live state is the only state there is. The key is left
-    # out entirely when it could not be read: this payload is stringly-typed with
-    # no null, and reporting "False" for "could not tell" would put a definite
-    # position on the Settings toggle that the device never reported. The Device
-    # Clock card reads /api/system/time directly and says "Unknown" for that case.
-    from universalchess.services.system_time_service import get_status as get_time_status
-    ntp_enabled = get_time_status().ntp_enabled
-    if ntp_enabled is not None:
-        result.setdefault("system", {})["ntp_enabled"] = str(ntp_enabled)
-
-    # USB gadget desired mode is persisted in centaur.ini but seeded/normalised
-    # by the service (prepared boards without a preference read as client).
-    from universalchess.services.usb_gadget_service import get_status as get_usb_gadget_status
-    result.setdefault("system", {})["usb_gadget_mode"] = get_usb_gadget_status().desired
 
     # Coach settings: expose the non-secret selection (coach_id/coach_provider) and
     # the per-agent model/base_url (namespaced keys pass through from the ini), but
@@ -3430,15 +3412,14 @@ def api_get_menu_schema():
     the registry the single source of truth for both platforms without a second
     fetch.
 
-    The full IANA ``timezones`` list is injected the same way: the board menu uses
-    a small curated set (``timezones_common``), but the web selector offers every
-    zone, sourced at runtime from the stdlib so it stays current with the OS.
+    The full IANA timezone list is not injected. Building it walks the zoneinfo
+    tree, and only the System tab's selector needs it (GET /api/system/timezones).
+    The board menu keeps its curated ``timezones_common`` set in the catalog.
     """
     try:
         from universalchess.menus.catalog import get_localized_catalog
         from universalchess.menus.time_control_presets import preset_options
         from universalchess.services.language_service import get_language
-        from universalchess.services.timezone_service import list_timezones
 
         # Serve the catalog localized to the device UI language so the web
         # Settings fields (labels, help, option labels) match the board. Read the
@@ -3458,14 +3439,23 @@ def api_get_menu_schema():
         # -> no preset -> the base-minutes control) and a trailing Custom entry
         # bracket the registered presets.
         option_sets["time_control_presets"] = preset_options()
-        # Full IANA zone list for the web timezone selector (field.system.timezone
-        # references it by the provider name "timezones").
-        option_sets["timezones"] = [{"value": tz, "label": tz} for tz in list_timezones()]
         menu["optionSets"] = option_sets
         return jsonify(menu)
     except Exception as e:
         app.logger.warning(f"Failed to load menu schema: {e}")
         return _internal_error(e)
+
+
+def _position_category_payload(category, entries):
+    """One positions category as the web page consumes it."""
+    return {
+        "name": category,
+        "count": len(entries),
+        "positions": [
+            {"name": name, "fen": fen, "hint": hint}
+            for name, (fen, hint) in entries.items()
+        ],
+    }
 
 
 @app.route("/api/positions", methods=["GET"])
@@ -3474,25 +3464,41 @@ def api_get_positions():
 
     Reads the same positions.ini the board uses (via load_positions_config), so
     web and board share one position catalog. Served read-only and
-    unauthenticated like /api/sprites; positions contain no secrets. Shape:
-        {"categories": [{"name": str,
-                          "positions": [{"name", "fen", "hint"}]}]}
+    unauthenticated like /api/sprites; positions contain no secrets.
+
+    The page asks for two smaller views rather than every FEN up front:
+
+    * ``?summary=1`` -- ``{"categories": [{"name", "count"}]}``. The sidebar.
+    * ``?category=<name>`` -- ``{"category": {"name", "count", "positions"}}``
+      for the open category. Unknown names are 404.
+
+    With neither argument the full catalog is returned, each category carrying
+    its positions, for callers that still want one payload:
+        {"categories": [{"name", "count", "positions": [{"name", "fen", "hint"}]}]}
     """
     try:
         from universalchess.utils.positions import load_positions_config
 
         raw = load_positions_config(app.logger)
-        categories = [
-            {
-                "name": category,
-                "positions": [
-                    {"name": name, "fen": fen, "hint": hint}
-                    for name, (fen, hint) in entries.items()
+        category = (request.args.get("category") or "").strip()
+        if category:
+            entries = raw.get(category)
+            if entries is None:
+                return jsonify({"category": None}), 404
+            return jsonify({"category": _position_category_payload(category, entries)})
+        if request.args.get("summary") == "1":
+            return jsonify({
+                "categories": [
+                    {"name": name, "count": len(entries)}
+                    for name, entries in raw.items()
                 ],
-            }
-            for category, entries in raw.items()
-        ]
-        return jsonify({"categories": categories})
+            })
+        return jsonify({
+            "categories": [
+                _position_category_payload(name, entries)
+                for name, entries in raw.items()
+            ],
+        })
     except Exception as e:
         app.logger.warning(f"Failed to load positions: {e}")
         return _internal_error(e)
@@ -7171,6 +7177,23 @@ def api_update_channel_set():
         return jsonify({
             "success": True,
             "channel": channel.value,
+        })
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/timezones", methods=["GET"])
+def api_timezones_list():
+    """Full IANA zone list for the System tab's timezone selector.
+
+    Walks the zoneinfo database (cached for the process after the first call).
+    Kept off /api/menu-schema and /api/settings so opening any other settings
+    tab does not pay for a list only this selector displays.
+    """
+    try:
+        from universalchess.services.timezone_service import list_timezones
+        return jsonify({
+            "timezones": [{"value": tz, "label": tz} for tz in list_timezones()],
         })
     except Exception as e:
         return _internal_error(e)
