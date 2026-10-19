@@ -59,6 +59,7 @@ class LocalController(GameController):
         # When True, prevent this controller from requesting moves from players.
         # Used during resume while the saved move list is being replayed into the game state.
         self._suppress_move_requests: bool = False
+        self._subscribed: bool = False
 
     def set_suppress_move_requests(self, suppress: bool) -> None:
         """Enable/disable move requests from this controller.
@@ -170,7 +171,7 @@ class LocalController(GameController):
     def start(self) -> None:
         """Start the local controller.
         
-        Subscribes to GameManager events and starts players.
+        Subscribes to GameManager events (first start only) and starts players.
         """
         self._active = True
         self._subscribe_to_game_manager()
@@ -179,9 +180,17 @@ class LocalController(GameController):
         log.info("[LocalController] Started")
     
     def _subscribe_to_game_manager(self) -> None:
-        """Subscribe to GameManager events for local game coordination."""
+        """Subscribe to GameManager events for local game coordination, once.
+
+        stop() keeps the subscription, so the controller is re-activated after
+        an app session already subscribed. Each subscription starts a game
+        thread with its own database session, so subscribing again left the
+        previous thread and session running.
+        """
         if not self._game_manager:
             log.warning("[LocalController] Cannot subscribe - no GameManager")
+            return
+        if self._subscribed:
             return
         
         log.info("[LocalController] Subscribing to GameManager events")
@@ -191,6 +200,7 @@ class LocalController(GameController):
             self._on_key_press,
             self._on_takeback
         )
+        self._subscribed = True
     
     def stop(self) -> None:
         """Stop the local controller.
@@ -266,11 +276,10 @@ class LocalController(GameController):
         if not self._player_manager.is_ready:
             return
         
-        chess_board = self._game_manager.chess_board
-        
-        if chess_board.is_game_over():
+        if self._game_manager.is_game_over:
             return
         
+        chess_board = self._game_manager.chess_board
         log.debug("[LocalController] Requesting move from current player")
         self._player_manager.request_move(chess_board)
     
@@ -452,7 +461,7 @@ class LocalController(GameController):
                 assistant_manager.clear_suggestion()
                 return
         
-        if chess_board.is_game_over():
+        if self._game_manager.is_game_over:
             return
         
         log.debug(f"[LocalController] Requesting suggestion from assistant manager (color={chess_board.turn})")

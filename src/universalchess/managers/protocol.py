@@ -186,16 +186,6 @@ class ProtocolManager:
     # Player Management
     # =========================================================================
     
-    def start_players(self) -> bool:
-        """Start all configured players.
-        
-        Returns:
-            True if all players started successfully.
-        """
-        if self._player_manager:
-            return self._player_manager.start()
-        return False
-    
     def stop_players(self) -> None:
         """Stop all players and release resources."""
         if self._player_manager:

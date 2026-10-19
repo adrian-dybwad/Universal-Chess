@@ -1235,6 +1235,16 @@ class GameManager:
     def player_manager(self):
         """Get the player manager for this game."""
         return self._player_manager
+
+    @property
+    def is_game_over(self) -> bool:
+        """Whether the game has ended, including by resignation, agreement, or flag.
+
+        chess_board.is_game_over() sees only terminal positions; a result
+        recorded without one leaves the board playable, so callers deciding
+        whether to prompt a player must use this.
+        """
+        return self._game_state.is_game_over
     
     def set_led_callbacks(self, led_callbacks: LedCallbacks) -> None:
         """Set the LED callbacks for this game.

@@ -269,8 +269,18 @@ class EnginePlayer(Player):
         return self.start()
     
     def stop(self) -> None:
-        """Stop the engine and release resources."""
+        """Stop the engine and release resources.
+
+        Also discards any pending move and in-flight computation. A stopped
+        engine no longer follows the game: one swapped out for a connected app
+        is told none of the app's moves, so a reply it computed before the
+        session is stale when it is seated again. Kept, that reply blocked the
+        take-over request and was treated as the move still to transcribe.
+        """
         log.info(f"[EnginePlayer] Stopping engine: {self.engine_name}")
+        cleared = self._invalidate_pending()
+        if cleared is not None:
+            log.info(f"[EnginePlayer] Discarding pending move {cleared.uci()} on stop")
         
         # Wait for init thread if running
         if self._init_thread and self._init_thread.is_alive():

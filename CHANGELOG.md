@@ -1788,6 +1788,28 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   the web game-over panel lists no final times. The times return when the
   app disconnects.
 
+- **The board never took over when a DGT/Millennium/Chessnut app
+  disconnected on its own move, and touching a piece then left the game
+  stuck in correction**: the engine set aside for the session kept a reply
+  it had computed before the app connected, and is told none of the app's
+  moves. Seated again, it ignored the request to play ("already have a
+  pending move"), and the board treated that old reply as the move still to
+  make: lifting any piece entered correction, and putting it back tried to
+  play the now-illegal reply, which aborted the place before correction
+  could end. A stopped engine now discards its pending move and any search
+  in flight. Separately, a resumed game whose pieces did not match the saved
+  position kept move requests suppressed for the rest of the game, so the
+  hand-back on disconnect never asked the side to move; suppression now ends
+  when the saved moves are replayed. The hand-back also asks for no move in
+  a game already ended by resignation, agreement, or time.
+
+- **Each app disconnect left another game thread and database session
+  running, and logged "Black player failed to start"**: re-activating local
+  play subscribed to the game again, starting a thread with its own
+  database session while the previous one kept running, and tried to start
+  players that were already running. Local play now subscribes once, and
+  only players that are not yet running are started.
+
 - **Playing on the website's board with a DGT/Millennium/Chessnut app
   connected stalled on the app's reply**: in local play a web drag lets the
   engine reply at once, leaves the pieces out of sync, and the next touch of

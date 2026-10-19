@@ -15,7 +15,9 @@ import chess
 
 from universalchess.board.logging import log
 from universalchess.state.players import get_players_state
-from .base import Player, PlayerType
+from .base import Player, PlayerState, PlayerType
+
+_STARTED_STATES = frozenset({PlayerState.INITIALIZING, PlayerState.READY, PlayerState.THINKING})
 
 
 class PlayerManager:
@@ -219,15 +221,21 @@ class PlayerManager:
     # =========================================================================
     
     def start(self) -> bool:
-        """Start both players.
-        
+        """Start both players, leaving any already started player running.
+
+        Local play is re-activated after an app session with its players still
+        running (LocalController.stop() keeps them, and set_player starts the
+        restored one). A player that is initializing, ready, or thinking counts
+        as started; one that is unstarted, stopped, or in error is started, so
+        a real failure is still reported.
+
         Returns:
-            True if both players started successfully.
+            True if both players are started.
         """
         log.info("[PlayerManager] Starting players")
         
-        white_ok = self._white_player.start()
-        black_ok = self._black_player.start()
+        white_ok = self._start_unless_started(self._white_player)
+        black_ok = self._start_unless_started(self._black_player)
         
         if not white_ok:
             log.error("[PlayerManager] White player failed to start")
@@ -235,6 +243,13 @@ class PlayerManager:
             log.error("[PlayerManager] Black player failed to start")
         
         return white_ok and black_ok
+
+    @staticmethod
+    def _start_unless_started(player: Player) -> bool:
+        """Start ``player`` unless it is already started; True when it is started."""
+        if player.state in _STARTED_STATES:
+            return True
+        return player.start()
     
     def stop(self) -> None:
         """Stop both players and release resources."""

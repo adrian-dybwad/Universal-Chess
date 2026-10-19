@@ -1325,6 +1325,13 @@ def _resume_game(game_data: dict) -> bool:
                 log.warning(f"[Resume] Illegal move in history: {move_uci} - {e}")
             except Exception as move_error:
                 log.warning(f"[Resume] Error replaying move {move_uci}: {move_error}")
+
+        # Suppression covers the replay only. Lifting it here, before the
+        # finished / matching / correction branches, keeps a resume that starts
+        # in correction from leaving the LocalController unable to request a
+        # move for the rest of the game (the app-disconnect hand-back relies on it).
+        if _game.controller and _game.controller.local_controller:
+            _game.controller.local_controller.set_suppress_move_requests(False)
         
         # Verify we reached the expected position
         current_fen = game_state.fen
@@ -1399,8 +1406,6 @@ def _resume_game(game_data: dict) -> bool:
             board_widget.invalidate_and_update()
 
         def continue_from_saved_position() -> None:
-            if _game.controller and _game.controller.local_controller:
-                _game.controller.local_controller.set_suppress_move_requests(False)
             log.info(f"[Resume] Triggering {'WHITE' if game_state.turn == chess.WHITE else 'BLACK'} turn")
             gm._switch_turn_with_event()
 

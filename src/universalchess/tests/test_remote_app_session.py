@@ -62,8 +62,14 @@ def gm(monkeypatch):
     reset_chess_game() clears the shared singleton. ledsOff / beep / occupancy
     are stubbed because set_remote_app_session talks to the board module, and
     the task worker is stopped on teardown so it does not leak across tests.
+
+    The manager gets its own clock service on a fresh clock state, stopped on
+    teardown. With the process-wide service, a disconnect resumed whatever
+    timed clock an earlier test had configured, and the countdown thread it
+    started outlived the test.
     """
     reset_chess_game()
+    reset_chess_clock()
     monkeypatch.setattr(
         "universalchess.managers.game.game_manager.board.ledsOff", lambda: None
     )
@@ -75,24 +81,18 @@ def gm(monkeypatch):
         lambda: bytearray(START_OCCUPANCY),
     )
     manager = GameManager(save_to_database=False)
+    service = ChessClockService()
+    manager._clock_service = service
     manager.set_led_callbacks(_recording_led([]))
     yield manager
-    manager._stop_event.set()
+    manager.unsubscribe_game()
+    service.stop()
 
 
 @pytest.fixture
 def clock(gm):
-    """A real clock service on the game ``gm`` plays, owned by ``gm``.
-
-    reset_chess_clock() links the fresh clock state to the current chess
-    game, so the service counts the plies ``gm`` pushes. Stopped on teardown
-    so a countdown thread started by a resume does not outlive the test.
-    """
-    reset_chess_clock()
-    service = ChessClockService()
-    gm._clock_service = service
-    yield service
-    service.stop()
+    """The real clock service ``gm`` owns, counting the plies ``gm`` pushes."""
+    return gm._clock_service
 
 
 class _RecordingPanel:
@@ -434,3 +434,300 @@ def test_disconnect_returns_the_panel_to_clock_driven_refresh_for_a_resumed_cloc
 
     assert clock.is_running and not clock.is_paused
     assert panel.defer_to_clock == [False, True]
+
+
+# Recorded on the board: Stockfish had computed d7d5 for Black when HIARCS
+# connected over Millennium; the app then played g8f6 and, later, d7d5 itself.
+MOVE_BEFORE_SESSION = "d2d4"
+ENGINE_REPLY_BEFORE_SESSION = "d7d5"
+SESSION_MOVES_AFTER_ENGINE_REPLY = ("g8f6", "c2c3", "d7d5", "a2a4")
+
+
+def _occupancy(chess_board, lifted_square=None):
+    """Piece presence the board reports for ``chess_board``, minus a lifted piece."""
+    return bytearray(
+        1 if chess_board.piece_at(square) and square != lifted_square else 0
+        for square in chess.SQUARES
+    )
+
+
+class _PhysicalBoard:
+    """Occupancy that follows the game, except for a piece the test holds up."""
+
+    def __init__(self, gm):
+        self._gm = gm
+        self.lifted_square = None
+
+    def get_chess_state(self):
+        return _occupancy(self._gm.chess_board, self.lifted_square)
+
+
+@pytest.fixture
+def physical_board(gm, monkeypatch):
+    """Board occupancy driven by ``_PhysicalBoard``; piece events are processed at once.
+
+    ``_is_ready`` stands in for the running game thread, without which
+    receive_field only queues the events.
+    """
+    gm._is_ready = True
+    physical = _PhysicalBoard(gm)
+    monkeypatch.setattr(
+        "universalchess.managers.game.game_manager.board.getChessState",
+        physical.get_chess_state,
+    )
+    return physical
+
+
+@pytest.fixture
+def engine_with_reply_pending_at_connect(gm, physical_board):
+    """Human White v. Stockfish Black, Stockfish's d7d5 pending when the app connects.
+
+    Engine start is stubbed so no Stockfish process is launched; the computed
+    reply is set directly, as the engine's think thread would. Yields
+    ``(protocol, engine)`` after the app has connected, played the session
+    moves, and disconnected.
+    """
+    from universalchess.managers.protocol import ProtocolManager
+    from universalchess.players.engine import EnginePlayer
+    from universalchess.players.human import HumanPlayer
+    from universalchess.players.manager import PlayerManager
+
+    engine = EnginePlayer()
+    engine.start = lambda: True
+    protocol = ProtocolManager(game_manager=gm)
+    protocol.set_player_manager(PlayerManager(HumanPlayer(), engine))
+    _play(gm, [MOVE_BEFORE_SESSION])
+    engine._pending_move = chess.Move.from_uci(ENGINE_REPLY_BEFORE_SESSION)
+
+    protocol.on_protocol_detected(ProtocolManager.CLIENT_MILLENNIUM)
+    gm.set_remote_app_session(True)
+    _play(gm, SESSION_MOVES_AFTER_ENGINE_REPLY)
+    protocol.on_app_disconnected()
+    gm.set_remote_app_session(False)
+    yield protocol, engine
+
+
+def test_restored_engine_holds_no_reply_computed_before_the_session(
+    engine_with_reply_pending_at_connect,
+):
+    """The engine put back on disconnect must not keep a reply for an old position.
+
+    The engine sat out the session holding the d7d5 it had computed before the
+    app connected, and it is not told about the moves the app played. Restored
+    with that move still pending, it ignored the take-over request ("Already
+    have pending move") so the board never played, and the board's move logic
+    treated d7d5 as the move Black still had to make.
+
+    Regression: the restored engine's pending_move is d7d5 instead of None.
+    """
+    protocol, engine = engine_with_reply_pending_at_connect
+
+    restored = protocol.player_manager.get_player(chess.BLACK)
+    assert restored is engine
+    assert restored.pending_move is None
+
+
+def test_lifting_and_replacing_a_piece_after_disconnect_leaves_correction(
+    gm, physical_board, engine_with_reply_pending_at_connect
+):
+    """Putting a lifted piece back after an app session must end correction.
+
+    With d7d5 still pending, lifting a4 entered correction as a "wrong piece
+    lifted" for d7d5, and replacing it ran the pending-move transcription,
+    which pushed d7d5 onto a board where it is illegal. The error aborted the
+    place handler before correction could exit, so every later touch re-entered
+    guidance and the game never left correction.
+
+    Regression: correction_mode.is_active is True after the place, or the
+    place raises "push() expects move to be pseudo-legal ... d7d5".
+    """
+    from universalchess.board.piece_events import PIECE_LIFT, PIECE_PLACE
+
+    physical_board.lifted_square = chess.A4
+    gm.receive_field(PIECE_LIFT, chess.A4, None)
+    physical_board.lifted_square = None
+    gm.receive_field(PIECE_PLACE, chess.A4, None)
+
+    assert gm.correction_mode.is_active is False
+
+
+class _RecordingPlayers:
+    """The LocalController's view of PlayerManager, recording move requests."""
+
+    is_ready = True
+
+    def __init__(self):
+        self.requested_fens = []
+
+    def start(self):
+        return True
+
+    def clear_pending_moves(self):
+        return None
+
+    def get_player(self, color):
+        return None
+
+    def request_move(self, chess_board):
+        self.requested_fens.append(chess_board.fen())
+
+
+def test_reactivating_local_play_leaves_started_players_running(caplog):
+    """Local play coming back after an app session must not try to start players again.
+
+    LocalController.start() starts the PlayerManager each time local play is
+    activated, and its stop() deliberately leaves players running. On
+    disconnect the restored engine was already started by set_player, so the
+    second start was refused and logged "Black player failed to start" for a
+    player that was working. A player that was never started must still be.
+
+    Regression: start() returns False, logs that ERROR, or leaves the unstarted
+    player UNINITIALIZED.
+    """
+    import logging
+
+    from universalchess.players.base import PlayerState
+    from universalchess.players.engine import EnginePlayer
+    from universalchess.players.human import HumanPlayer
+    from universalchess.players.manager import PlayerManager
+
+    unstarted_human = HumanPlayer()
+    running_engine = EnginePlayer()
+    running_engine._set_state(PlayerState.READY)
+    players = PlayerManager(unstarted_human, running_engine)
+
+    with caplog.at_level(logging.WARNING):
+        assert players.start() is True
+
+    assert unstarted_human.state == PlayerState.READY
+    assert running_engine.state == PlayerState.READY
+    assert [r.getMessage() for r in caplog.records if "start" in r.getMessage()] == []
+
+
+@pytest.fixture
+def resumable_board_app(gm, physical_board, monkeypatch):
+    """board_app wired to ``gm`` through a real ControllerManager, players recorded.
+
+    _start_game_mode is replaced by the one effect resume depends on: it
+    suppresses the LocalController's move requests during the replay. Yields
+    ``(board_app, controllers, players)``.
+    """
+    from universalchess.app import board_app
+    from universalchess.controllers.manager import ControllerManager
+
+    controllers = ControllerManager(gm)
+    local = controllers.create_local_controller()
+    controllers.create_remote_controller()
+    players = _RecordingPlayers()
+    local._player_manager = players
+    controllers.activate_local()
+
+    monkeypatch.setattr(
+        board_app,
+        "_start_game_mode",
+        lambda suppress_initial_move_request=False: local.set_suppress_move_requests(
+            suppress_initial_move_request
+        ),
+    )
+    monkeypatch.setattr(board_app, "_record_session_view", lambda *a, **k: None)
+    monkeypatch.setattr(board_app._game, "protocol", SimpleNamespace(game_manager=gm))
+    monkeypatch.setattr(board_app._game, "controller", controllers)
+    monkeypatch.setattr(board_app._game, "display", None)
+    yield board_app, controllers, players
+
+
+def _connect_and_disconnect_app(controllers):
+    with patch.object(controllers.remote_controller, "_create_emulators"):
+        controllers.activate_remote()
+        controllers.on_bluetooth_disconnected()
+
+
+def test_local_play_keeps_one_game_thread_across_an_app_session(gm, resumable_board_app):
+    """Re-activating local play after an app session must not start another game thread.
+
+    LocalController.start() subscribed to GameManager on every activation, and
+    each subscription starts a game thread that opens its own database engine
+    and session and runs until the manager is torn down. Stopping local play
+    never unsubscribes, so every app disconnect left one more thread and one
+    more open session behind, and replaced the session the game writes through.
+
+    Regression: gm.game_thread is a different thread after the disconnect, or
+    more than one game thread for this manager is alive.
+    """
+    import threading
+
+    _board_app, controllers, _players = resumable_board_app
+    first_thread = gm.game_thread
+
+    _connect_and_disconnect_app(controllers)
+
+    assert gm.game_thread is first_thread
+    game_threads = [
+        thread for thread in threading.enumerate()
+        if thread.is_alive() and getattr(thread, "_target", None) == gm._game_thread
+    ]
+    assert game_threads == [first_thread]
+
+
+def _saved_board():
+    saved = chess.Board()
+    saved.push_uci(MOVE_BEFORE_SESSION)
+    return saved
+
+
+def test_disconnect_after_resuming_a_resigned_game_asks_for_no_move(
+    gm, resumable_board_app
+):
+    """A finished game must not be played on when an app leaves.
+
+    A resignation ends the game without a terminal position, so
+    chess_board.is_game_over() is False. The disconnect hand-back checked only
+    that, and asked the engine to reply in a game that was already over.
+
+    Regression: requested_fens contains the resigned position.
+    """
+    board_app, controllers, players = resumable_board_app
+    saved = _saved_board()
+    assert board_app._resume_game({
+        "id": 21, "moves": [MOVE_BEFORE_SESSION], "fen": saved.fen(),
+        "result": "1-0", "termination": "resignation",
+    }) is True
+
+    players.requested_fens.clear()
+    _connect_and_disconnect_app(controllers)
+
+    assert players.requested_fens == []
+
+
+def test_disconnect_after_a_resume_that_needed_correction_asks_for_the_next_move(
+    gm, physical_board, resumable_board_app
+):
+    """A resumed game that started in correction must still be taken over on disconnect.
+
+    Resume suppresses the LocalController's move requests while it replays the
+    saved moves. Only the path where the pieces already matched turned that
+    off; a resume that had to enter correction left it on for the rest of the
+    game. Turn changes still reached the engine through GameManager, but the
+    disconnect hand-back asks only the LocalController, so the engine restored
+    for the side to move was never asked to play.
+
+    Regression: requested_fens is empty after the disconnect.
+    """
+    from universalchess.board.piece_events import PIECE_PLACE
+
+    board_app, controllers, players = resumable_board_app
+    saved = _saved_board()
+    physical_board.lifted_square = chess.D4
+    assert board_app._resume_game(
+        {"id": 21, "moves": [MOVE_BEFORE_SESSION], "fen": saved.fen(), "result": None}
+    ) is True
+    assert gm.correction_mode.is_active is True
+
+    physical_board.lifted_square = None
+    gm.receive_field(PIECE_PLACE, chess.D4, None)
+    assert gm.correction_mode.is_active is False
+
+    players.requested_fens.clear()
+    _connect_and_disconnect_app(controllers)
+
+    assert players.requested_fens == [saved.fen()]
