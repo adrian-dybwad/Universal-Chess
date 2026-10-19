@@ -484,6 +484,8 @@ class Chessnut:
                                repeat=0)
             except Exception as e:
                 log.error(f"[Chessnut] Error setting LEDs: {e}")
+            if self.manager is not None:
+                self.manager.indicate_app_move(squares_to_light)
         else:
             log.debug("[Chessnut] LED command: turning off all LEDs")
             try:

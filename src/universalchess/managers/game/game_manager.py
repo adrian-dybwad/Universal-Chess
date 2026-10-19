@@ -21,7 +21,7 @@ import time
 import chess
 import sys
 import inspect
-from typing import Optional, Sequence
+from typing import Iterable, Optional, Sequence
 
 from universalchess.board import board
 from universalchess.paths import FEN_LOG, TMP_DIR
@@ -36,6 +36,8 @@ from universalchess.paths import (
     get_current_halfmove_clock,
 )
 from universalchess.board.logging import log
+from universalchess.board.move_indication import find_indicated_moves
+from universalchess.board.piece_events import piece_events_for_move
 from universalchess.state import get_chess_game
 from universalchess.state.chess_game import ChessGameState
 from universalchess.services import get_chess_clock_service
@@ -119,6 +121,7 @@ class GameManager:
     # Class default so tests that build via ``__new__`` (skipping __init__)
     # still see a False session when the ``led`` property is read.
     _remote_app_session = False
+    _resyncing_physical_board = False
     
     def __init__(self, save_to_database: bool = True):
         """Initialize GameManager.
@@ -163,6 +166,16 @@ class GameManager:
         # mode, no LED writes. The emulator still drives LEDs from app packets.
         self._remote_app_session = False
 
+        # Colour the connected app plays, when it replaced an engine; None when
+        # unknown. Only a reply lit for this seat is played for the app.
+        self._remote_app_color: Optional[chess.Color] = None
+
+        # Set when the first physical touch after web play, during a remote-app
+        # session, finds the pieces behind the game. Until correction completes,
+        # this manager referees the physical board despite the session and the
+        # app is shown none of the physical events (is_withholding_physical_board).
+        self._resyncing_physical_board = False
+
         # Optional UI handler driven during setup mode. Injected via
         # set_setup_display_handler() so game logic stays decoupled from the
         # display layer. Signature: handler(active: bool, fen: Optional[str]).
@@ -179,6 +192,9 @@ class GameManager:
         self.on_time_control = None
         self.on_clock_started = None
         self.on_remote_app_session = None
+        # on_web_piece_event(piece_event, field): the lift/place events a physical
+        # board would have reported for a move played on the web board.
+        self.on_web_piece_event = None
         
         # Game metadata
         self.game_info = {
@@ -703,9 +719,10 @@ class GameManager:
         The physical board must conform to the logical board state.
 
         No-op while a remote chess app is connected: that app is the referee,
-        and correction lights would fight its LED commands.
+        and correction lights would fight its LED commands. The exception is
+        the resync after web play, where the game is the authority.
         """
-        if self._remote_app_session:
+        if not self._referees_physical_board():
             log.info(
                 "[GameManager._enter_correction_mode] Skipping correction - "
                 "remote app session is active"
@@ -733,6 +750,9 @@ class GameManager:
         
         # Turn off correction LEDs first
         self.led.off()
+        # The pieces match the game again: during a session the app regains the
+        # board and its lights, so everything below writes no LEDs.
+        self._resyncing_physical_board = False
         
         # Reset move state variables
         self.move_state.source_square = INVALID_SQUARE
@@ -1005,10 +1025,16 @@ class GameManager:
         control back to the board, so normal behavior (including correction mode
         when the physical board no longer matches the logical board after remote
         play) resumes for this and every subsequent event.
+
+        With a chess app connected, the session would otherwise suppress that
+        correction, so the pieces are compared with the game here and a
+        mismatch starts the resync (see _begin_physical_resync).
         """
         if self._web_move_mode:
             log.info("[GameManager.receive_field] Physical piece activity - exiting web-move mode")
             self._web_move_mode = False
+            if self._remote_app_session:
+                self._begin_physical_resync()
 
         # Queue events if not ready
         with self._ready_lock:
@@ -1019,6 +1045,26 @@ class GameManager:
         
         self._process_field_event(piece_event, field, time_in_seconds)
     
+    def _begin_physical_resync(self) -> None:
+        """Enter correction for pieces left behind by web play during an app session.
+
+        Correction runs as in local play, with its LEDs, until the pieces match
+        the game; meanwhile the app is shown no physical events. A board the user
+        mirrored by hand needs no correction. Unreadable occupancy starts nothing:
+        without it there is no mismatch to guide.
+        """
+        current_state = board.getChessState()
+        expected_state = self._chess_board_to_state(self.chess_board)
+        if current_state is None or expected_state is None:
+            return
+        if ChessGameState.states_match(current_state, expected_state):
+            return
+        log.info("[GameManager] Pieces lag the web board's game - correcting before the app sees them")
+        self._resyncing_physical_board = True
+        board.beep(board.SOUND_WRONG_MOVE, event_type="error")
+        self._enter_correction_mode()
+        self._provide_correction_guidance(current_state, expected_state)
+
     def _process_field_event(self, piece_event: int, field: int, time_in_seconds: float):
         ctx = FieldEventContext(
             chess_board=self.chess_board,
@@ -1045,7 +1091,7 @@ class GameManager:
             on_king_lift_resign_cancel_fn=self.on_king_lift_resign_cancel,
             chess_board_to_state_fn=self._chess_board_to_state,
             setup_mode_active_fn=lambda: self._setup_mode_active,
-            physical_referee_fn=lambda: not self._remote_app_session,
+            physical_referee_fn=self._referees_physical_board,
         )
         process_field_event(ctx, piece_event, field, time_in_seconds)
     
@@ -1208,13 +1254,47 @@ class GameManager:
 
         While a remote chess app is connected, GameManager must not write
         LEDs (including off, which would blank the app's lights). The
-        emulator still drives board.led* from app packets.
+        emulator still drives board.led* from app packets. Correction after
+        web play is the exception: its guidance must reach the board.
         """
         if self._led is None:
             raise RuntimeError("LED callbacks not set. Call set_led_callbacks() before starting game.")
-        if self._remote_app_session:
+        if not self._referees_physical_board():
             return NOOP_LED_CALLBACKS
         return self._led
+
+    def _referees_physical_board(self) -> bool:
+        """Whether this manager referees the physical board (correction, beeps, LEDs).
+
+        False while a connected app is the referee, except during the resync
+        after web play: then the game is the authority and the pieces lag it.
+        """
+        return not self._remote_app_session or self._resyncing_physical_board
+
+    @property
+    def is_withholding_physical_board(self) -> bool:
+        """Whether physical piece events must be kept from the connected app.
+
+        True while the pieces are being put back after web play. The app's board
+        is the web board's position; the corrections are not moves.
+        """
+        return self._resyncing_physical_board
+
+    def reported_occupancy(self):
+        """Occupancy (chess order, 0=a1) of the board that currently leads.
+
+        While the web board leads, or the pieces are being put back after web
+        play, that is the game position: the physical pieces lag it on purpose
+        and reporting them would tell an app the web moves were taken back.
+        Otherwise it is the physical board.
+        """
+        if self._web_move_mode or self._resyncing_physical_board:
+            return self._chess_board_to_state(self.chess_board)
+        return board.getChessState()
+
+    def set_remote_app_color(self, color: Optional[chess.Color]) -> None:
+        """Record the colour the connected app plays, or None when unknown."""
+        self._remote_app_color = color
 
     @property
     def is_remote_app_session(self) -> bool:
@@ -1245,6 +1325,9 @@ class GameManager:
             return
 
         self._remote_app_session = active
+        # A resync belongs to one session: on connect any correction is dropped
+        # below, and on disconnect a mismatch re-enters plain local correction.
+        self._resyncing_physical_board = False
         try:
             board.ledsOff()
         except Exception as e:
@@ -1374,9 +1457,60 @@ class GameManager:
             return False
 
         log.info(f"[GameManager.submit_web_move] Applying web move {move.uci()}")
-        self._web_move_mode = True
-        self._execute_complete_move(move)
+        self._play_on_web_board(move, self._execute_complete_move)
         return True
+
+    def _play_on_web_board(self, move: chess.Move, execute) -> None:
+        """Play ``move`` as the web board, then report its piece events.
+
+        Arms web-move mode, runs ``execute(move)``, and passes the lift/place
+        sequence a physical board would have reported to on_web_piece_event. The
+        events are computed from the position before the move and emitted after
+        it, so a listener reading the game sees the position they lead to.
+        """
+        events = piece_events_for_move(self.chess_board, move)
+        self._web_move_mode = True
+        execute(move)
+        if self.on_web_piece_event is None:
+            return
+        for piece_event, field in events:
+            try:
+                self.on_web_piece_event(piece_event, field)
+            except Exception as e:
+                log.error(f"[GameManager._play_on_web_board] on_web_piece_event: {e}")
+
+    def indicate_app_move(self, lit_squares: Iterable[int]) -> None:
+        """Act on the squares a connected app lit for its move, while the web board leads.
+
+        With the physical board in charge the user transcribes the app's move, so
+        this does nothing outside a remote-app session in web-move mode. Inside
+        it the lights are read back into legal moves:
+
+        - one move, for the app's recorded seat: played at once, as an engine
+          reply is in local web play;
+        - one from/to that is not the app's to play (a hint for the user's own
+          move, or no recorded seat), or a promotion (the lights carry no piece):
+          posted as the web's pending arrow without a piece letter, so the user
+          drags it and the web board's picker chooses the piece;
+        - anything else: ignored.
+        """
+        if not (self._remote_app_session and self._web_move_mode):
+            return
+        if self._game_state.is_game_over:
+            return
+        candidates = find_indicated_moves(lit_squares, self.chess_board.fen())
+        squares = {(move.from_square, move.to_square) for move in candidates}
+        if len(squares) != 1:
+            return
+        if len(candidates) == 1 and self.chess_board.turn == self._remote_app_color:
+            log.info(f"[GameManager.indicate_app_move] Playing the app's {candidates[0].uci()}")
+            self._play_on_web_board(candidates[0], self._execute_complete_move)
+            return
+        from_square, to_square = squares.pop()
+        arrow = chess.Move(from_square, to_square).uci()
+        log.info(f"[GameManager.indicate_app_move] Offering {arrow} on the web board")
+        set_pending_move(arrow)
+        self._game_state.notify_position_change()
     
     def _complete_destination_only_move(self, destination: int) -> Optional[chess.Move]:
         """Complete a destination-only move by finding the source square (delegates to player_moves)."""
@@ -1404,7 +1538,7 @@ class GameManager:
             provide_correction_guidance_fn=self._provide_correction_guidance,
             set_is_showing_promotion_fn=lambda v: setattr(self, "is_showing_promotion", v),
             on_promotion_needed_fn=self.on_promotion_needed,
-            physical_referee=not self._remote_app_session,
+            physical_referee=self._referees_physical_board(),
         )
     
     def _on_player_error(self, error_type: str) -> None:
@@ -1462,7 +1596,7 @@ class GameManager:
             
             # Not starting position or takeback - extra piece, enter correction mode
             log.warning("[GameManager._on_player_error] Extra piece on board - entering correction mode")
-            if self._remote_app_session:
+            if not self._referees_physical_board():
                 self.move_state.reset()
                 return
             board.beep(board.SOUND_WRONG_MOVE, event_type='error')
@@ -1475,7 +1609,7 @@ class GameManager:
         
         # Other errors (move_mismatch, unknown) - correction mode
         log.warning(f"[GameManager._on_player_error] Error: {error_type} - entering correction mode")
-        if self._remote_app_session:
+        if not self._referees_physical_board():
             self.move_state.reset()
             return
         board.beep(board.SOUND_WRONG_MOVE, event_type='error')
@@ -1507,7 +1641,7 @@ class GameManager:
         # waiting as a pending move on the physical board. Execute it directly.
         if self._web_move_mode:
             log.info(f"[GameManager._on_pending_move] Web-move mode - auto-applying {move.uci()}")
-            self._execute_pending_move_directly(move)
+            self._play_on_web_board(move, self._execute_pending_move_directly)
             return
 
         # Set up forced move state so correction mode can restore LEDs

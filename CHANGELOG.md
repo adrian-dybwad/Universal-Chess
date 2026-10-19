@@ -1778,6 +1778,27 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   credited for the moves the app played; a finished or untimed game's clock
   stays stopped.
 
+- **Playing on the website's board with a DGT/Millennium/Chessnut app
+  connected stalled on the app's reply**: in local play a web drag lets the
+  engine reply at once, leaves the pieces out of sync, and the next touch of
+  a real piece enters correction. With an app connected the app's reply only
+  lit LEDs and waited for a physical move, touching a piece never entered
+  correction, the touch went to the app as a move, and the DGT app never
+  heard about the web move at all because Pegasus reports physical lift/place
+  events only. The web board now takes the place of the physical board: a
+  web move is reported to the app as the lift/place events a board would
+  send, and the app is told the game's occupancy rather than the stale
+  pieces. When the squares the app lights name exactly one legal move for
+  the app's seat, it is played immediately. Millennium lights are read
+  through their corner LEDs, so a two-square straight move such as e7e5 or
+  castling is not mistaken for three squares. A promotion is shown as the
+  web's blue arrow without a piece, because the lights carry none, so
+  dragging the pawn opens the web board's promotion picker. A hint for the
+  user's own move gets the same arrow. The first touch after web play
+  enters correction even with the app connected, with its LEDs on the
+  board, and the app sees no physical events until the pieces match the
+  game again.
+
 - **Web Lichess lobby hid nothing when no accounts were saved**: Settings →
   Players still drew Rated, Ongoing Games, Challenges, and Seek New Game
   against an empty store, so the card offered play controls that cannot

@@ -176,24 +176,22 @@ class RemoteController(GameController):
         self._reset_protocol_detection()
         log.info("[RemoteController] Stopped")
     
-    def on_field_event(self, piece_event: int, field: int, time_seconds: float) -> None:
-        """Handle piece lift/place from the physical board.
-        
+    def on_field_event(self, piece_event: int, field: int, time_seconds: Optional[float]) -> None:
+        """Handle piece lift/place from the physical board, or from the web board.
+
         Forwards to the detected emulator for state sync with the app.
+        ``time_seconds`` is the board's hardware time, None for a web-board event.
         """
         if not self._active:
             return
         
         # Skip forwarding lift/place while HandBrain REVERSE is consuming events locally
-        try:
-            pm = getattr(self._game_manager, "_player_manager", None)
-            if pm is not None:
-                current = pm.get_player(self._game_manager.chess_board.turn)
-                from universalchess.players.hand_brain import HandBrainPlayer, HandBrainMode
-                if isinstance(current, HandBrainPlayer) and current.mode == HandBrainMode.REVERSE:
-                    return
-        except Exception:
-            pass
+        pm = getattr(self._game_manager, "_player_manager", None)
+        if pm is not None:
+            current = pm.get_player(self._game_manager.chess_board.turn)
+            from universalchess.players.hand_brain import HandBrainPlayer, HandBrainMode
+            if isinstance(current, HandBrainPlayer) and current.mode == HandBrainMode.REVERSE:
+                return
         
         # Forward to active emulator
         from universalchess.managers.events import EVENT_LIFT_PIECE, EVENT_PLACE_PIECE

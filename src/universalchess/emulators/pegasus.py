@@ -23,6 +23,15 @@ from universalchess.utils.led import (
     resolve_pegasus_intensity,
 )
 
+
+def _flip_rank_order(index: int) -> int:
+    """Map between Pegasus hardware order (0=a8) and chess order (0=a1).
+
+    The mapping reverses the rank and keeps the file, so it is its own inverse.
+    """
+    return (7 - (index // 8)) * 8 + (index % 8)
+
+
 # Unified command registry
 @dataclass(frozen=True)
 class CommandSpec:
@@ -169,10 +178,7 @@ class Pegasus:
             fields_hw = []
             for x in range(4, len(payload)):
                 fields_hw.append(int(payload[x]))
-            # Map Pegasus/firmware index to board API index
-            def hw_to_board(i):
-                return (7 - (i // 8)) * 8 + (i % 8)
-            fields_board = [hw_to_board(f) for f in fields_hw]
+            fields_board = [_flip_rank_order(f) for f in fields_hw]
             log.info(f"[Pegasus LED packet] speed_in={ledspeed_in} intensity_in={intensity_in}")
             # The DGT Chess app has no LED brightness control and transmits a
             # fixed intensity_in in every packet, so by default UC drives the LEDs
@@ -202,6 +208,8 @@ class Pegasus:
                     #     board.ledsOff()
             except Exception as e:
                 log.info(f"[Pegasus LED packet] error driving LEDs: {e}")
+            if fields_board and self.manager is not None:
+                self.manager.indicate_app_move(fields_board)
         else:
             log.info(f"[Pegasus LED packet] unsupported mode={payload[0]}")
 
@@ -216,9 +224,20 @@ class Pegasus:
         - 0x01 = occupied square
         
         The DGT app only cares about occupancy, not piece types.
+
+        With a game manager the occupancy is the board that leads (the game's
+        while the web board is in charge), sent in hardware order.
         """
         log.info(f"[Pegasus Board dump] getting board state")
-        bs = board.getBoardState()
+        if self.manager is not None:
+            chess_state = self.manager.reported_occupancy()
+            bs = (
+                None
+                if chess_state is None
+                else [chess_state[_flip_rank_order(i)] for i in range(64)]
+            )
+        else:
+            bs = board.getBoardState()
         
         if bs is None:
             log.error("[Pegasus Board dump] getBoardState() returned None!")

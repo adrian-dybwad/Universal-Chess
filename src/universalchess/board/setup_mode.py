@@ -22,6 +22,8 @@ from typing import Iterable, Set
 
 import chess
 
+from universalchess.board.move_indication import move_squares
+
 CLASS_OFF = "off"
 CLASS_MOVE = "move"
 CLASS_SETUP = "setup"
@@ -116,24 +118,6 @@ def infer_side_to_move(lit_squares: Iterable[int], placement_fen: str):
     return None
 
 
-def _move_squares(board: chess.Board, move: chess.Move) -> Set[int]:
-    """Return all board squares a single move lights.
-
-    For a normal move that is {from, to}. For castling it additionally includes
-    the rook's origin and destination, because a client may light all four.
-    """
-    squares = {move.from_square, move.to_square}
-    if board.is_castling(move):
-        rank = chess.square_rank(move.from_square)
-        if board.is_kingside_castling(move):
-            squares.add(chess.square(7, rank))  # rook origin (h-file)
-            squares.add(chess.square(5, rank))  # rook destination (f-file)
-        else:
-            squares.add(chess.square(0, rank))  # rook origin (a-file)
-            squares.add(chess.square(3, rank))  # rook destination (d-file)
-    return squares
-
-
 def classify_led_matrix(lit_squares: Iterable[int], game_fen: str) -> str:
     """Classify an LED matrix as off / move / setup.
 
@@ -152,7 +136,7 @@ def classify_led_matrix(lit_squares: Iterable[int], game_fen: str) -> str:
 
     board = chess.Board(game_fen)
     for move in board.legal_moves:
-        if lit <= _move_squares(board, move):
+        if lit <= move_squares(board, move):
             return CLASS_MOVE
 
     return CLASS_SETUP

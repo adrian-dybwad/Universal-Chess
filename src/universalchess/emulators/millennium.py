@@ -28,6 +28,10 @@ from universalchess.utils.led import (
     get_led_intensity_from_settings,
 )
 
+import chess
+
+from universalchess.board.move_indication import find_moves_lighting
+
 # LED commands -> Patterns seen from Android chess with an original millennium:
 # AA = slow flash - used to indicate the start of a game on two bottom corner LEDS.
 # Forced moves: FF and AA - indicating FROM and TO squares. Shared sides use AA.
@@ -285,9 +289,10 @@ class Millennium:
         if event == EVENT_LIFT_PIECE or event == EVENT_PLACE_PIECE:
             if self.manager is not None:
                 eone_fen = self.fen_to_eone(self.manager.get_fen())
-                # Get physical board state from board module
+                # Occupancy of the board that leads: the game's while the web
+                # board is in charge, the physical pieces otherwise.
                 try:
-                    chess_state = board.getChessState()
+                    chess_state = self.manager.reported_occupancy()
                     if chess_state is not None and len(chess_state) == 64:
                         # Convert chess_state (a-h order) to eone_fen order (h-a order)
                         # chess_state: a1, b1, c1, ..., h1, a2, b2, ..., h8
@@ -614,6 +619,7 @@ class Millennium:
             return
         
         # Extract 81 LED codes (162 bytes in pairs) starting from byte 2
+        lit_leds = set()
         led = []
         expected_led_bytes = 81 * 2  # 162 bytes for 81 LED codes
         if len(payload) >= 2 + expected_led_bytes:
@@ -627,6 +633,7 @@ class Millennium:
                     led.append(None)  # Use None to indicate invalid value
             self.debug_print_led_grid(led)
 
+            lit_leds = {index for index, value in enumerate(led) if value}
             lit_squares = self.fully_lit_squares_from_led_array(led)
             chess_indexes = [self.square_to_index(square) for square in lit_squares]
             log.info(f"[Millennium] L packet: chess_indexes={chess_indexes}")
@@ -648,6 +655,29 @@ class Millennium:
             log.warning(f"[Millennium] L packet: payload too short for LED codes ({len(payload)} bytes), expected at least {2 + expected_led_bytes}")
 
         self.encode_millennium_command("l")
+        # After the acknowledgement: playing the app's move sends a board status,
+        # which must not arrive as the reply to this LED command.
+        if lit_leds and self.manager is not None:
+            self._indicate_app_move(lit_leds)
+
+    def _indicate_app_move(self, lit_leds: set) -> None:
+        """Hand the from/to of the move the app lit to the game manager.
+
+        Decoded from the corner LEDs, not from fully lit squares: on a
+        two-square straight move (e7e5, e1g1) all four corners of the square
+        between are lit too, so fully lit squares would name three squares.
+        Nothing is handed over when the LEDs describe no single from/to.
+        """
+        moves = find_moves_lighting(
+            lit_leds,
+            self.manager.get_fen(),
+            lambda square: self.square_led_indices(chess.square_name(square)),
+        )
+        pairs = {(move.from_square, move.to_square) for move in moves}
+        if len(pairs) != 1:
+            return
+        from_square, to_square = pairs.pop()
+        self.manager.indicate_app_move({from_square, to_square})
 
     
     def handle_x(self, payload):

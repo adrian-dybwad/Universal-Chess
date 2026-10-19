@@ -382,10 +382,13 @@ class ChessGameService:
             # current position; a played or otherwise invalidated one is not
             # (its from-square is empty). Drop anything not currently legal so
             # this single broadcast point stays authoritative for all clients.
+            # A from/to with no piece letter is a promotion still to be chosen
+            # (a connected app's reply; the web picker supplies the piece), and
+            # is kept while some legal move uses those squares.
             pending = get_pending_move()
             if pending is not None:
                 try:
-                    if chess.Move.from_uci(pending) not in self._state.legal_moves:
+                    if not self._is_current_pending(chess.Move.from_uci(pending)):
                         set_pending_move(None)
                         pending = None
                 except ValueError:
@@ -439,6 +442,24 @@ class ChessGameService:
             )
         except Exception as e:
             log.debug(f"[ChessGameService] Error broadcasting game state: {e}")
+
+    def _is_current_pending(self, pending: chess.Move) -> bool:
+        """Whether a pending move still applies to the current position.
+
+        A complete move must be legal. A pawn move to the last rank without a
+        piece must match the squares of a legal promotion.
+        """
+        legal_moves = self._state.legal_moves
+        if pending in legal_moves:
+            return True
+        if pending.promotion is not None:
+            return False
+        return any(
+            move.promotion is not None
+            and move.from_square == pending.from_square
+            and move.to_square == pending.to_square
+            for move in legal_moves
+        )
 
     def _compute_alert(self) -> tuple[Optional[str], Optional[str]]:
         """Derive the current in-play warning for the web broadcast.

@@ -130,9 +130,19 @@ class ControllerManager:
         self._remote = RemoteController(self._game_manager, send_callback)
         self._protocol_detected_listener = protocol_detected_callback
         self._remote.set_protocol_detected_callback(self._on_remote_protocol_detected)
+        self._game_manager.on_web_piece_event = self._forward_web_piece_event
         
         log.info("[ControllerManager] Created RemoteController")
         return self._remote
+
+    def _forward_web_piece_event(self, piece_event: int, field: int) -> None:
+        """Report a piece event of a move played on the web board to the app.
+
+        Goes to the app only, never to GameManager: the move is already played.
+        There is no hardware timestamp, so the time is None.
+        """
+        if self._remote and self._remote.is_protocol_detected:
+            self._remote.on_field_event(piece_event, field, None)
 
     def _on_remote_protocol_detected(self, client_type: str) -> None:
         """Hand the live game to the app once it has spoken a board protocol.
@@ -207,9 +217,16 @@ class ControllerManager:
         2. Remote controller (if protocol detected) for BLE sync
         
         This ensures moves are processed regardless of which controller is active.
+
+        Events of a correction after web play are kept from the app, including
+        the touch that starts it and the one that completes it: the app's board
+        is the web board's position, and putting the pieces back is not a move.
         """
+        withheld = self._game_manager.is_withholding_physical_board
         # Always forward to GameManager for move processing
         self._game_manager.receive_field(piece_event, field, time_seconds)
+        if withheld or self._game_manager.is_withholding_physical_board:
+            return
         
         # If remote protocol is detected, also sync with BLE client
         if self._remote and self._remote.is_protocol_detected:

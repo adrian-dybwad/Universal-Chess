@@ -192,3 +192,42 @@ def test_checkmate_suppresses_check_alert(service_env):
     assert last["game_over"] is True
     assert last["alert"] is None
     assert last["alert_square"] is None
+
+
+# Black to move; the b2 pawn promotes on b1, or by capturing a1/c1.
+BLACK_PROMOTES_FEN = "4k3/8/8/8/8/8/1p6/R1N1K3 b - - 0 1"
+
+
+@pytest.mark.parametrize(
+    ("pending", "expected"),
+    [
+        pytest.param("b2b1", "b2b1", id="promotion-squares-awaiting-the-piece"),
+        pytest.param("b2b1q", "b2b1q", id="complete-promotion"),
+        pytest.param("e2e4", None, id="move-not-legal-here"),
+    ],
+)
+def test_pending_promotion_squares_survive_the_legality_reconcile(
+    service_env, monkeypatch, pending, expected
+):
+    """A promotion arrow without its piece is kept; an illegal pending is dropped.
+
+    An app's promotion reply is posted as its from/to only (the user picks the
+    piece on the web board). "b2b1" alone is not a legal move, so the reconcile
+    that drops stale pendings removed the arrow before the web ever drew it.
+    Regression: pending_move is None for "b2b1", or a stale "e2e4" is kept.
+    """
+    service, state, calls = service_env
+    side_channel = {"pending": pending}
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.get_pending_move", lambda: side_channel["pending"]
+    )
+    monkeypatch.setattr(
+        "universalchess.services.game_broadcast.set_pending_move",
+        lambda value: side_channel.update(pending=value),
+    )
+    state.set_position(BLACK_PROMOTES_FEN)
+
+    service.broadcast_state()
+
+    assert calls[-1]["pending_move"] == expected
+    assert side_channel["pending"] == expected

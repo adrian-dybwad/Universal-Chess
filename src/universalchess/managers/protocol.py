@@ -318,6 +318,7 @@ class ProtocolManager:
                 
                 # Store original player for restoration on disconnect
                 self._original_player = (color, original_player)
+                self.game_manager.set_remote_app_color(color)
                 
                 color_name = "White" if color == chess.WHITE else "Black"
                 log.info(f"[ProtocolManager] Swapped {original_player.name} with {client_name} for {color_name}")
@@ -349,6 +350,7 @@ class ProtocolManager:
             log.info(f"[ProtocolManager] Restored {original_player.name} for {color_name} (was {current_player.name})")
             
             self._original_player = None
+        self.game_manager.set_remote_app_color(None)
         
         # Reset protocol detection flags
         self.is_millennium = False
