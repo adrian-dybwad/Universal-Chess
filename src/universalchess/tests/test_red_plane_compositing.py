@@ -20,15 +20,10 @@ How a regression manifests:
       highlight keeps showing the previous red.
 """
 
-import sys
 import unittest
 from unittest.mock import MagicMock
 from concurrent.futures import Future
 
-# Mock Raspberry Pi hardware libraries before importing framework modules; they
-# import RPi.GPIO/spidev transitively via epdconfig (mirrors test_epd_getbuffer).
-for _mod in ('spidev', 'RPi', 'RPi.GPIO', 'gpiozero'):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image
 

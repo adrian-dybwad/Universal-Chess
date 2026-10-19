@@ -7,19 +7,12 @@ MenuManager.show_menu routes HELP to the injected presenter and keeps looping,
 and the dialog widget wraps/renders its text without error.
 """
 
-import sys
 import threading
 import time
-from unittest.mock import MagicMock
 
 import pytest
 from PIL import Image
 
-# The dialog resolves the board's Key constants lazily (as icon_menu does) when a
-# key is handled, so the serial stack is stubbed to let that import succeed off
-# hardware. PIL is deliberately not mocked: these tests read rendered output.
-for _mod in ("serial", "serial.tools", "serial.tools.list_ports"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from universalchess.epaper.help_dialog import (  # noqa: E402 - after the serial stub above
     HelpDialogWidget,

@@ -18,68 +18,8 @@ Note: ChessClockWidget manages its own visibility via game_over observer.
 GameOverWidget does NOT manage clock widget visibility.
 """
 
-import sys
-import types
 import unittest
-from unittest.mock import MagicMock, patch
-import importlib.util
-
-# =============================================================================
-# Mock all hardware-specific and Linux-specific modules BEFORE any imports
-# =============================================================================
-
-# Mock hardware and Linux-specific modules. psutil is intentionally NOT stubbed:
-# it is a real, required dependency (universalchess.main imports it
-# unconditionally), and replacing it with a MagicMock here leaked globally via
-# sys.modules and broke tests that need the real library.
-for mod in ['spidev', 'RPi', 'RPi.GPIO', 'gpiozero', 'smbus', 'smbus2', 'bluetooth']:
-    sys.modules[mod] = MagicMock()
-
-# Mock dbus with submodules (dbus is a package, not just a module)
-dbus_mock = types.ModuleType('dbus')
-dbus_mock.mainloop = MagicMock()
-dbus_mock.service = MagicMock()
-dbus_mock.Interface = MagicMock()
-dbus_mock.SystemBus = MagicMock()
-dbus_mock.SessionBus = MagicMock()
-dbus_mock.String = str
-dbus_mock.Byte = int
-dbus_mock.Array = list
-dbus_mock.Dictionary = dict
-sys.modules['dbus'] = dbus_mock
-sys.modules['dbus.mainloop'] = MagicMock()
-sys.modules['dbus.mainloop.glib'] = MagicMock()
-sys.modules['dbus.service'] = MagicMock()
-
-# Mock gi (GObject Introspection)
-sys.modules['gi'] = MagicMock()
-sys.modules['gi.repository'] = MagicMock()
-
-# Mock serial
-sys.modules['serial'] = MagicMock()
-sys.modules['serial.tools'] = MagicMock()
-sys.modules['serial.tools.list_ports'] = MagicMock()
-
-# numpy is a real dependency (used by the e-paper drivers via np.packbits) and
-# is left unmocked, exactly like PIL: replacing it in sys.modules here leaked a
-# MagicMock to every later-collected test module, breaking real numpy/PIL
-# consumers (e.g. the e-paper packing tests and icon/help-dialog rendering).
-
-# Create proper package mocks for DGTCentaurMods.board
-board_package = types.ModuleType('DGTCentaurMods.board')
-mock_board = MagicMock()
-mock_board.display_manager = MagicMock()
-mock_board.display_manager.add_widget = MagicMock(return_value=MagicMock())
-mock_board.display_manager.remove_widget = MagicMock()
-mock_board.ledsOff = MagicMock()
-mock_centaur = MagicMock()
-board_package.board = mock_board
-board_package.centaur = mock_centaur
-sys.modules['DGTCentaurMods.board'] = board_package
-sys.modules['DGTCentaurMods.board.board'] = mock_board
-sys.modules['DGTCentaurMods.board.centaur'] = mock_centaur
-sys.modules['DGTCentaurMods.board.logging'] = MagicMock()
-sys.modules['DGTCentaurMods.board.settings'] = MagicMock()
+from unittest.mock import MagicMock
 
 
 class TestGameOverWidgetObserver(unittest.TestCase):
@@ -98,13 +38,13 @@ class TestGameOverWidgetObserver(unittest.TestCase):
         """Set up test fixtures with fresh game state."""
         from universalchess.state.chess_game import reset_chess_game
         self.game_state = reset_chess_game()
-        mock_board.ledsOff.reset_mock()
+        self.leds_off = MagicMock()
 
     def _create_widget(self, led_off_callback=None):
         """Create a GameOverWidget with test game state.
             
         Args:
-            led_off_callback: Optional LED off callback. If None, uses mock_board.ledsOff.
+            led_off_callback: Optional LED off callback. If None, uses self.leds_off.
             
         Returns:
             GameOverWidget instance subscribed to test game state.
@@ -115,7 +55,7 @@ class TestGameOverWidgetObserver(unittest.TestCase):
             0, 144, 128, 72,
             update_callback=MagicMock(),
             game_state=self.game_state,
-            led_off_callback=led_off_callback or mock_board.ledsOff
+            led_off_callback=led_off_callback or self.leds_off
         )
 
     def test_widget_starts_hidden(self):
@@ -224,7 +164,7 @@ class TestGameOverWidgetObserver(unittest.TestCase):
         Failure: LEDs remain on after game over.
         """
         widget = self._create_widget()
-        mock_board.ledsOff.reset_mock()
+        self.leds_off.reset_mock()
         
         # Play to checkmate
         self.game_state.push_uci('f2f3')
@@ -233,7 +173,7 @@ class TestGameOverWidgetObserver(unittest.TestCase):
         self.game_state.push_uci('d8h4')  # Qh4#
         
         # LEDs should be off
-        mock_board.ledsOff.assert_called()
+        self.leds_off.assert_called()
         
         widget.cleanup()
 

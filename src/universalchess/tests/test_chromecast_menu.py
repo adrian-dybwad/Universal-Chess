@@ -8,36 +8,8 @@ falls through into discovery, the two UIs drift.
 
 import sys
 import types
-from dataclasses import dataclass
-from typing import Optional
 from unittest.mock import MagicMock
 
-
-@dataclass
-class _StubIconMenuEntry:
-    key: str
-    label: str
-    icon_name: str
-    enabled: bool = True
-    selectable: bool = True
-    height_ratio: float = 1.0
-    max_height: Optional[int] = None
-    icon_size: Optional[int] = None
-    layout: str = "horizontal"
-    font_size: int = 16
-    bold: bool = False
-    help: Optional[str] = None
-
-
-epaper_module = types.ModuleType("universalchess.epaper")
-icon_menu_module = types.ModuleType("universalchess.epaper.icon_menu")
-icon_menu_module.IconMenuEntry = _StubIconMenuEntry
-icon_menu_module.IconMenuWidget = MagicMock()
-epaper_module.IconMenuEntry = _StubIconMenuEntry
-epaper_module.IconMenuWidget = MagicMock()
-epaper_module.SplashScreen = MagicMock()
-sys.modules.setdefault("universalchess.epaper", epaper_module)
-sys.modules.setdefault("universalchess.epaper.icon_menu", icon_menu_module)
 
 from universalchess.menus.chromecast_menu import handle_chromecast_menu
 

@@ -29,12 +29,9 @@ pin the channel routing and masking contract, which is what makes the red
 feature correct regardless of those tuned constants.
 """
 
-import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
-for _mod in ('spidev', 'RPi', 'RPi.GPIO', 'gpiozero'):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image
 

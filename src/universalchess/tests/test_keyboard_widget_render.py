@@ -17,14 +17,6 @@ so the canvas rendered after the state change is byte-identical to the canvas
 rendered before it. Each test below asserts the rendered canvas changes.
 """
 
-import sys
-from unittest.mock import MagicMock
-
-# Stub the serial stack so the real board module (imported lazily by the
-# keyboard for beeps and Key constants) loads on non-hardware machines.
-# PIL is intentionally NOT mocked: these tests verify real rendered output.
-for _mod in ("serial", "serial.tools", "serial.tools.list_ports"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image, ImageChops
 

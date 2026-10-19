@@ -24,17 +24,10 @@ How a regression manifests:
     sees init() return 0 and the System card again claims a working panel.
 """
 
-import sys
 import time
 import unittest
 from unittest.mock import MagicMock
 
-# Mock Raspberry Pi hardware libraries before importing the driver. These are
-# not installed in the test environment; the driver imports them at module load
-# (RPi.GPIO directly, spidev/gpiozero transitively via epdconfig). Mirrors the
-# pattern used by the other widget tests in this package.
-for _mod in ('spidev', 'RPi', 'RPi.GPIO', 'gpiozero'):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from universalchess.epaper.framework.waveshare import epd2in9d, epdconfig
 from universalchess.epaper.framework.waveshare.epd2in9d import EPD, EPDTimeoutError

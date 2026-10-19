@@ -11,13 +11,6 @@ skipped in navigation, and not activatable. These tests pin that contract so the
 hide-via-enabled anti-pattern cannot creep back.
 """
 
-import sys
-from unittest.mock import MagicMock
-
-# Stub the serial stack so the board module (imported lazily by handle_key)
-# loads on non-hardware machines. PIL is intentionally real (buttons render).
-for _mod in ("serial", "serial.tools", "serial.tools.list_ports"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image
 

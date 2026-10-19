@@ -20,66 +20,8 @@ The "Scholar's Mate" (4-move checkmate) is used as a quick test game:
 4. Qxf7# (checkmate)
 """
 
-import sys
-import types
 import unittest
-from unittest.mock import MagicMock, patch, call
-
-# =============================================================================
-# Mock all hardware-specific and Linux-specific modules BEFORE any imports
-# =============================================================================
-
-# Mock hardware and Linux-specific modules. psutil is intentionally NOT stubbed:
-# it is a real, required dependency (universalchess.main imports it
-# unconditionally), and replacing it with a MagicMock here leaked globally via
-# sys.modules and broke tests that need the real library.
-for mod in ['spidev', 'RPi', 'RPi.GPIO', 'gpiozero', 'smbus', 'smbus2', 'bluetooth']:
-    sys.modules[mod] = MagicMock()
-
-# Mock dbus with submodules (dbus is a package, not just a module)
-dbus_mock = types.ModuleType('dbus')
-dbus_mock.mainloop = MagicMock()
-dbus_mock.service = MagicMock()
-dbus_mock.Interface = MagicMock()
-dbus_mock.SystemBus = MagicMock()
-dbus_mock.SessionBus = MagicMock()
-dbus_mock.String = str
-dbus_mock.Byte = int
-dbus_mock.Array = list
-dbus_mock.Dictionary = dict
-sys.modules['dbus'] = dbus_mock
-sys.modules['dbus.mainloop'] = MagicMock()
-sys.modules['dbus.mainloop.glib'] = MagicMock()
-sys.modules['dbus.service'] = MagicMock()
-
-# Mock gi (GObject Introspection)
-sys.modules['gi'] = MagicMock()
-sys.modules['gi.repository'] = MagicMock()
-
-# Mock serial
-sys.modules['serial'] = MagicMock()
-sys.modules['serial.tools'] = MagicMock()
-sys.modules['serial.tools.list_ports'] = MagicMock()
-
-# numpy is a real dependency (used by the e-paper drivers via np.packbits) and
-# is left unmocked, exactly like PIL: replacing either in sys.modules here
-# leaked a MagicMock to every later-collected test (e-paper packing tests and
-# icon/help-dialog rendering then broke), so both are intentionally left real.
-
-# Create proper package mocks for DGTCentaurMods.board
-board_package = types.ModuleType('DGTCentaurMods.board')
-mock_board = MagicMock()
-mock_board.display_manager = MagicMock()
-mock_board.display_manager.add_widget = MagicMock(return_value=MagicMock())
-mock_board.display_manager.remove_widget = MagicMock()
-mock_centaur = MagicMock()
-board_package.board = mock_board
-board_package.centaur = mock_centaur
-sys.modules['DGTCentaurMods.board'] = board_package
-sys.modules['DGTCentaurMods.board.board'] = mock_board
-sys.modules['DGTCentaurMods.board.centaur'] = mock_centaur
-sys.modules['DGTCentaurMods.board.logging'] = MagicMock()
-sys.modules['DGTCentaurMods.board.settings'] = MagicMock()
+from unittest.mock import MagicMock, patch
 
 # Now import chess (real module, needed for game logic)
 import chess
@@ -502,11 +444,6 @@ class TestGameOverWidgetIntegration(unittest.TestCase):
         """Set up test fixtures."""
         from universalchess.state.chess_game import reset_chess_game
         self.game_state = reset_chess_game()
-        # Fully reset the mock board for isolation
-        mock_board.reset_mock()
-        mock_board.display_manager = MagicMock()
-        mock_board.display_manager.add_widget = MagicMock(return_value=MagicMock())
-        mock_board.display_manager.remove_widget = MagicMock()
     
     def test_game_over_widget_shown_on_checkmate(self):
         """Test that game over notification fires on checkmate.
@@ -521,13 +458,11 @@ class TestGameOverWidgetIntegration(unittest.TestCase):
         from universalchess.managers.display import DisplayManager
         
         # Create display manager with mocked init
-        with patch.object(DisplayManager, '_init_widgets'):
-            import universalchess.managers.display as display_module
-            display_module.get_chess_game = MagicMock(return_value=self.game_state)
-            display_module._load_widgets = MagicMock()
-            display_module.get_chess_clock_service = MagicMock(return_value=MagicMock())
-            display_module.get_clock_state = MagicMock(return_value=MagicMock())
-            
+        import universalchess.managers.display as display_module
+        with patch.object(DisplayManager, '_init_widgets'), \
+             patch.object(display_module, 'get_chess_game', return_value=self.game_state), \
+             patch.object(display_module, '_load_widgets'), \
+             patch.object(display_module, 'get_chess_clock_service', return_value=MagicMock()):
             dm = DisplayManager()
             dm._clock = MagicMock()
             dm.clock_widget = MagicMock()

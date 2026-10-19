@@ -21,13 +21,10 @@ How a regression manifests:
       every move a ~12-15s refresh.
 """
 
-import sys
 import unittest
 from unittest.mock import MagicMock
 from concurrent.futures import Future
 
-for _mod in ('spidev', 'RPi', 'RPi.GPIO', 'gpiozero'):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image
 

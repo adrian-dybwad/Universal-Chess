@@ -29,7 +29,6 @@ How a regression manifests
 - A wrong default (off) silently drops the warning for every existing install.
 """
 
-import sys
 import unittest
 from concurrent.futures import Future
 from unittest.mock import MagicMock
@@ -37,8 +36,6 @@ from unittest.mock import MagicMock
 import chess
 import pytest
 
-for _mod in ("spidev", "RPi", "RPi.GPIO", "gpiozero"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image
 

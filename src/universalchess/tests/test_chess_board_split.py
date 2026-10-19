@@ -24,8 +24,6 @@ import pytest
 from unittest.mock import MagicMock
 from concurrent.futures import Future
 
-for _mod in ("spidev", "RPi", "RPi.GPIO", "gpiozero"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 Image = ImageDraw = ImageChops = None  # bound by the autouse fixture
 

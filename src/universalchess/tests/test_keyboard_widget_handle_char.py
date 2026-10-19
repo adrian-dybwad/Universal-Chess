@@ -11,13 +11,6 @@ Why these tests exist: handle_char is the bridge that lets a real keyboard fill
 the WiFi password field. How a regression manifests is documented per-test.
 """
 
-import sys
-from unittest.mock import MagicMock
-
-# Stub the serial stack so the board module (imported lazily for beeps) loads
-# on non-hardware machines. PIL is intentionally real to verify rendered output.
-for _mod in ("serial", "serial.tools", "serial.tools.list_ports"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image, ImageChops
 

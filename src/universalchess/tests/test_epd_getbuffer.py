@@ -19,15 +19,8 @@ How a regression manifests:
     all-white / all-black images cannot.
 """
 
-import sys
 import unittest
-from unittest.mock import MagicMock
 
-# Mock Raspberry Pi hardware libraries before importing the drivers: they import
-# RPi.GPIO / spidev / gpiozero transitively via epdconfig (mirrors the pattern in
-# test_epd_ssd1680). The packing logic itself touches no hardware.
-for _mod in ('spidev', 'RPi', 'RPi.GPIO', 'gpiozero'):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image
 

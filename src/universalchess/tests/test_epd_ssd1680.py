@@ -17,16 +17,10 @@ How a regression manifests:
       test fails because the expected SSD1680 opcodes are missing/out of order.
 """
 
-import sys
 import time
 import unittest
 from unittest.mock import MagicMock
 
-# Mock Raspberry Pi hardware libraries before importing the driver (mirrors the
-# pattern in test_epaper_busy_timeout): the driver imports RPi.GPIO/spidev
-# transitively via epdconfig and the V2 driver it borrows EPDTimeoutError from.
-for _mod in ('spidev', 'RPi', 'RPi.GPIO', 'gpiozero'):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image
 

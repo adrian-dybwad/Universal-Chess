@@ -15,13 +15,8 @@ navigation triggers a full-screen flashing refresh instead of a fast partial one
 This test asserts the update is requested with full=False.
 """
 
-import sys
 from unittest.mock import MagicMock
 
-# Stub the serial stack so the board module (imported lazily for beeps/keys)
-# loads on non-hardware machines. PIL is intentionally real (buttons render).
-for _mod in ("serial", "serial.tools", "serial.tools.list_ports"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from universalchess.epaper.icon_menu import IconMenuWidget, IconMenuEntry
 

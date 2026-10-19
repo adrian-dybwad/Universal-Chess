@@ -20,17 +20,10 @@ How a regression manifests:
   would see run() called after start() returned False.
 """
 
-import sys
 import subprocess
 import threading
 from unittest.mock import MagicMock, patch
 
-# Stub the D-Bus and GObject-introspection stacks so the real BleManager module
-# imports on non-hardware machines. These are only used for live BlueZ access,
-# which start_async() is monkeypatched away from in these tests.
-for _mod in ("dbus", "dbus.service", "dbus.mainloop", "dbus.mainloop.glib",
-             "gi", "gi.repository"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from universalchess.managers.ble import BleManager
 

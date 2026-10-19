@@ -15,68 +15,8 @@ Test scenarios:
 4. Clock stays hidden when not in timed mode regardless of game state
 """
 
-import sys
-import types
 import unittest
 from unittest.mock import MagicMock
-
-# =============================================================================
-# Mock all hardware-specific and Linux-specific modules BEFORE any imports
-# =============================================================================
-
-# Mock hardware and Linux-specific modules
-# psutil is intentionally NOT stubbed: it is a real, required dependency
-# (universalchess.main imports it unconditionally). Replacing it with a MagicMock
-# here leaked globally via sys.modules and broke other tests that need the real
-# library (e.g. the system_info real-collection smoke test).
-for mod in ['spidev', 'RPi', 'RPi.GPIO', 'gpiozero', 'smbus', 'smbus2', 'bluetooth']:
-    sys.modules[mod] = MagicMock()
-
-# Mock dbus with submodules
-dbus_mock = types.ModuleType('dbus')
-dbus_mock.mainloop = MagicMock()
-dbus_mock.service = MagicMock()
-dbus_mock.Interface = MagicMock()
-dbus_mock.SystemBus = MagicMock()
-dbus_mock.SessionBus = MagicMock()
-dbus_mock.String = str
-dbus_mock.Byte = int
-dbus_mock.Array = list
-dbus_mock.Dictionary = dict
-sys.modules['dbus'] = dbus_mock
-sys.modules['dbus.mainloop'] = MagicMock()
-sys.modules['dbus.mainloop.glib'] = MagicMock()
-sys.modules['dbus.service'] = MagicMock()
-
-# Mock gi (GObject Introspection)
-sys.modules['gi'] = MagicMock()
-sys.modules['gi.repository'] = MagicMock()
-
-# Mock serial
-sys.modules['serial'] = MagicMock()
-sys.modules['serial.tools'] = MagicMock()
-sys.modules['serial.tools.list_ports'] = MagicMock()
-
-# numpy is a real dependency (used by the e-paper drivers via np.packbits) and
-# is left unmocked, exactly like PIL: replacing it in sys.modules here leaked a
-# MagicMock to every later-collected test module, breaking real numpy/PIL
-# consumers (e.g. the e-paper packing tests and icon/help-dialog rendering).
-
-# Create proper package mocks for DGTCentaurMods.board
-board_package = types.ModuleType('DGTCentaurMods.board')
-mock_board = MagicMock()
-mock_board.display_manager = MagicMock()
-mock_board.display_manager.add_widget = MagicMock(return_value=MagicMock())
-mock_board.display_manager.remove_widget = MagicMock()
-mock_board.ledsOff = MagicMock()
-mock_centaur = MagicMock()
-board_package.board = mock_board
-board_package.centaur = mock_centaur
-sys.modules['DGTCentaurMods.board'] = board_package
-sys.modules['DGTCentaurMods.board.board'] = mock_board
-sys.modules['DGTCentaurMods.board.centaur'] = mock_centaur
-sys.modules['DGTCentaurMods.board.logging'] = MagicMock()
-sys.modules['DGTCentaurMods.board.settings'] = MagicMock()
 
 
 class TestChessClockWidgetVisibility(unittest.TestCase):

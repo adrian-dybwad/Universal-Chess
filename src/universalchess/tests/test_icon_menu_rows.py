@@ -16,11 +16,6 @@ menu starts scrolling because the pair still consumed two height units, or
 UP/DOWN skips one of them.
 """
 
-import sys
-from unittest.mock import MagicMock
-
-for _mod in ("serial", "serial.tools", "serial.tools.list_ports"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from universalchess.epaper.icon_menu import IconMenuEntry, IconMenuWidget
 

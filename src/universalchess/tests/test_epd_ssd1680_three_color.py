@@ -35,12 +35,9 @@ masking contract, which is what makes the red feature correct regardless of thos
 tuned constants.
 """
 
-import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-for _mod in ('spidev', 'RPi', 'RPi.GPIO', 'gpiozero'):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image
 

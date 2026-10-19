@@ -21,14 +21,9 @@ How a regression manifests:
       the transcribed GxEPD2 sequence.
 """
 
-import sys
 import unittest
 from unittest.mock import MagicMock
 
-# Mock Raspberry Pi hardware libraries before importing the driver (mirrors the
-# pattern in test_epd_ssd1680): the driver imports RPi.GPIO/spidev via epdconfig.
-for _mod in ('spidev', 'RPi', 'RPi.GPIO', 'gpiozero'):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from universalchess.epaper.framework.waveshare import epd2in9d, epdconfig
 from universalchess.epaper.framework.waveshare import waveform_profiles as wp

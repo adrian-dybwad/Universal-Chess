@@ -25,6 +25,13 @@ from unittest.mock import MagicMock
 # the behaviour anyway. Stubbing them is what lets the application module be
 # imported at all off a Pi, which is the point -- a module no test can import is
 # a module no test can cover.
+#
+# This list is the only place hardware modules are stubbed. A test module that
+# writes ``sys.modules`` at import time replaces the entry for the whole session,
+# since pytest imports every test module during collection, so tests in other
+# files then fail depending on collection order. test_test_module_isolation.py
+# enforces this; a test that needs its own module uses ``patch.dict`` or
+# ``monkeypatch.setitem`` on ``sys.modules``, which restore it afterwards.
 
 _hardware_modules = [
     "spidev",
@@ -35,6 +42,8 @@ _hardware_modules = [
     "smbus",
     "smbus2",
     "serial",
+    "serial.tools",
+    "serial.tools.list_ports",
     "bluetooth",
     "gi",
     "gi.repository",

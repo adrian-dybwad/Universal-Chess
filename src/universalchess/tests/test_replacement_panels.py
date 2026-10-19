@@ -18,12 +18,9 @@ How a regression manifests:
       controllers and can power the wrong glass.
 """
 
-import sys
 import unittest
 from unittest.mock import MagicMock
 
-for _mod in ("spidev", "RPi", "RPi.GPIO", "gpiozero"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image
 

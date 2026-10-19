@@ -11,25 +11,12 @@ Test Scenarios:
 """
 from __future__ import annotations
 
-import sys
-import os
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
-import threading
+from unittest.mock import MagicMock
 import time
 
 import chess
 
-# Mock hardware-dependent modules before importing hand_brain
-# These modules are only available on Raspberry Pi hardware
-sys.modules['spidev'] = MagicMock()
-sys.modules['RPi'] = MagicMock()
-sys.modules['RPi.GPIO'] = MagicMock()
-sys.modules['gpiozero'] = MagicMock()
-sys.modules['lgpio'] = MagicMock()
-sys.modules['serial'] = MagicMock()
-sys.modules['serial.tools'] = MagicMock()
-sys.modules['serial.tools.list_ports'] = MagicMock()
 
 # Import directly from the module file to avoid package __init__ import chain
 # which tries to import LichessPlayer and other modules with hardware dependencies
@@ -129,7 +116,7 @@ class TestReverseModeReselection(unittest.TestCase):
     def _create_player(self):
         """Create a HandBrainPlayer in REVERSE mode with mock engine."""
         from universalchess.players.hand_brain import (
-            HandBrainPlayer, HandBrainConfig, HandBrainMode, HandBrainPhase
+            HandBrainPlayer, HandBrainConfig, HandBrainMode
         )
         
         config = HandBrainConfig(
@@ -160,7 +147,7 @@ class TestReverseModeReselection(unittest.TestCase):
         Failure: The second bump is ignored, knight move is computed.
         """
         from universalchess.players.hand_brain import (
-            HandBrainPlayer, HandBrainConfig, HandBrainMode, HandBrainPhase
+            HandBrainPhase
         )
         
         player = self._create_player()
@@ -214,7 +201,7 @@ class TestReverseModeReselection(unittest.TestCase):
         Failure: The second bump is ignored, knight move remains pending.
         """
         from universalchess.players.hand_brain import (
-            HandBrainPlayer, HandBrainConfig, HandBrainMode, HandBrainPhase
+            HandBrainPhase
         )
         
         player = self._create_player()
@@ -282,7 +269,7 @@ class TestReverseModeReselection(unittest.TestCase):
         Failure: Unnecessary recalculation occurs.
         """
         from universalchess.players.hand_brain import (
-            HandBrainPlayer, HandBrainConfig, HandBrainMode, HandBrainPhase
+            HandBrainPhase
         )
         
         player = self._create_player()

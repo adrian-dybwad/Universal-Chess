@@ -17,13 +17,6 @@ Why these tests exist:
 How a regression manifests is documented per-test.
 """
 
-import sys
-from unittest.mock import MagicMock
-
-# Stub the serial stack so the real board module (used to resolve Key enum
-# values) imports on non-hardware machines, mirroring the keyboard widget test.
-for _mod in ("serial", "serial.tools", "serial.tools.list_ports"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from universalchess.board import board
 from universalchess.managers.bt_keyboard import BluetoothKeyboardManager

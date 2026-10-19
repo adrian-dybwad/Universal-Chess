@@ -19,55 +19,8 @@ subscribed GameOverWidget exists, so the end screen displays over the board -
 matching the checkmate flow. Only a shutdown ("exit") skips the rebuild.
 """
 
-import sys
-import types
 import unittest
 from unittest.mock import MagicMock, patch
-
-# =============================================================================
-# Mock hardware/Linux-specific modules BEFORE importing application code.
-# Mirrors test_game_over_widget_clear.py: psutil, numpy and PIL are real
-# dependencies and intentionally left unmocked.
-# =============================================================================
-for mod in ['spidev', 'RPi', 'RPi.GPIO', 'gpiozero', 'smbus', 'smbus2', 'bluetooth']:
-    sys.modules[mod] = MagicMock()
-
-dbus_mock = types.ModuleType('dbus')
-dbus_mock.mainloop = MagicMock()
-dbus_mock.service = MagicMock()
-dbus_mock.Interface = MagicMock()
-dbus_mock.SystemBus = MagicMock()
-dbus_mock.SessionBus = MagicMock()
-dbus_mock.String = str
-dbus_mock.Byte = int
-dbus_mock.Array = list
-dbus_mock.Dictionary = dict
-sys.modules['dbus'] = dbus_mock
-sys.modules['dbus.mainloop'] = MagicMock()
-sys.modules['dbus.mainloop.glib'] = MagicMock()
-sys.modules['dbus.service'] = MagicMock()
-
-sys.modules['gi'] = MagicMock()
-sys.modules['gi.repository'] = MagicMock()
-
-sys.modules['serial'] = MagicMock()
-sys.modules['serial.tools'] = MagicMock()
-sys.modules['serial.tools.list_ports'] = MagicMock()
-
-board_package = types.ModuleType('DGTCentaurMods.board')
-mock_board = MagicMock()
-mock_board.display_manager = MagicMock()
-mock_board.display_manager.add_widget = MagicMock(return_value=MagicMock())
-mock_board.display_manager.remove_widget = MagicMock()
-mock_board.ledsOff = MagicMock()
-mock_centaur = MagicMock()
-board_package.board = mock_board
-board_package.centaur = mock_centaur
-sys.modules['DGTCentaurMods.board'] = board_package
-sys.modules['DGTCentaurMods.board.board'] = mock_board
-sys.modules['DGTCentaurMods.board.centaur'] = mock_centaur
-sys.modules['DGTCentaurMods.board.logging'] = MagicMock()
-sys.modules['DGTCentaurMods.board.settings'] = MagicMock()
 
 
 class _FakeMenu:
@@ -99,12 +52,10 @@ class _DisplayManagerTestBase(unittest.TestCase):
         # _init_widgets touches the e-paper hardware; stub it during construction
         # so the manager builds without a real display. Individual tests install
         # their own _init_widgets behaviour afterwards.
-        with patch.object(DisplayManager, '_init_widgets'):
-            display_module.get_chess_game = MagicMock(return_value=self.game_state)
-            display_module._load_widgets = MagicMock()
-            display_module.get_chess_clock_service = MagicMock(return_value=MagicMock())
-            display_module.get_clock_state = MagicMock(return_value=MagicMock())
-
+        with patch.object(DisplayManager, '_init_widgets'), \
+             patch.object(display_module, 'get_chess_game', return_value=self.game_state), \
+             patch.object(display_module, '_load_widgets'), \
+             patch.object(display_module, 'get_chess_clock_service', return_value=MagicMock()):
             self.dm = DisplayManager()
             self.dm._clock = MagicMock()
             self.dm.clock_widget = MagicMock()

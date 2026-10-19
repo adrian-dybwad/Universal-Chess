@@ -16,11 +16,8 @@ How a regression manifests:
     so the override is still wired into boot or into the live tuning path.
 """
 
-import sys
 from unittest.mock import MagicMock, patch
 
-for _mod in ("spidev", "RPi", "RPi.GPIO", "gpiozero"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 import pytest
 

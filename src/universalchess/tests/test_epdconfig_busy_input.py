@@ -22,11 +22,6 @@ import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
-# Mock the hardware libraries the driver imports at module load (spidev/gpiozero
-# are not installed in the test environment). Mirrors the pattern used by the
-# other e-paper tests in this package.
-for _mod in ('spidev', 'gpiozero'):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from universalchess.epaper.framework.waveshare import epdconfig
 

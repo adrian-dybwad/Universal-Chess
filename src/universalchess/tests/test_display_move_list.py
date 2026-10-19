@@ -17,24 +17,8 @@ on screen, or is_move_review_active still keys off analysis_widget so
 long-press OK cannot open takeback with analysis off.
 """
 
-import sys
-import types
 from unittest.mock import MagicMock
 
-# Hardware/Linux-only modules must be mocked before importing display.py.
-for _mod in ["spidev", "RPi", "RPi.GPIO", "gpiozero", "smbus", "smbus2", "bluetooth"]:
-    sys.modules[_mod] = MagicMock()
-for _mod in ["serial", "serial.tools", "serial.tools.list_ports"]:
-    sys.modules[_mod] = MagicMock()
-
-_board_pkg = types.ModuleType("DGTCentaurMods.board")
-_board_pkg.board = MagicMock()
-_board_pkg.centaur = MagicMock()
-sys.modules["DGTCentaurMods.board"] = _board_pkg
-sys.modules["DGTCentaurMods.board.board"] = _board_pkg.board
-sys.modules["DGTCentaurMods.board.centaur"] = _board_pkg.centaur
-sys.modules["DGTCentaurMods.board.logging"] = MagicMock()
-sys.modules["DGTCentaurMods.board.settings"] = MagicMock()
 
 from universalchess.managers.display import DisplayManager  # noqa: E402
 

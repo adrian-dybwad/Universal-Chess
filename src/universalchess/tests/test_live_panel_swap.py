@@ -15,14 +15,11 @@ How a regression manifests:
       card shows the old panel and a waveform for the new one is rejected.
 """
 
-import sys
 import threading
 import unittest
 from concurrent.futures import Future
 from unittest.mock import MagicMock, patch
 
-for _mod in ("spidev", "RPi", "RPi.GPIO", "gpiozero"):
-    sys.modules.setdefault(_mod, MagicMock())
 
 from PIL import Image
 
