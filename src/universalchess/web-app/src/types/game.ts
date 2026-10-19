@@ -374,6 +374,12 @@ export interface ClockStatus {
   /** Whether the game has a running clock (false = untimed). */
   timed_mode: boolean;
   /**
+   * Whether a connected app (Millennium/Pegasus/Chessnut session) keeps the
+   * game's clock. No supported protocol carries that clock, so the board's
+   * own times are paused and are not the game's; the web shows a note instead.
+   */
+  kept_by_app: boolean;
+  /**
    * Epoch seconds read from the *board's* wall clock when the snapshot was
    * produced. Null when no snapshot has been received.
    *

@@ -20,6 +20,7 @@
   "chess.color.black_initial": "C",
   "clock.turn_white": "Ruch białych",
   "clock.turn_black": "Ruch czarnych",
+  "clock.on_app": "Zegar w aplikacji",
   "move_list.header": "Ruch  {current}/{total}",
   "alert.check": "SZACH",
   "alert.your_queen": "TWÓJ\nHETMAN",

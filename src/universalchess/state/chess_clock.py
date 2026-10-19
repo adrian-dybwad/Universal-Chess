@@ -48,6 +48,8 @@ class ChessClockState:
         self._is_running: bool = False
         self._is_paused: bool = False
         self._timed_mode: bool = False
+        # A connected app keeps the game's clock; the board's times are not it.
+        self._kept_by_app: bool = False
 
         # Time control (increment / delay / stages / asymmetric). Defaults to an
         # untimed control until configured, so queries are always well-defined.
@@ -206,6 +208,16 @@ class ChessClockState:
         return self._timed_mode
 
     @property
+    def kept_by_app(self) -> bool:
+        """Whether a connected app keeps the game's clock.
+
+        True for a remote-app session. No supported board protocol carries the
+        app's clock, so displays show where the clock is instead of the board's
+        paused times.
+        """
+        return self._kept_by_app
+
+    @property
     def time_control(self) -> TimeControl:
         """The active time control (increment / delay / stages / asymmetric)."""
         return self._time_control
@@ -318,6 +330,21 @@ class ChessClockState:
         self._timed_mode = timed
         self._notify_state_change()
 
+    def set_kept_by_app(self, kept: bool) -> None:
+        """Record whether a connected app keeps the game's clock.
+
+        Notifies only on a change, so repeated session hooks do not refresh
+        the panel.
+
+        Args:
+            kept: True while a remote app is connected.
+        """
+        kept = bool(kept)
+        if kept == self._kept_by_app:
+            return
+        self._kept_by_app = kept
+        self._notify_state_change()
+
     def set_time_control(self, time_control: TimeControl) -> None:
         """Set the active time control and initialize per-move tracking.
 
@@ -425,6 +452,7 @@ class ChessClockState:
         self._is_running = False
         self._is_paused = False
         self._timed_mode = False
+        self._kept_by_app = False
         self._time_control = TimeControl.sudden_death_minutes(0)
         self._delay_remaining = 0
         self._time_used_this_turn = 0

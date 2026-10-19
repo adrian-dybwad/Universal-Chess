@@ -180,7 +180,8 @@
     }
   },
   "clock": {
-    "aria": "Partieuhr"
+    "aria": "Partieuhr",
+    "onApp": "Die Uhr läuft in der verbundenen App"
   },
   "positions": {
     "loading": "Stellungen werden geladen...",

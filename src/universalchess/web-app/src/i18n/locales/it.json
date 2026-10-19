@@ -182,7 +182,8 @@
     }
   },
   "clock": {
-    "aria": "Orologio della partita"
+    "aria": "Orologio della partita",
+    "onApp": "L'orologio è nell'app collegata"
   },
   "positions": {
     "loading": "Caricamento posizioni...",

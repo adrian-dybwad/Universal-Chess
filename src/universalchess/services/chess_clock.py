@@ -225,6 +225,11 @@ class ChessClockService:
         return self._state.timed_mode
 
     @property
+    def kept_by_app(self) -> bool:
+        """Whether a connected app keeps the game's clock."""
+        return self._state.kept_by_app
+
+    @property
     def engine_move_delay_seconds(self) -> int:
         """Grace delay (seconds) for the engine-move clock hand-off."""
         return self._engine_move_delay_seconds
@@ -507,6 +512,11 @@ class ChessClockService:
         self._join_countdown_thread(stale)
         log.info("[ChessClockService] Started")
     
+    def set_kept_by_app(self, kept: bool) -> None:
+        """Record whether a connected app keeps the game's clock (see ChessClockState)."""
+        with self._lock:
+            self._state.set_kept_by_app(kept)
+
     def pause(self) -> None:
         """Pause the clock."""
         with self._lock:

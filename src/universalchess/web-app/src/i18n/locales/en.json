@@ -180,7 +180,8 @@
     }
   },
   "clock": {
-    "aria": "Game clock"
+    "aria": "Game clock",
+    "onApp": "Clock is on the connected app"
   },
   "positions": {
     "loading": "Loading positions...",

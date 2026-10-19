@@ -20,6 +20,7 @@
   "chess.color.black_initial": "Ч",
   "clock.turn_white": "Ход белых",
   "clock.turn_black": "Ход чёрных",
+  "clock.on_app": "Часы в приложении",
   "move_list.header": "Ход  {current}/{total}",
   "alert.check": "ШАХ",
   "alert.your_queen": "ТВОЙ\nФЕРЗЬ",

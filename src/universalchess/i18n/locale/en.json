@@ -20,6 +20,7 @@
   "chess.color.black_initial": "B",
   "clock.turn_white": "White's Turn",
   "clock.turn_black": "Black's Turn",
+  "clock.on_app": "Clock on app",
   "move_list.header": "Move  {current}/{total}",
   "alert.check": "CHECK",
   "alert.your_queen": "YOUR\nQUEEN",

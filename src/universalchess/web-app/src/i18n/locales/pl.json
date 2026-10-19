@@ -184,7 +184,8 @@
     }
   },
   "clock": {
-    "aria": "Zegar partii"
+    "aria": "Zegar partii",
+    "onApp": "Zegar jest w połączonej aplikacji"
   },
   "positions": {
     "loading": "Ładowanie pozycji...",

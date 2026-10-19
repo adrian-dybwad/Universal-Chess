@@ -20,6 +20,7 @@
   "chess.color.black_initial": "N",
   "clock.turn_white": "Turno blancas",
   "clock.turn_black": "Turno negras",
+  "clock.on_app": "Reloj en la app",
   "move_list.header": "Jugada  {current}/{total}",
   "alert.check": "JAQUE",
   "alert.your_queen": "TU\nDAMA",

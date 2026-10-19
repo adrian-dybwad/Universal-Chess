@@ -20,6 +20,7 @@
   "chess.color.black_initial": "S",
   "clock.turn_white": "Weiß am Zug",
   "clock.turn_black": "Schwarz am Zug",
+  "clock.on_app": "Uhr in der App",
   "move_list.header": "Zug  {current}/{total}",
   "alert.check": "SCHACH",
   "alert.your_queen": "IHRE\nDAME",

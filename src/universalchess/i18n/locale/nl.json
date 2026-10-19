@@ -20,6 +20,7 @@
   "chess.color.black_initial": "Z",
   "clock.turn_white": "Wit aan zet",
   "clock.turn_black": "Zwart aan zet",
+  "clock.on_app": "Klok in de app",
   "move_list.header": "Zet  {current}/{total}",
   "alert.check": "SCHAAK",
   "alert.your_queen": "JE\nDAME",

@@ -154,6 +154,7 @@ export function GameStateProvider({ children }: { children: React.ReactNode }) {
               is_running: Boolean(data.is_running),
               is_paused: Boolean(data.is_paused),
               timed_mode: Boolean(data.timed_mode),
+              kept_by_app: Boolean(data.kept_by_app),
               synced_at: data.synced_at ?? null,
             });
             return;

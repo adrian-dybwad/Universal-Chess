@@ -53,6 +53,7 @@ function makeClock(overrides: Partial<ClockSnapshot> = {}): ClockSnapshot {
     is_running: false,
     is_paused: false,
     timed_mode: true,
+    kept_by_app: false,
     synced_at: 1000,
     received_at_monotonic_ms: 1000,
     ...overrides,
@@ -149,6 +150,19 @@ describe('GameOverPanel', () => {
       makeClock({ timed_mode: false }),
     );
     render(<GameOverPanel />);
+    expect(screen.queryByText(/\d+:\d\d/)).not.toBeInTheDocument();
+  });
+
+  it('omits final times when a connected app kept the clock', () => {
+    // During an app session the board's clock is paused and the app's clock
+    // is unreadable, so the last snapshot's times are not the game's finals.
+    // A regression shows the frozen board times (1:05 / 2:10) as final times.
+    setStore(
+      makeGameState({ game_over: true, result: '1-0', termination: 'checkmate' }),
+      makeClock({ white_time: 65, black_time: 130, timed_mode: true, kept_by_app: true }),
+    );
+    render(<GameOverPanel />);
+    expect(screen.getByText('White wins')).toBeInTheDocument();
     expect(screen.queryByText(/\d+:\d\d/)).not.toBeInTheDocument();
   });
 

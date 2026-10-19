@@ -182,7 +182,8 @@
     }
   },
   "clock": {
-    "aria": "Reloj de la partida"
+    "aria": "Reloj de la partida",
+    "onApp": "El reloj está en la app conectada"
   },
   "positions": {
     "loading": "Cargando posiciones...",

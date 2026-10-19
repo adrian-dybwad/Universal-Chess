@@ -458,7 +458,9 @@ class ChessClockWidget(Widget):
         """
         Render the chess clock widget onto the sprite image.
         
-        Reads state from ChessClock and renders it.
+        Reads state from ChessClock and renders it. While a connected app keeps
+        the clock, the compact turn layout is used even in a timed game: the
+        board's paused times are not the game's.
         """
         draw = ImageDraw.Draw(sprite)
         
@@ -468,7 +470,7 @@ class ChessClockWidget(Widget):
         # Draw 1px border around widget extent
         draw.rectangle([(0, 0), (self.width - 1, self.height - 1)], fill=None, outline=0)
         
-        if self._timed_mode:
+        if self._timed_mode and not self._clock.kept_by_app:
             self._render_timed_mode(sprite, draw)
         else:
             self._render_compact_mode(sprite, draw)
@@ -623,7 +625,8 @@ class ChessClockWidget(Widget):
         """
         Render compact mode: large centered turn indicator.
         
-        Reads active color from clock state.
+        Reads active color from clock state. While a connected app keeps the
+        clock, the line under the turn text says so in place of the player name.
         """
         # Active side from the clock (honors the engine-move hand-off override),
         # names from players state.
@@ -639,6 +642,10 @@ class ChessClockWidget(Widget):
             # Default to white if None or 'white'
             turn_text = t("clock.turn_white")
             player_name = white_name
+        if self._clock.kept_by_app:
+            subline = t("clock.on_app")
+        else:
+            subline = player_name[:15]
 
         # Compact move-history layout: DisplayManager has shrunk the widget, so
         # drop the circle and player name and center just the turn text in the
@@ -670,9 +677,8 @@ class ChessClockWidget(Widget):
         self._turn_text.set_text(turn_text)
         self._turn_text.draw_on(sprite, 0, text_y)
         
-        # Player name below turn text (if set)
-        if player_name:
-            display_name = player_name[:15] if len(player_name) > 15 else player_name
-            self._turn_name_text.set_text(display_name)
+        # Player name (or the clock-on-app note) below turn text, if any
+        if subline:
+            self._turn_name_text.set_text(subline)
             name_y = text_y + 18
             self._turn_name_text.draw_on(sprite, 0, name_y)

@@ -20,6 +20,7 @@
   "chess.color.black_initial": "S",
   "clock.turn_white": "Beyazın sırası",
   "clock.turn_black": "Siyahın sırası",
+  "clock.on_app": "Saat uygulamada",
   "move_list.header": "Hamle  {current}/{total}",
   "alert.check": "ŞAH",
   "alert.your_queen": "SENİN\nVEZİRİN",

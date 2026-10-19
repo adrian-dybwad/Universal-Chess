@@ -263,6 +263,9 @@ def test_remote_session_pauses_clock_on_enter_and_resumes_on_exit(gm):
         def sync_move_counters_to_position(self):
             calls.append("baseline")
 
+        def set_kept_by_app(self, kept):
+            pass
+
     gm._clock_service = _FakeClock()
 
     gm.set_remote_app_session(True)
@@ -270,6 +273,27 @@ def test_remote_session_pauses_clock_on_enter_and_resumes_on_exit(gm):
 
     gm.set_remote_app_session(False)
     assert calls == ["pause", "baseline", "resume"]
+
+
+def test_remote_session_marks_the_clock_as_kept_by_the_app(gm, clock):
+    """The clock must say the app keeps it for exactly the session's duration.
+
+    No supported protocol carries the app's clock, so the board cannot show the
+    game's times while an app is connected. The flag is what makes the e-paper
+    and the web show "clock on app" instead of the paused board clock, and it
+    must clear on disconnect so local play shows times again.
+
+    Regression: observed is not [False, True, False] -- the panel and the web
+    keep showing frozen times during the session, or never show them again.
+    """
+    observed = [clock.kept_by_app]
+
+    gm.set_remote_app_session(True)
+    observed.append(clock.kept_by_app)
+    gm.set_remote_app_session(False)
+    observed.append(clock.kept_by_app)
+
+    assert observed == [False, True, False]
 
 
 def test_session_exit_enters_correction_when_physical_board_mismatches(gm, monkeypatch):

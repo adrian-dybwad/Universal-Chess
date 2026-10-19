@@ -1290,6 +1290,7 @@ def broadcast_clock_status(
     is_running: bool,
     is_paused: bool,
     timed_mode: bool,
+    kept_by_app: bool,
 ) -> bool:
     """Broadcast the current live clock to the web (board -> web).
 
@@ -1310,6 +1311,8 @@ def broadcast_clock_status(
         is_running: Whether the countdown is actively running (not paused).
         is_paused: Whether the clock is paused.
         timed_mode: Whether the game has a running clock (False = untimed).
+        kept_by_app: Whether a connected app keeps the game's clock, in which
+            case the web shows that instead of the board's times.
 
     Returns:
         True if the broadcast was sent, False otherwise.
@@ -1323,6 +1326,7 @@ def broadcast_clock_status(
             "is_running": is_running,
             "is_paused": is_paused,
             "timed_mode": timed_mode,
+            "kept_by_app": kept_by_app,
             "synced_at": time.time(),
         },
     )

@@ -20,6 +20,7 @@
   "chess.color.black_initial": "N",
   "clock.turn_white": "Tocco ai bianchi",
   "clock.turn_black": "Tocco ai neri",
+  "clock.on_app": "Orologio nell'app",
   "move_list.header": "Mossa  {current}/{total}",
   "alert.check": "SCACCO",
   "alert.your_queen": "LA TUA\nDONNA",

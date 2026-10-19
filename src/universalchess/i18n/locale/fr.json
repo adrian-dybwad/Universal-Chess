@@ -20,6 +20,7 @@
   "chess.color.black_initial": "N",
   "clock.turn_white": "Trait aux blancs",
   "clock.turn_black": "Trait aux noirs",
+  "clock.on_app": "Pendule dans l'app",
   "move_list.header": "Coup  {current}/{total}",
   "alert.check": "ÉCHEC",
   "alert.your_queen": "VOTRE\nDAME",

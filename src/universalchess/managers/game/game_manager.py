@@ -1319,6 +1319,10 @@ class GameManager:
         plays, so without the baseline the first local turn would credit one
         increment for every session move. Only a timed clock in an unfinished
         game resumes, because resume() on a stopped clock starts it.
+
+        The clock is also marked as kept by the app for the session. No
+        supported protocol carries the app's clock, so the e-paper and the web
+        show that the clock is on the app instead of the paused board times.
         """
         active = bool(active)
         if active == self._remote_app_session:
@@ -1333,6 +1337,7 @@ class GameManager:
         except Exception as e:
             log.debug(f"[GameManager.set_remote_app_session] ledsOff failed: {e}")
 
+        self._clock_service.set_kept_by_app(active)
         if active:
             if self.correction_mode.is_active:
                 self.correction_mode.exit()

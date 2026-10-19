@@ -73,9 +73,13 @@ export function GameOverPanel() {
 
   // Final times come from the last clock snapshot (the clock is stopped at game
   // over, so the stored whole-second values are the finals). Only for a timed
-  // game with both sides reported.
+  // game with both sides reported, and not while a connected app keeps the
+  // clock: the board's paused times are then not the game's.
   const hasFinalTimes =
-    Boolean(clock?.timed_mode) && clock?.white_time != null && clock?.black_time != null;
+    Boolean(clock?.timed_mode) &&
+    !clock?.kept_by_app &&
+    clock?.white_time != null &&
+    clock?.black_time != null;
 
   return (
     <div className="game-over-panel" role="status">

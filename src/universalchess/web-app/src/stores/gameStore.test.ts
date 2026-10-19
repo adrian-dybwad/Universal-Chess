@@ -25,6 +25,7 @@ function wireSnapshot(overrides: Partial<ClockStatus> = {}): ClockStatus {
     is_running: true,
     is_paused: false,
     timed_mode: true,
+    kept_by_app: false,
     synced_at: 1_700_000_000,
     ...overrides,
   };

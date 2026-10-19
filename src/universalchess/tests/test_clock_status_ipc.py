@@ -92,6 +92,7 @@ def test_broadcast_clock_status_emits_full_countdown_contract(monkeypatch):
         is_running=True,
         is_paused=False,
         timed_mode=True,
+        kept_by_app=True,
     )
     assert ok is True
 
@@ -108,6 +109,7 @@ def test_broadcast_clock_status_emits_full_countdown_contract(monkeypatch):
         "is_running": True,
         "is_paused": False,
         "timed_mode": True,
+        "kept_by_app": True,
     }
 
 

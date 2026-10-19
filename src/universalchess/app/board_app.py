@@ -615,6 +615,7 @@ def _broadcast_clock_status() -> None:
             clock.is_running,
             clock.is_paused,
             clock.timed_mode,
+            kept_by_app=clock.kept_by_app,
         )
     except Exception as e:  # noqa: BLE001 - web mirror is best-effort
         log.debug(f"[App] Failed to broadcast clock status: {e}")

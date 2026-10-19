@@ -4238,7 +4238,7 @@ def api_game_clock():
 
     Contract: {white_time: int|null, black_time: int|null,
     active_color: 'white'|'black'|null, is_running: bool, is_paused: bool,
-    timed_mode: bool, synced_at: float|null}.
+    timed_mode: bool, kept_by_app: bool, synced_at: float|null}.
     """
     try:
         from universalchess.services.game_broadcast import (
@@ -4257,6 +4257,7 @@ def api_game_clock():
                     "is_running": False,
                     "is_paused": False,
                     "timed_mode": False,
+                    "kept_by_app": False,
                     "synced_at": None,
                 }
             )
@@ -4268,6 +4269,7 @@ def api_game_clock():
                 "is_running": bool(cached.get("is_running", False)),
                 "is_paused": bool(cached.get("is_paused", False)),
                 "timed_mode": bool(cached.get("timed_mode", False)),
+                "kept_by_app": bool(cached.get("kept_by_app", False)),
                 "synced_at": cached.get("synced_at"),
             }
         )

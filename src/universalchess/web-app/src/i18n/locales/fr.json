@@ -182,7 +182,8 @@
     }
   },
   "clock": {
-    "aria": "Pendule de la partie"
+    "aria": "Pendule de la partie",
+    "onApp": "La pendule est dans l'app connectée"
   },
   "positions": {
     "loading": "Chargement des positions...",

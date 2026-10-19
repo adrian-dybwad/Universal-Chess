@@ -1778,6 +1778,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   credited for the moves the app played; a finished or untimed game's clock
   stays stopped.
 
+- **The e-paper and web clocks showed the board's frozen times while a
+  DGT/Millennium/Chessnut app kept the game's clock**: the board's clock is
+  paused for the session, and none of the three protocols carries a clock
+  command (HIARCS over Millennium sends only LED, status and EEPROM writes),
+  so the times on the panel and the website never matched the app's. While
+  an app is connected the e-paper shows whose turn it is with "Clock on
+  app" under it, the web clock shows the same note in place of times, and
+  the web game-over panel lists no final times. The times return when the
+  app disconnects.
+
 - **Playing on the website's board with a DGT/Millennium/Chessnut app
   connected stalled on the app's reply**: in local play a web drag lets the
   engine reply at once, leaves the pieces out of sync, and the next touch of

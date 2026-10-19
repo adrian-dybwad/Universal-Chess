@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, cleanup, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
+import i18n from 'i18next';
 import type { ClockSnapshot } from '../types/game';
 
 /**
@@ -60,6 +61,7 @@ function makeClock(overrides: Partial<ClockSnapshot> = {}): ClockSnapshot {
     is_running: true,
     is_paused: false,
     timed_mode: true,
+    kept_by_app: false,
     synced_at: syncedAtForBoardBehindBy(0),
     received_at_monotonic_ms: CLIENT_RECEIVED_AT_MS,
     ...overrides,
@@ -210,5 +212,31 @@ describe('ClockDisplay rendering', () => {
     expect(screen.getByRole('timer')).toBeInTheDocument();
     expect(screen.getByText('1:05')).toBeInTheDocument();
     expect(screen.getByText('2:10')).toBeInTheDocument();
+  });
+
+  it.each([
+    ['timed', true],
+    ['untimed', false],
+  ])('shows that the connected app keeps the clock in a %s game, with no times', (_label, timedMode) => {
+    // No supported board protocol carries the app's clock, so during an app
+    // session the board's clock is paused and its times are not the game's.
+    // The web showed those frozen times as if they were. A regression shows
+    // a time (1:05 / 2:10) again, or drops the note, or renders nothing for an
+    // untimed game where the app still keeps a clock.
+    storeState = {
+      clock: makeClock({
+        white_time: 65,
+        black_time: 130,
+        timed_mode: timedMode,
+        is_running: false,
+        is_paused: true,
+        kept_by_app: true,
+      }),
+      setClock: setClockMock,
+    };
+    render(<ClockDisplay />);
+    expect(screen.getByRole('timer')).toHaveTextContent(i18n.t('clock.onApp'));
+    expect(screen.queryByText('1:05')).not.toBeInTheDocument();
+    expect(screen.queryByText('2:10')).not.toBeInTheDocument();
   });
 });

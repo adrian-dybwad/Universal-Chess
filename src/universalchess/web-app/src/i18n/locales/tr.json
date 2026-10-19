@@ -180,7 +180,8 @@
     }
   },
   "clock": {
-    "aria": "Oyun saati"
+    "aria": "Oyun saati",
+    "onApp": "Saat bağlı uygulamada"
   },
   "positions": {
     "loading": "Pozisyonlar yükleniyor...",

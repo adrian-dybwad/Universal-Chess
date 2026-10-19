@@ -31,6 +31,8 @@ function ClockRow({ label, seconds, active }: ClockRowProps) {
  * 250 ms local timer re-renders so the active side counts down between snapshots
  * (see interpolateClock). Renders nothing for an untimed game (or before a timed
  * snapshot arrives), so the LiveBoard shows a clock only when one is running.
+ * While a connected app keeps the clock (`kept_by_app`), it shows a note in
+ * place of times, timed or not: the board's paused times are not the game's.
  *
  * Black is shown on top and White on the bottom, matching the board's default
  * orientation (White at the near edge).
@@ -69,6 +71,14 @@ export function ClockDisplay() {
     const id = setInterval(() => setNowMs(performance.now()), 250);
     return () => clearInterval(id);
   }, [running]);
+
+  if (clock?.kept_by_app) {
+    return (
+      <div className="clock-display clock-display--on-app" role="timer" aria-label={t('clock.aria')}>
+        <span className="clock-display__note">{t('clock.onApp')}</span>
+      </div>
+    );
+  }
 
   if (!clock || !clock.timed_mode) {
     return null;

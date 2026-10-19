@@ -71,6 +71,7 @@ def test_clock_returns_cached_normalized_contract(client, monkeypatch):
         "is_running": True,
         "is_paused": False,
         "timed_mode": True,
+        "kept_by_app": True,
         "synced_at": 4242.0,
     }
     m = _broadcast_module()
@@ -87,6 +88,7 @@ def test_clock_returns_cached_normalized_contract(client, monkeypatch):
         "is_running": True,
         "is_paused": False,
         "timed_mode": True,
+        "kept_by_app": True,
         "synced_at": 4242.0,
     }
     # Must NOT request a re-broadcast when a snapshot is already cached.
@@ -116,6 +118,7 @@ def test_clock_requests_rebroadcast_when_no_cache(client, monkeypatch):
         "is_running": False,
         "is_paused": False,
         "timed_mode": False,
+        "kept_by_app": False,
         "synced_at": None,
     }
     assert pulled == [True]

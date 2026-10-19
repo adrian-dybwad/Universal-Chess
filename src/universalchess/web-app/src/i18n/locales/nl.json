@@ -180,7 +180,8 @@
     }
   },
   "clock": {
-    "aria": "Partijklok"
+    "aria": "Partijklok",
+    "onApp": "De klok staat in de verbonden app"
   },
   "positions": {
     "loading": "Stellingen laden...",

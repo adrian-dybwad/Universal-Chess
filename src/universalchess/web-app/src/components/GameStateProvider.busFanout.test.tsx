@@ -14,12 +14,13 @@ import { subscribeSseEvent, __resetSseBus } from '../utils/sseBus';
  */
 
 const setGameState = vi.fn();
+const setClock = vi.fn();
 vi.mock('../stores/gameStore', () => ({
   useGameStore: () => ({
     setGameState,
     setConnectionStatus: vi.fn(),
     setBattery: vi.fn(),
-    setClock: vi.fn(),
+    setClock,
     toast: null,
     showToast: vi.fn(),
     hideToast: vi.fn(),
@@ -62,6 +63,7 @@ import { GameStateProvider } from './GameStateProvider';
 beforeEach(() => {
   __resetSseBus();
   setGameState.mockReset();
+  setClock.mockReset();
   lastEventSource = null;
   vi.stubGlobal('EventSource', MockEventSource as unknown as typeof EventSource);
 });
@@ -118,5 +120,35 @@ describe('GameStateProvider bus fan-out', () => {
     renderProvider();
     lastEventSource!.emit({ type: 'game_state', game_id: 1, pgn: '', move_number: 0, turn: 'w' });
     expect(setGameState).toHaveBeenCalledTimes(1);
+  });
+
+  it('routes clock_status to the clock store with every contract field', () => {
+    // The provider copies the clock snapshot field by field, so a field the
+    // board adds is dropped unless it is copied here too. kept_by_app is what
+    // hides the web clock during an app session; a regression stores a clock
+    // without it (or with the wrong value), so the frozen board times show.
+    renderProvider();
+    lastEventSource!.emit({
+      type: 'clock_status',
+      white_time: 125,
+      black_time: 98,
+      active_color: 'white',
+      is_running: false,
+      is_paused: true,
+      timed_mode: true,
+      kept_by_app: true,
+      synced_at: 4242,
+    });
+    expect(setClock).toHaveBeenCalledTimes(1);
+    expect(setClock).toHaveBeenCalledWith({
+      white_time: 125,
+      black_time: 98,
+      active_color: 'white',
+      is_running: false,
+      is_paused: true,
+      timed_mode: true,
+      kept_by_app: true,
+      synced_at: 4242,
+    });
   });
 });
