@@ -14,7 +14,7 @@ Test Approach:
 from __future__ import annotations
 
 import unittest
-from unittest.mock import MagicMock, patch, PropertyMock
+from unittest.mock import MagicMock, call, patch, PropertyMock
 
 
 class TestGameControllerBase(unittest.TestCase):
@@ -579,6 +579,89 @@ class TestControllerManagerBluetoothHandling(unittest.TestCase):
         
         assert manager.is_local_active is True
         assert manager.is_remote_active is False
+
+    def test_a_connection_alone_does_not_start_remote_app_session(self):
+        """A client that has not spoken a board protocol must not silence the board.
+
+        Why: the board activates the remote controller as soon as a BLE or
+        RFCOMM client connects, before any bytes arrive. The engine swap waits
+        for a recognised protocol, so a session started here would leave the
+        engine playing with no correction, no LEDs, and a frozen clock for a
+        client that never turns out to be a chess app.
+
+        How the regression manifests: set_remote_app_session(True) appears in
+        the game manager's calls after activate_remote alone.
+        """
+        from universalchess.controllers.manager import ControllerManager
+
+        mock_game_manager = MagicMock()
+        manager = ControllerManager(mock_game_manager)
+        remote = manager.create_remote_controller()
+        with patch.object(remote, '_create_emulators'):
+            manager.activate_remote()
+
+        assert call(True) not in mock_game_manager.set_remote_app_session.call_args_list
+
+    def test_protocol_detection_starts_remote_app_session_and_notifies_the_listener(self):
+        """Recognising Millennium, Pegasus, or Chessnut is what hands the board to the app.
+
+        Why: that is the point where ProtocolManager swaps the engine out, so
+        the board stops refereeing at the same moment the app takes the game.
+        The caller's own detection callback must still fire, or the engine
+        swap never happens.
+
+        How the regression manifests: set_remote_app_session is never called
+        with True, or the listener does not receive the client type.
+        """
+        from universalchess.controllers.manager import ControllerManager
+        from universalchess.managers.protocol import ProtocolManager
+
+        mock_game_manager = MagicMock()
+        manager = ControllerManager(mock_game_manager)
+        detected = []
+        remote = manager.create_remote_controller(protocol_detected_callback=detected.append)
+        with patch.object(remote, '_create_emulators'):
+            manager.activate_remote()
+
+        for client_type in (
+            ProtocolManager.CLIENT_MILLENNIUM,
+            ProtocolManager.CLIENT_PEGASUS,
+            ProtocolManager.CLIENT_CHESSNUT,
+        ):
+            with self.subTest(client_type=client_type):
+                mock_game_manager.set_remote_app_session.reset_mock()
+                remote._set_detected_protocol(client_type)
+                mock_game_manager.set_remote_app_session.assert_called_once_with(True)
+                assert detected[-1] == client_type
+
+    def test_disconnect_clears_remote_session_before_requesting_move(self):
+        """Disconnect must end the shadow session before asking the engine to move.
+
+        Why: request_move while the session is still on would compute an engine
+        reply with correction/LEDs still suppressed, and if the Human
+        "Pegasus" player is still seated the engine never thinks at all.
+
+        How the regression manifests: set_remote_app_session(False) is missing,
+        or it is recorded after request_move in the call log.
+        """
+        from universalchess.controllers.manager import ControllerManager
+
+        mock_game_manager = MagicMock()
+        manager = ControllerManager(mock_game_manager)
+        local = manager.create_local_controller()
+        remote = manager.create_remote_controller()
+        order = []
+        mock_game_manager.set_remote_app_session.side_effect = (
+            lambda active: order.append(("session", active))
+        )
+        local._request_current_player_move = lambda: order.append("request_move")
+
+        with patch.object(remote, '_create_emulators'):
+            manager.activate_remote()
+            manager.on_bluetooth_disconnected()
+
+        assert ("session", False) in order
+        assert order.index(("session", False)) < order.index("request_move")
 
 
 if __name__ == '__main__':

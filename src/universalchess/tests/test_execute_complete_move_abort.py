@@ -114,7 +114,7 @@ def _noop_led():
     )
 
 
-def _context(chess_board, game_state, fake_board, move_state, recorder):
+def _context(chess_board, game_state, fake_board, move_state, recorder, physical_referee=True):
     return PlayerMoveContext(
         chess_board=chess_board,
         game_state=game_state,
@@ -129,6 +129,7 @@ def _context(chess_board, game_state, fake_board, move_state, recorder):
         provide_correction_guidance_fn=lambda a, b: recorder["guidance"].append((a, b)),
         set_is_showing_promotion_fn=lambda v: None,
         on_promotion_needed_fn=None,
+        physical_referee=physical_referee,
     )
 
 
@@ -236,3 +237,33 @@ def test_time_forfeit_rejects_move_on_playable_board():
     assert recorder["correction_entered"] == [True]
     assert recorder["guidance"] == [([0] * 64, [0] * 64)]
     assert ("wrong", "error") in fake_board.beeps
+
+
+def test_abort_while_not_physical_referee_resets_without_correction():
+    """A rejected attempt during a remote-app session must not referee.
+
+    Why: while Pegasus/Millennium/Chessnut owns the live game, aborting into
+    correction mode and SOUND_WRONG_MOVE fights the app (beep + "put it back"
+    LEDs) even though the app accepted the occupancy change. move_state must
+    still reset so the next lift is not attributed to a stale source.
+
+    How the regression manifests: correction_entered is non-empty or a wrong
+    beep is recorded; if reset_count stays 0 the next physical event mis-reads
+    source_square.
+    """
+    game_state = _RaisingGameState()
+    fake_board = _FakeBoard()
+    move_state = _RecordingMoveState()
+    recorder = _fresh_recorder()
+    ctx = _context(
+        chess.Board(), game_state, fake_board, move_state, recorder, physical_referee=False
+    )
+
+    execute_complete_move(ctx, chess.Move.from_uci("e2e4"))
+
+    assert move_state.reset_count == 1
+    assert recorder["correction_entered"] == []
+    assert recorder["guidance"] == []
+    assert fake_board.beeps == []
+    assert recorder["turn_switched"] == []
+    assert recorder["post_move"] == []

@@ -2449,6 +2449,8 @@ def _start_game_mode(
     # Wire up event callback to handle game events
     from universalchess.managers import EVENT_NEW_GAME, EVENT_WHITE_TURN, EVENT_BLACK_TURN
     _clock_started = False
+    game_manager.on_remote_app_session = _on_remote_app_session
+
     def _on_game_event(event):
         nonlocal _clock_started
         if event == EVENT_NEW_GAME:
@@ -2528,18 +2530,26 @@ def _start_game_mode(
             # Turn indicator is handled by ChessClockWidget observing ChessGameState directly
             if lichess_session is not None:
                 lichess_session.dismiss_started_splash()
-            if not _clock_started:
-                _game.display.start_clock()
+            if game_manager.is_remote_app_session:
+                # The connected app owns the live clock. Do not start or
+                # increment the UC clock; remaining time stays frozen until
+                # disconnect. Mark started so a later local turn does not
+                # double-start; session exit resumes it.
                 _clock_started = True
-                log.debug("[App] Clock started")
-            # Apply time-control effects (Fischer increment, Bronstein giveback,
-            # stage time) for any move just completed. Driven by the game's ply
-            # count, so calling it on every turn event is safe and idempotent:
-            # the initial turn (no move yet) and repeated/resume events add
-            # nothing. Lichess remaining already includes increment; crediting
-            # it locally as well would add it twice until the next gameState.
-            if lichess_session is None:
-                _game.display.apply_clock_move()
+                log.debug("[App] Skipping UC clock start/increment - remote app session")
+            else:
+                if not _clock_started:
+                    _game.display.start_clock()
+                    _clock_started = True
+                    log.debug("[App] Clock started")
+                # Apply time-control effects (Fischer increment, Bronstein giveback,
+                # stage time) for any move just completed. Driven by the game's ply
+                # count, so calling it on every turn event is safe and idempotent:
+                # the initial turn (no move yet) and repeated/resume events add
+                # nothing. Lichess remaining already includes increment; crediting
+                # it locally as well would add it twice until the next gameState.
+                if lichess_session is None:
+                    _game.display.apply_clock_move()
         elif isinstance(event, str) and event.startswith("Termination."):
             # Game ended (checkmate, stalemate, resign, draw, etc.)
             # GameOverWidget already showed itself via ChessGameState observer
@@ -6450,6 +6460,20 @@ def _on_client_connected(transport: str, *, emulator: Optional[str] = None) -> N
         _game.protocol.on_app_connected()
 
 
+def _on_remote_app_session(active: bool) -> None:
+    """Bring the panel's refresh mode in line after a chess-app session changes.
+
+    GameManager.set_remote_app_session has already paused or resumed the
+    clock, and it alone decides whether the clock runs again: it resumes only
+    a timed clock in an unfinished game. Pausing or resuming here as well
+    started the clock of a finished or untimed game on disconnect, because
+    resume() on a stopped clock calls start().
+    """
+    if _game.display is None:
+        return
+    _game.display.sync_clock_refresh_mode()
+
+
 def _on_client_disconnected() -> None:
     """Return the board to local play when the chess app disconnects.
 
@@ -6459,10 +6483,13 @@ def _on_client_disconnected() -> None:
     """
     log.info("[Client] Disconnected")
     _record_client_link(None, None)
-    if _game.controller:
-        _game.controller.on_bluetooth_disconnected()
+    # Restore the original engine (if it was swapped for a Human named after
+    # the app) before requesting a move, otherwise the engine never thinks
+    # on disconnect.
     if _game.protocol:
         _game.protocol.on_app_disconnected()
+    if _game.controller:
+        _game.controller.on_bluetooth_disconnected()
 
 
 def _show_ble_connection_confirm(client_type: str):

@@ -138,6 +138,22 @@ class FieldEventContext:
     # setup (relocations), so this module must NOT interpret them as chess moves.
     setup_mode_active_fn: Callable[[], bool] = lambda: False
 
+    # When False the board is shadowing a connected chess app and must not
+    # beep or enter correction mode for physical mismatches.
+    physical_referee_fn: Callable[[], bool] = lambda: True
+
+
+def _enter_physical_correction(ctx: FieldEventContext) -> None:
+    """Beep and enter correction mode, unless a connected app is the referee."""
+    if not ctx.physical_referee_fn():
+        return
+    ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
+    ctx.enter_correction_mode_fn()
+    current_state = ctx.board_module.getChessState()
+    expected_state = ctx.chess_board_to_state_fn(ctx.chess_board)
+    if current_state is not None and expected_state is not None:
+        ctx.provide_correction_guidance_fn(current_state, expected_state)
+
 
 def _place_is_noise_on_matching_board(ctx: FieldEventContext) -> bool:
     """Return True when a PLACE cannot be a move: occupancy already matches and nothing is in progress.
@@ -272,12 +288,7 @@ def process_field_event(
         # Anything other than the expected rook move invalidates the rook-follow;
         # hand off to correction mode for full board reconciliation.
         ctx.move_state.castling_rook_pending = None
-        ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
-        ctx.enter_correction_mode_fn()
-        current_state = ctx.board_module.getChessState()
-        expected_state = ctx.chess_board_to_state_fn(ctx.chess_board)
-        if current_state is not None and expected_state is not None:
-            ctx.provide_correction_guidance_fn(current_state, expected_state)
+        _enter_physical_correction(ctx)
         return
 
     def _pending_move_context():
@@ -411,9 +422,10 @@ def process_field_event(
                 ctx.move_state.king_lifted_color = None
                 if ctx.on_king_lift_resign_cancel_fn:
                     ctx.on_king_lift_resign_cancel_fn()
-            ctx.enter_correction_mode_fn()
-            if current_state is not None and expected_state is not None:
-                ctx.provide_correction_guidance_fn(current_state, expected_state)
+            if ctx.physical_referee_fn():
+                ctx.enter_correction_mode_fn()
+                if current_state is not None and expected_state is not None:
+                    ctx.provide_correction_guidance_fn(current_state, expected_state)
             return
 
         return  # Skip all other processing while menu is active (PLACE events)
@@ -658,12 +670,7 @@ def process_field_event(
                 f"expected {pending_piece_name} at {chess.square_name(pending_from_square)} for pending move {pending_move.uci()} - "
                 "entering correction mode"
             )
-            ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
-            ctx.enter_correction_mode_fn()
-            current_state = ctx.board_module.getChessState()
-            expected_state = ctx.chess_board_to_state_fn(ctx.chess_board)
-            if current_state is not None and expected_state is not None:
-                ctx.provide_correction_guidance_fn(current_state, expected_state)
+            _enter_physical_correction(ctx)
             return
 
     # Check for "piece with no legal moves" on LIFT events
@@ -725,12 +732,7 @@ def process_field_event(
                     f"[GameManager.receive_field] Piece at {chess.square_name(field)} has no legal moves - "
                     "entering correction mode"
                 )
-                ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
-                ctx.enter_correction_mode_fn()
-                current_state = ctx.board_module.getChessState()
-                expected_state = ctx.chess_board_to_state_fn(ctx.chess_board)
-                if current_state is not None and expected_state is not None:
-                    ctx.provide_correction_guidance_fn(current_state, expected_state)
+                _enter_physical_correction(ctx)
                 return
 
     # Forward to player manager (after board state validation to avoid incorrect move formation)

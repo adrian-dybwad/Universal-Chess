@@ -37,6 +37,7 @@ class ControllerManager:
         self._game_manager = game_manager
         self._local: Optional[LocalController] = None
         self._remote: Optional[RemoteController] = None
+        self._protocol_detected_listener: Optional[Callable[[str], None]] = None
         self._active: Optional[GameController] = None
         
         # Callback when controller changes
@@ -127,13 +128,23 @@ class ControllerManager:
             The RemoteController instance.
         """
         self._remote = RemoteController(self._game_manager, send_callback)
-        
-        # Wire protocol detection callback
-        if protocol_detected_callback:
-            self._remote.set_protocol_detected_callback(protocol_detected_callback)
+        self._protocol_detected_listener = protocol_detected_callback
+        self._remote.set_protocol_detected_callback(self._on_remote_protocol_detected)
         
         log.info("[ControllerManager] Created RemoteController")
         return self._remote
+
+    def _on_remote_protocol_detected(self, client_type: str) -> None:
+        """Hand the live game to the app once it has spoken a board protocol.
+
+        The session starts here rather than in activate_remote, which runs as
+        soon as a client connects: until a protocol is recognised the engine is
+        still seated, and a session would leave it playing with no correction,
+        no LEDs, and a frozen clock for a client that may not be a chess app.
+        """
+        self._game_manager.set_remote_app_session(True)
+        if self._protocol_detected_listener:
+            self._protocol_detected_listener(client_type)
     
     def activate_local(self) -> None:
         """Activate the local controller.
@@ -171,6 +182,8 @@ class ControllerManager:
         if self._remote:
             self._remote.start()
             log.info("[ControllerManager] Activated RemoteController")
+            if self._remote.is_protocol_detected:
+                self._game_manager.set_remote_app_session(True)
         
         if self._on_controller_change:
             self._on_controller_change(True)
@@ -267,7 +280,8 @@ class ControllerManager:
             self._remote.stop()
             # Force recreate emulators for next connection (reset their state)
             self._remote._create_emulators(force=True)
-        
+
+        self._game_manager.set_remote_app_session(False)
         self.activate_local()
         
         # Request move from current player after restoring local control

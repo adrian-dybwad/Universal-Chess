@@ -76,7 +76,7 @@ def _bare_display_manager():
     manager._current_menu = None
     manager._menu_result_callback = None
     manager._draw_offer_resolver = None
-    manager._sync_clock_refresh_mode = MagicMock()
+    manager.sync_clock_refresh_mode = MagicMock()
     return manager
 
 

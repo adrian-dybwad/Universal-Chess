@@ -1071,7 +1071,7 @@ class DisplayManager:
         """
         self._clock.sync_move_counters_to_position()
     
-    def _sync_clock_refresh_mode(self) -> None:
+    def sync_clock_refresh_mode(self) -> None:
         """Point the Manager at clock-driven refresh iff the clock is counting.
 
         Clock-driven mode (routine widget updates only mark the framebuffer dirty
@@ -1104,17 +1104,17 @@ class DisplayManager:
         if self._time_control_spec.is_timed:
             # Timed mode: start the countdown
             self._clock.start()
-            self._sync_clock_refresh_mode()
+            self.sync_clock_refresh_mode()
     
     def pause_clock(self) -> None:
         """Pause the chess clock."""
         self._clock.pause()
-        self._sync_clock_refresh_mode()
+        self.sync_clock_refresh_mode()
 
     def resume_clock(self) -> None:
         """Resume the chess clock after a pause."""
         self._clock.resume()
-        self._sync_clock_refresh_mode()
+        self.sync_clock_refresh_mode()
 
     def _pause_clock_for_menu(self) -> None:
         """Pause a running clock while a game-overlay menu (resign/draw) is shown.
@@ -1128,7 +1128,7 @@ class DisplayManager:
         down (see clear_widgets), so no tick fires to flush deferred content -
         the menu's selection-highlight redraws queued forever and arrow-key
         navigation appeared frozen. Pausing flips the clock out of the counting
-        state, which _sync_clock_refresh_mode turns into immediate (coalesced)
+        state, which sync_clock_refresh_mode turns into immediate (coalesced)
         refreshes, restoring responsive navigation.
 
         Only a clock that is actually counting is paused, so a not-yet-started or
@@ -1155,7 +1155,7 @@ class DisplayManager:
     def stop_clock(self) -> None:
         """Stop the chess clock completely."""
         self._clock.stop()
-        self._sync_clock_refresh_mode()
+        self.sync_clock_refresh_mode()
     
     @property
     def time_control_spec(self) -> TimeControl:
@@ -1191,7 +1191,7 @@ class DisplayManager:
         The clock will not start until the first move is made.
         """
         self._clock.reset()
-        self._sync_clock_refresh_mode()
+        self.sync_clock_refresh_mode()
         log.info(f"[DisplayManager] Clock reset: {self._time_control_spec.describe()}")
 
     def apply_clock_move(self) -> None:
@@ -1214,7 +1214,7 @@ class DisplayManager:
         game managers being alive while the menu shows), not by this manager.
         """
         self._clock.pause()
-        self._sync_clock_refresh_mode()
+        self.sync_clock_refresh_mode()
         if self._led_off:
             self._led_off()
         else:
@@ -1230,7 +1230,7 @@ class DisplayManager:
         """
         self._init_widgets()
         self._clock.resume()
-        self._sync_clock_refresh_mode()
+        self.sync_clock_refresh_mode()
         if self._on_resume_callback:
             try:
                 self._on_resume_callback()

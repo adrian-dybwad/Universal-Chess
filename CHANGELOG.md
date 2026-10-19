@@ -1764,6 +1764,20 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   short line under the left edge of the long one. Each line is now given
   its own origin, the same path word-wrap already used.
 
+- **A connected DGT/Millennium/Chessnut app fought the board's own game**:
+  occupancy went to the app and to GameManager, so two clocks ran, every
+  move entered correction then left it, and LEDs from the app were blanked
+  by the board. Once the app's protocol is recognised, the board still
+  records legal physical moves (so play continues when the app leaves) but
+  it pauses the e-paper clock, skips correction, and does not drive LEDs. A
+  client that connects without speaking Millennium, Pegasus, or Chessnut
+  leaves the board refereeing its own game. On disconnect the original
+  engine is restored before the next move is requested, and correction runs
+  only if the pieces no longer match the recorded position. A timed clock in
+  an unfinished game resumes from the frozen remainder, with no increment
+  credited for the moves the app played; a finished or untimed game's clock
+  stays stopped.
+
 - **Web Lichess lobby hid nothing when no accounts were saved**: Settings →
   Players still drew Rated, Ongoing Games, Challenges, and Seek New Game
   against an empty store, so the card offered play controls that cannot

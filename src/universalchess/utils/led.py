@@ -154,6 +154,23 @@ class LedCallbacks:
     single_fast: Callable[[int, int], None]        # (square, repeat)
 
 
+def _noop_led(*_args, **_kwargs) -> None:
+    return None
+
+
+NOOP_LED_CALLBACKS = LedCallbacks(
+    from_to=_noop_led,
+    array=_noop_led,
+    single=_noop_led,
+    off=_noop_led,
+    from_to_hint=_noop_led,
+    array_hint=_noop_led,
+    array_fast=_noop_led,
+    from_to_fast=_noop_led,
+    single_fast=_noop_led,
+)
+
+
 class LedController:
     """LED controller with configurable intensity.
     
@@ -280,6 +297,7 @@ __all__ = [
     "LED_INTENSITY_DEFAULT",
     "PEGASUS_OVERRIDE_BRIGHTNESS_DEFAULT",
     "LedCallbacks",
+    "NOOP_LED_CALLBACKS",
     "LedController",
     "get_led_intensity_from_settings",
     "get_pegasus_override_brightness",

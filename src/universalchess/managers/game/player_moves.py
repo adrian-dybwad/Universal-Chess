@@ -120,6 +120,9 @@ class PlayerMoveContext:
     # Promotion UI
     set_is_showing_promotion_fn: Callable[[bool], None]
     on_promotion_needed_fn: Optional[Callable[[bool], str]]
+    # When False the board is shadowing a connected chess app: reject cleanup
+    # still resets move_state, but must not beep or enter correction mode.
+    physical_referee: bool = True
 
 
 def _abort_move_attempt(ctx: PlayerMoveContext) -> None:
@@ -132,9 +135,11 @@ def _abort_move_attempt(ctx: PlayerMoveContext) -> None:
     on_player_move's illegal-move handling: when a move is rejected at the push,
     a piece may be sitting on a square the logical board never accepted.
     """
+    ctx.move_state.reset()
+    if not ctx.physical_referee:
+        return
     ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
     ctx.led.off()
-    ctx.move_state.reset()
     ctx.enter_correction_mode_fn()
     current_state = ctx.board_module.getChessState()
     expected_state = ctx.chess_board_to_state_fn(ctx.chess_board)
@@ -352,6 +357,9 @@ def on_player_move(ctx: PlayerMoveContext, move: chess.Move) -> bool:
         return True
 
     log.warning(f"[GameManager._on_player_move] Illegal move: {move_to_execute.uci()}, entering correction mode")
+    if not ctx.physical_referee:
+        ctx.move_state.reset()
+        return False
     ctx.board_module.beep(ctx.board_module.SOUND_WRONG_MOVE, event_type="error")
     ctx.enter_correction_mode_fn()
 

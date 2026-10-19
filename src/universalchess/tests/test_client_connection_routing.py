@@ -215,6 +215,20 @@ class TestAClientDisconnecting:
 
         assert board.protocol.app_disconnected
 
+    def test_the_engine_is_restored_before_local_play_resumes(
+        self, board, transport, emulator, label
+    ):
+        # request_move used to run while the Human "Pegasus" player was still
+        # seated, so the restored engine never thought on disconnect. Protocol
+        # restore must happen first; the controller then asks for the move.
+        order = []
+        board.protocol.on_app_disconnected = lambda: order.append("protocol")
+        board.controller.on_bluetooth_disconnected = lambda: order.append("controller")
+
+        board._on_client_disconnected()
+
+        assert order == ["protocol", "controller"]
+
 
 @pytest.mark.parametrize(("transport", "emulator", "label"), TRANSPORTS, ids=TRANSPORT_IDS)
 class TestTheLiveBluetoothStatus:

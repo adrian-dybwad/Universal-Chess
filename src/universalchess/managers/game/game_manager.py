@@ -43,7 +43,7 @@ from universalchess.services.game_broadcast import set_pending_move
 from universalchess.players.base import PlayerType
 
 from .correction_mode import CorrectionMode
-from universalchess.utils.led import LedCallbacks
+from universalchess.utils.led import LedCallbacks, NOOP_LED_CALLBACKS
 from .deferred_imports import (
     _get_create_engine,
     _get_linear_sum_assignment,
@@ -115,6 +115,10 @@ class GameManager:
     The physical board state must conform to the logical board state.
     When there's a mismatch, correction mode guides the user to fix the physical board.
     """
+
+    # Class default so tests that build via ``__new__`` (skipping __init__)
+    # still see a False session when the ``led`` property is read.
+    _remote_app_session = False
     
     def __init__(self, save_to_database: bool = True):
         """Initialize GameManager.
@@ -153,6 +157,12 @@ class GameManager:
         # suppressed. Touching a real piece hands control back to the board.
         self._web_move_mode = False
 
+        # Remote-app session: a Pegasus/Millennium/Chessnut app is connected.
+        # Legal physical moves are still recorded (so disconnect can continue),
+        # but this manager must not referee -- no UC clock flag, no correction
+        # mode, no LED writes. The emulator still drives LEDs from app packets.
+        self._remote_app_session = False
+
         # Optional UI handler driven during setup mode. Injected via
         # set_setup_display_handler() so game logic stays decoupled from the
         # display layer. Signature: handler(active: bool, fen: Optional[str]).
@@ -168,6 +178,7 @@ class GameManager:
         self.takeback_callback = None
         self.on_time_control = None
         self.on_clock_started = None
+        self.on_remote_app_session = None
         
         # Game metadata
         self.game_info = {
@@ -690,7 +701,16 @@ class GameManager:
         
         Uses logical chess board state (self.chess_board) as the authority.
         The physical board must conform to the logical board state.
+
+        No-op while a remote chess app is connected: that app is the referee,
+        and correction lights would fight its LED commands.
         """
+        if self._remote_app_session:
+            log.info(
+                "[GameManager._enter_correction_mode] Skipping correction - "
+                "remote app session is active"
+            )
+            return
         expected_state = self._chess_board_to_state(self.chess_board)
         
         if expected_state is None:
@@ -941,7 +961,15 @@ class GameManager:
                 # would always mismatch and enter correction mode. The next physical
                 # piece event disarms web-move mode (see receive_field) and restores
                 # normal validation.
-                if self.move_state.castling_rook_pending is None and not self._web_move_mode:
+                #
+                # Skip while a remote chess app is connected: that app owns the
+                # live game, and a lagged occupancy scan would enter correction
+                # after every accepted move.
+                if (
+                    self.move_state.castling_rook_pending is None
+                    and not self._web_move_mode
+                    and not self._remote_app_session
+                ):
                     validate_physical_board_after_move(
                         board_module=board,
                         move_uci=move_uci,
@@ -1017,6 +1045,7 @@ class GameManager:
             on_king_lift_resign_cancel_fn=self.on_king_lift_resign_cancel,
             chess_board_to_state_fn=self._chess_board_to_state,
             setup_mode_active_fn=lambda: self._setup_mode_active,
+            physical_referee_fn=lambda: not self._remote_app_session,
         )
         process_field_event(ctx, piece_event, field, time_in_seconds)
     
@@ -1175,10 +1204,84 @@ class GameManager:
     
     @property
     def led(self) -> LedCallbacks:
-        """Get LED callbacks. Must be set before use."""
+        """Get LED callbacks. Must be set before use.
+
+        While a remote chess app is connected, GameManager must not write
+        LEDs (including off, which would blank the app's lights). The
+        emulator still drives board.led* from app packets.
+        """
         if self._led is None:
             raise RuntimeError("LED callbacks not set. Call set_led_callbacks() before starting game.")
+        if self._remote_app_session:
+            return NOOP_LED_CALLBACKS
         return self._led
+
+    @property
+    def is_remote_app_session(self) -> bool:
+        """Whether a Pegasus/Millennium/Chessnut app currently owns the live game."""
+        return self._remote_app_session
+
+    def set_remote_app_session(self, active: bool) -> None:
+        """Start or end a remote chess-app session.
+
+        While active, this manager records legal physical moves (shadow game)
+        but does not referee: the UC clock is paused, correction mode is
+        suppressed, and GameManager LED callbacks no-op. The connected app
+        owns clock, rules display, and lights.
+
+        On enter and exit, one ``ledsOff`` clears leftover UC or app lights.
+        On exit, if the physical occupancy no longer matches the shadow
+        board, correction mode starts so local take-over has an authority.
+
+        This manager is the only owner of the clock across a session. On exit
+        the clock's move counters are re-baselined to the shadow position
+        before it resumes: the turn handler credits no increment while the app
+        plays, so without the baseline the first local turn would credit one
+        increment for every session move. Only a timed clock in an unfinished
+        game resumes, because resume() on a stopped clock starts it.
+        """
+        active = bool(active)
+        if active == self._remote_app_session:
+            return
+
+        self._remote_app_session = active
+        try:
+            board.ledsOff()
+        except Exception as e:
+            log.debug(f"[GameManager.set_remote_app_session] ledsOff failed: {e}")
+
+        if active:
+            if self.correction_mode.is_active:
+                self.correction_mode.exit()
+                self.move_state.reset()
+            try:
+                self._clock_service.pause()
+            except Exception as e:
+                log.debug(f"[GameManager.set_remote_app_session] clock pause failed: {e}")
+        else:
+            self._clock_service.sync_move_counters_to_position()
+            try:
+                if not self._game_state.is_game_over and self._clock_service.timed_mode:
+                    self._clock_service.resume()
+            except Exception as e:
+                log.debug(f"[GameManager.set_remote_app_session] clock resume failed: {e}")
+            current_state = board.getChessState()
+            expected_state = self._chess_board_to_state(self.chess_board)
+            if (
+                current_state is not None
+                and expected_state is not None
+                and not ChessGameState.states_match(current_state, expected_state)
+            ):
+                self._enter_correction_mode()
+                self._provide_correction_guidance(current_state, expected_state)
+
+        if self.on_remote_app_session is not None:
+            try:
+                self.on_remote_app_session(active)
+            except Exception as e:
+                log.error(f"[GameManager.set_remote_app_session] on_remote_app_session: {e}")
+
+        log.info(f"[GameManager] remote_app_session = {active}")
     
     def _execute_complete_move(self, move: chess.Move) -> None:
         """Execute a complete move submitted by a player (delegates to player_moves)."""
@@ -1301,6 +1404,7 @@ class GameManager:
             provide_correction_guidance_fn=self._provide_correction_guidance,
             set_is_showing_promotion_fn=lambda v: setattr(self, "is_showing_promotion", v),
             on_promotion_needed_fn=self.on_promotion_needed,
+            physical_referee=not self._remote_app_session,
         )
     
     def _on_player_error(self, error_type: str) -> None:
@@ -1358,6 +1462,9 @@ class GameManager:
             
             # Not starting position or takeback - extra piece, enter correction mode
             log.warning("[GameManager._on_player_error] Extra piece on board - entering correction mode")
+            if self._remote_app_session:
+                self.move_state.reset()
+                return
             board.beep(board.SOUND_WRONG_MOVE, event_type='error')
             self._enter_correction_mode()
             # Provide correction guidance (current_state already fetched above)
@@ -1368,6 +1475,9 @@ class GameManager:
         
         # Other errors (move_mismatch, unknown) - correction mode
         log.warning(f"[GameManager._on_player_error] Error: {error_type} - entering correction mode")
+        if self._remote_app_session:
+            self.move_state.reset()
+            return
         board.beep(board.SOUND_WRONG_MOVE, event_type='error')
         self._enter_correction_mode()
         

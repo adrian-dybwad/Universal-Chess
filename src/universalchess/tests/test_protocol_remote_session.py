@@ -16,6 +16,8 @@ stop_lichess / CLIENT_LICHESS return, so main keeps a provider-named API.
 import inspect
 from unittest.mock import MagicMock
 
+import chess
+
 from universalchess.managers.protocol import ProtocolManager
 from universalchess.players.human import HumanPlayer
 from universalchess.players.lichess import LichessPlayer
@@ -85,3 +87,36 @@ def test_is_app_connected_is_only_board_protocols():
     assert protocol.is_app_connected() is False
     protocol.is_millennium = True
     assert protocol.is_app_connected() is True
+
+
+def test_pegasus_detect_swaps_engine_for_named_human_and_restores_on_disconnect():
+    """Pegasus detect must seat a Human named Pegasus, then restore the engine.
+
+    Why: the app plays both sides on the physical board, so the local engine
+    must not compute replies while connected. On disconnect the original
+    engine has to come back or local take-over has no opponent.
+
+    How the regression manifests: black stays an EnginePlayer after detect,
+    or on_app_disconnected does not put the original engine back.
+
+    Engine start/stop are stubbed so this does not launch Stockfish.
+    """
+    from universalchess.players.engine import EnginePlayer
+    from universalchess.players.human import HumanPlayer
+
+    game_manager = MagicMock()
+    protocol = ProtocolManager(game_manager=game_manager)
+    engine = EnginePlayer()
+    engine.start = lambda: True
+    engine.stop = lambda: None
+    protocol.set_player_manager(PlayerManager(HumanPlayer(), engine))
+
+    protocol.on_protocol_detected(ProtocolManager.CLIENT_PEGASUS)
+
+    black = protocol.player_manager.get_player(chess.BLACK)
+    assert isinstance(black, HumanPlayer)
+    assert black.name == "Pegasus"
+
+    protocol.on_app_disconnected()
+    restored = protocol.player_manager.get_player(chess.BLACK)
+    assert restored is engine

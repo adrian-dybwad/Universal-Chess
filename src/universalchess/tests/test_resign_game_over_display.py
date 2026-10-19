@@ -232,7 +232,7 @@ class TestOverlayMenuPausesClock(_DisplayManagerTestBase):
     (resign/draw) menu was shown. A counting clock puts the Manager in
     clock-driven refresh mode, but the overlay tears the clock widget down, so no
     tick fired to flush the menu's selection-highlight redraws - arrow-key
-    navigation appeared frozen. Pausing the clock (which _sync_clock_refresh_mode
+    navigation appeared frozen. Pausing the clock (which sync_clock_refresh_mode
     turns into immediate refreshes) fixes both the time accounting and the
     responsiveness. Cancel returns to play and must resume; resign/draw/exit end
     or leave the game and must not.
