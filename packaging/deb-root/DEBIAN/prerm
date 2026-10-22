@@ -32,7 +32,10 @@ function stopServices {
     # generation while package files are being replaced during an upgrade.
     systemctl stop universal-chess-tls.path || true
     systemctl stop universal-chess-tls.service || true
-    systemctl stop rfcomm.service || true
+    # Legacy unit: often not loaded (RFCOMM is in-process). Silence stderr
+    # the same way postinst does so upgrades do not print
+    # "Failed to stop rfcomm.service: Unit rfcomm.service not loaded."
+    systemctl stop rfcomm.service 2>/dev/null || true
 }
 
 

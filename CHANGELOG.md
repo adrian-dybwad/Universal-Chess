@@ -1571,6 +1571,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   an upgrade that mid-script start is skipped. The restart at the end of
   configuration, after bytecode, permissions, and nginx, is the only one.
 
+- **Upgrades logged a failed stop of ``rfcomm.service``**: prerm still
+  best-effort stops that legacy unit before unpacking, but without
+  silencing stderr. When the unit is not loaded (RFCOMM runs in-process
+  now), every upgrade printed
+  ``Failed to stop rfcomm.service: Unit rfcomm.service not loaded.`` in
+  red even though the script continued. The stop now discards stderr the
+  same way postinst already did.
+
 - **Shared Hash / Threads sliders only moved one step**: each drag
   fired a save that disabled the control, so the pointer stopped after
   one megabyte (or one thread) and the number box lagged behind. The

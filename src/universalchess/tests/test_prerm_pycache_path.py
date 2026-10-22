@@ -1,7 +1,7 @@
-"""Tests for the package prerm pycache-cleanup path.
+"""Tests for package prerm invariants that show up in upgrade logs.
 
-Root cause these guard
-----------------------
+Root causes these guard
+-----------------------
 The maintainer scripts were inherited from DGTCentaurMods, where the Debian
 package name equalled the install dir (/opt/DGTCentaurMods), so the idiom
 ``DGTCM_PATH="/opt/${PACKAGE}"`` was correct. On the fork the package became
@@ -11,6 +11,13 @@ and therefore composed ``/opt/universal-chess`` -- a path that never existed --
 so its ``__pycache__``/``.pyc``/``epaper.jpg`` cleanup silently did nothing and
 ``find`` logged "No such file or directory" on every upgrade/remove (a real user
 found that line in their logs).
+
+A second log-noise path: prerm still best-effort stops the legacy
+``rfcomm.service``. That unit is often not loaded (RFCOMM runs in-process),
+and without stderr redirected every upgrade printed
+``Failed to stop rfcomm.service: Unit rfcomm.service not loaded.`` even
+though ``|| true`` kept the script succeeding. postinst already silenced
+the same stop.
 
 The tests read the actual shipped prerm so the invariant cannot silently drift
 from the script that runs on the board.
@@ -92,3 +99,16 @@ def test_prerm_cleans_pycache_and_debug_image(prerm_text):
     """
     for pattern in ("__pycache__", "*.pyc", "*.pyo", "epaper.jpg"):
         assert pattern in prerm_text, f"prerm no longer prunes {pattern}"
+
+
+def test_prerm_silences_stderr_when_stopping_legacy_rfcomm(prerm_text):
+    """Stopping rfcomm.service must not print when the unit is not loaded.
+
+    How the regression manifests: without ``2>/dev/null``, every upgrade logs
+    ``Failed to stop rfcomm.service: Unit rfcomm.service not loaded.`` in red
+    even though ``|| true`` keeps the script succeeding. The unit is legacy
+    (RFCOMM is in-process now) and often absent, so the stop is best-effort
+    and must stay quiet like postinst.
+    """
+    body = _executable_lines(prerm_text)
+    assert "systemctl stop rfcomm.service 2>/dev/null" in body
