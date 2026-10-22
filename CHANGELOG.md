@@ -15,6 +15,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Seven-segment digits on the e-paper chess clock**: Remaining time
+  used the proportional TrueType face, so clock numbers looked unlike a
+  physical chess clock and shifted as digits changed. Digit and colon
+  times now stamp from a bundled 1-bit sheet (`clock_digits.bmp`,
+  thirteen 16×24 cells trimmed to 12 px with a 2 px gap), matching the
+  Centaur CLOCK_FONT layout. `FLAG` and long-form remainders (`N h M m`,
+  days) still use TrueType. Compact timed layouts scale the glyphs to
+  the section height. Regenerate with `scripts/make-clock-digits.py`.
+
 - **A warning when the web app has no service worker**: an untrusted
   certificate lets the page load after the browser warning, but Chrome
   refuses to fetch the service worker, so an open tab never notices a new

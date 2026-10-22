@@ -13,6 +13,7 @@ from PIL import Image, ImageDraw
 from .framework.widget import Widget
 from .text import TextWidget, Justify, Overflow
 from .text_scale import DEFAULT_TEXT_SIZE, normalize_text_size, scale_font
+from . import clock_digits
 from typing import Optional
 
 try:
@@ -438,7 +439,52 @@ class ChessClockWidget(Widget):
         if seconds <= 0:
             return "FLAG"
         return format_clock_time(seconds)
-    
+
+    def _digit_height_for_section(self, section_height: int) -> int:
+        """Seven-segment row height that fits one clock section.
+
+        Native glyphs are 24 px. Compact timed layouts shrink the widget so the
+        section can be shorter; scale down rather than clipping through the
+        separator. Floor at 12 px so a very short section still reads.
+        """
+        return min(clock_digits.CELL_HEIGHT, max(12, section_height - 4))
+
+    # Right-hand column reserved for the time (matches the old TextWidget box).
+    _TIME_COLUMN_WIDTH = 64
+
+    def _draw_time(
+        self,
+        sprite: Image.Image,
+        time_widget: TextWidget,
+        time_str: str,
+        section_y: int,
+        section_height: int,
+    ) -> None:
+        """Draw one side's time: seven-segment digits when possible, else TextWidget.
+
+        Digit/colon strings use ``clock_digits.bmp`` (fixed pitch, right-aligned
+        to the widget's right margin). ``FLAG`` and long-form remainders
+        (``N h M m``, days) keep the TrueType TextWidget path. ``H:MM:SS`` is
+        wider than the column at native size, so the glyph height shrinks until
+        the string fits (floor 12 px).
+        """
+        sheet = clock_digits.load_sheet()
+        if sheet is not None and clock_digits.is_digit_clock_string(time_str):
+            digit_h = self._digit_height_for_section(section_height)
+            while (
+                digit_h > 12
+                and clock_digits.measure(time_str, height=digit_h)
+                > self._TIME_COLUMN_WIDTH
+            ):
+                digit_h -= 1
+            width = clock_digits.measure(time_str, height=digit_h)
+            x = self.width - 4 - width
+            y = section_y + max(0, (section_height - digit_h) // 2)
+            clock_digits.draw(sprite, x, y, time_str, sheet, height=digit_h)
+            return
+        time_widget.set_text(time_str)
+        time_widget.draw_on(sprite, self.width - 68, section_y + 6)
+
     def _annotation_for(self, color: str, active_color: Optional[str]) -> str:
         """Annotation string for one side's clock (increment/delay or live delay).
 
@@ -568,9 +614,11 @@ class ChessClockWidget(Widget):
             top_hint_widget.set_text(top_brain_hint)
             top_hint_widget.draw_on(sprite, self.width - 88, top_y + 4)
         
-        # Top time using TextWidget - draw directly onto sprite
-        top_time_widget.set_text(self._format_time(top_time))
-        top_time_widget.draw_on(sprite, self.width - 68, top_y + 6)
+        # Top time: seven-segment bitmap when the string is digits/colons.
+        self._draw_time(
+            sprite, top_time_widget, self._format_time(top_time),
+            top_y, section_height,
+        )
         
         # Increment/delay annotation under the time (only when the section is
         # tall enough; compact move-history layout drops it to avoid overlap).
@@ -607,9 +655,11 @@ class ChessClockWidget(Widget):
             bottom_hint_widget.set_text(bottom_brain_hint)
             bottom_hint_widget.draw_on(sprite, self.width - 88, bottom_y + 4)
         
-        # Bottom time using TextWidget - draw directly onto sprite
-        bottom_time_widget.set_text(self._format_time(bottom_time))
-        bottom_time_widget.draw_on(sprite, self.width - 68, bottom_y + 6)
+        # Bottom time: seven-segment bitmap when the string is digits/colons.
+        self._draw_time(
+            sprite, bottom_time_widget, self._format_time(bottom_time),
+            bottom_y, section_height,
+        )
         
         # Increment/delay annotation under the time (see top-section note).
         bottom_annot = self._annotation_for(bottom_color, active_color)
