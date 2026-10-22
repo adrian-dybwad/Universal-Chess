@@ -7,11 +7,12 @@ graph. The played-move scoresheet is a separate widget
 the eval panel and is hidden when Show Analysis is off.
 
 Analysis layout:
-- Top quality bar (full width): the last move's quality word ("Blunder",
-  "Brilliant", ...) on the left and that move's accuracy % on the right. The bar
-  is filled in the last mover's colour -- white background/black text for a white
-  move, black background/white text for a black move -- so the colour tells you
-  who just moved at a glance.
+- Top quality bar (full width): the last move's quality word localized for the
+  device language ("Blunder" / "Gaffe" / ..., "Brilliant" / "Brillant" / ...) on
+  the left and that move's accuracy % on the right. The bar is filled in the last
+  mover's colour -- white background/black text for a white move, black
+  background/white text for a black move -- so the colour tells you who just
+  moved at a glance.
 - Left column (44px, below the bar): the opponent's running accuracy % on top,
   the evaluation score in the middle (vertically centred on the graph's centre
   line), and the bottom player's running accuracy % below.
@@ -23,6 +24,8 @@ from PIL import Image, ImageDraw
 from .framework.widget import Widget
 from typing import Optional, Tuple, TYPE_CHECKING
 
+from universalchess.i18n import t
+
 if TYPE_CHECKING:
     from universalchess.state.analysis import AnalysisState
 
@@ -31,6 +34,32 @@ try:
 except ImportError:
     import logging
     log = logging.getLogger(__name__)
+
+
+# English classifier tokens from ``utils.accuracy.classify_move`` -> i18n keys.
+# Keys mirror the tokens so a new quality word without a mapping still falls
+# through to the English label rather than inventing a translation.
+_QUALITY_WORD_KEYS = {
+    "Blunder": "analysis.quality.blunder",
+    "Mistake": "analysis.quality.mistake",
+    "Inaccuracy": "analysis.quality.inaccuracy",
+    "Good": "analysis.quality.good",
+    "Brilliant": "analysis.quality.brilliant",
+}
+
+
+def localize_quality_word(word: str) -> str:
+    """Translate a move-quality classifier token for the active UI locale.
+
+    The accuracy classifier returns English tokens (``"Blunder"``,
+    ``"Inaccuracy"``, ...); the e-paper quality bar must show the device's
+    language. An empty word (no last move) stays empty so the bar stays blank.
+    An unknown token is returned unchanged rather than fabricating a label.
+    """
+    if not word:
+        return ""
+    key = _QUALITY_WORD_KEYS.get(word)
+    return t(key) if key else word
 
 
 class GameAnalysisWidget(Widget):
@@ -305,7 +334,7 @@ class GameAnalysisWidget(Widget):
 
         parts = []
         if summary.last_word:
-            parts.append(summary.last_word)
+            parts.append(localize_quality_word(summary.last_word))
         if summary.last_accuracy is not None:
             parts.append(f"{summary.last_accuracy:.0f}%")
         if not parts:

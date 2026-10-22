@@ -1469,6 +1469,12 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **The analysis quality bar kept English move labels on a non-English board**:
+  Blunder, Mistake, Inaccuracy, Good, and Brilliant were drawn from the
+  classifier as-is, so a French device showed "Inaccuracy" instead of
+  "Imprécision". The quality bar now localizes those five words through the
+  board i18n bundles in every shipped UI language.
+
 - **A new web build was detected two different ways, and neither followed the reload-or-prompt rule**: a page with a service worker waited for a new worker to install, poll, and take control; a page without one (an untrusted certificate) compared the script name on `/events`. `build.sh` and `deploy-to-pi.sh` stamped `sw.js` with the build time, so every publish installed a new worker and looked like a new build even with the frontend unchanged. Without a worker, a changed script name always showed the banner, even with no game. A flag stored by Reload to stop a worker reload loop was never cleared when registration failed, so the banner stayed up on the build the page had just loaded. Both paths are replaced by one: the build scripts stamp a hash of the built files other than `sw.js` into `index.html` and `sw.js`, the server sends the hash from `index.html` on disk in the `/events` snapshot, and the page compares it with its own. When they differ, the page reloads if no game is in progress and shows the banner during a game. Reload tells a waiting worker to take over and then reloads; the worker fetches navigations from the network first, so the reload reaches the new build with or without a worker. A tab that already reloaded for a build and still has the old one shows the banner instead of reloading again. The footer shows this page's build, and the build on disk when it differs.
 
 - **A new web build reloaded the page mid-game when the tab was hidden**: the update rule treated a hidden tab as safe to reload, so switching to another window during a game reloaded the board with no banner. A game in progress now always gets the banner, and the reload happens on tap or once the game ends.
