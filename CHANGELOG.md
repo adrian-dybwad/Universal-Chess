@@ -1826,6 +1826,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   the web game-over panel lists no final times. The times return when the
   app disconnects.
 
+- **The web kept showing Millennium after the chess app was gone**: the
+  board only cleared the chess-app link on GATT ``StopNotify``. BlueZ often
+  drops the ACL or resumes LE advertising without that call, and
+  Connectivity's Disconnect only listed paired devices, so an unpaired
+  HIARCS host (e.g. NAUTILUS) had no control and left ``emulator=millennium``
+  on the status card. The board now ends the BLE chess session when
+  advertising resumes after a pause or when the bound BlueZ peer (or the
+  last Connected device, if no peer was bound) disconnects, keeps the peer
+  across the board_app re-record, and Connectivity's Connected app row has
+  Disconnect.
+
 - **The board never took over when a DGT/Millennium/Chessnut app
   disconnected on its own move, and touching a piece then left the game
   stuck in correction**: the engine set aside for the session kept a reply

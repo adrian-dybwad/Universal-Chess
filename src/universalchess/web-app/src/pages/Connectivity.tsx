@@ -746,6 +746,74 @@ function BluetoothCard() {
     }
   }, [onUnauthorized, t]);
 
+  /** Drop the chess-app BLE/RFCOMM peer (or every Connected device if peer unknown). */
+  const disconnectConnectedApp = useCallback(
+    async function runDisconnectConnectedApp() {
+      if (!status?.link?.connected) {
+        return;
+      }
+      const peerAddr = status.link.peer?.address ?? null;
+      const targets = peerAddr
+        ? [peerAddr]
+        : (status.devices ?? []).map((d) => d.address).filter(Boolean);
+      const label = status.link.emulator
+        ? (EMULATOR_LABELS[status.link.emulator] ?? status.link.emulator)
+        : status.link.peer?.name
+          || (status.link.transport === 'rfcomm'
+            ? t('connectivity.bluetooth.rfcomm')
+            : t('connectivity.bluetooth.connectedGeneric'));
+
+      if (targets.length === 0) {
+        // Link is marked up but BlueZ lists no device -- board-side teardown
+        // (ads resume / StopNotify) must clear it; nothing to Disconnect here.
+        setMessage({ kind: 'error', text: t('connectivity.bluetooth.actionFailed') });
+        return;
+      }
+
+      setBusy(true);
+      setMessage(null);
+      try {
+        let anyOk = false;
+        let lastError = '';
+        for (const address of targets) {
+          const r = await apiFetch('/api/connectivity/bluetooth/disconnect', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ address }),
+            requiresAuth: true,
+          });
+          if (r.status === 401) {
+            onUnauthorized(runDisconnectConnectedApp);
+            return;
+          }
+          const data = await r.json().catch(() => ({}));
+          if (data.success) {
+            anyOk = true;
+          } else {
+            lastError = data.error || lastError;
+          }
+        }
+        if (anyOk) {
+          setMessage({
+            kind: 'success',
+            text: t('connectivity.bluetooth.disconnectedMsg', { name: label }),
+          });
+          setTimeout(fetchStatus, 1500);
+        } else {
+          setMessage({
+            kind: 'error',
+            text: lastError || t('connectivity.bluetooth.actionFailed'),
+          });
+        }
+      } catch {
+        setMessage({ kind: 'error', text: t('common.networkError') });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [status, onUnauthorized, fetchStatus, t]
+  );
+
   /** POST a device action (connect/disconnect/forget/pair) and refresh status. */
   const deviceAction = useCallback(
     async function runDeviceAction(path: string, address: string, successText: string, deviceName?: string) {
@@ -1005,6 +1073,16 @@ function BluetoothCard() {
                     ? t('connectivity.bluetooth.rfcomm')
                     : t('connectivity.bluetooth.connectedGeneric')}
                 {status.link.peer?.name && <span className="conn-active-badge">{status.link.peer.name}</span>}
+              </span>
+              <span className="conn-btn-group">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void disconnectConnectedApp()}
+                  disabled={busy}
+                >
+                  {t('connectivity.bluetooth.disconnect')}
+                </Button>
               </span>
             </div>
           </div>

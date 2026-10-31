@@ -220,13 +220,26 @@ class BluetoothStatusState:
             emulator: Active emulator for a BLE link (``millennium`` /
                 ``pegasus`` / ``chessnut``); ``None`` for RFCOMM.
             peer: Optional ``{"address", "name"}`` of the connected device.
+                When omitted on a re-record of the same BLE link (board_app
+                mirrors the BleManager update without a peer), an already-bound
+                peer is kept so Device1 disconnect can still match it.
         """
         with self._lock:
+            preserve_peer = (
+                peer is None
+                and self._connected
+                and self._transport == transport
+                and self._emulator == emulator
+                and self._peer is not None
+            )
             self._connected = True
             self._transport = transport
             self._emulator = emulator
-            self._peer = dict(peer) if peer else None
-            self._connected_since = self._clock()
+            if not preserve_peer:
+                self._peer = dict(peer) if peer else None
+                self._connected_since = self._clock()
+            # Re-record of the same link (board_app mirror): keep peer and
+            # connected_since so Device1 teardown can still match the central.
         self._publish()
 
     def client_disconnected(self) -> None:
@@ -407,14 +420,14 @@ class BluetoothStatusState:
         if self._broadcast is not None:
             try:
                 self._broadcast(EVENT_TYPE, payload)
-            except Exception:  # noqa: BLE001 - reporting must not break BT
+            except Exception:  # noqa: BLE001, S110 # nosec B110 - reporting must not break BT
                 pass
         with self._lock:
             observers = list(self._observers)
         for observer in observers:
             try:
                 observer()
-            except Exception:  # noqa: BLE001 - an observer must not break BT
+            except Exception:  # noqa: BLE001, S110 # nosec B110 - an observer must not break BT
                 pass
 
 

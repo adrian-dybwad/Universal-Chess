@@ -207,7 +207,12 @@ class BleManager:
         # Connection state
         self.connected = False
         self.client_type = None
-        
+        # True after this BLE chess session has seen ActiveInstances == 0 (ads
+        # paused for the central). A later rise then means the central left
+        # without StopNotify. Must not be True at StartNotify, or a still-high
+        # instance count would look like a resume and drop the new link.
+        self._ble_ads_paused_while_connected = False
+
         # D-Bus objects
         self._bus = None
         self._mainloop = None
@@ -251,29 +256,97 @@ class BleManager:
         
         self.connected = True
         self.client_type = client_type
-        
+        self._ble_ads_paused_while_connected = False
+
         log.info(f"[BleManager] Client connected: {client_type}")
 
         # A connected BLE central pauses LE advertising; record the active
         # emulator so the board/web show "paused_connected" with what is in play
-        # rather than a false advertising failure.
+        # rather than a false advertising failure. Bind the peer when exactly
+        # one BlueZ device is Connected so a later Device1 drop can clear the
+        # link even if GATT StopNotify never runs.
+        from universalchess.managers.ble_session_teardown import (
+            peer_from_connected_devices,
+        )
         from universalchess.managers.bluetooth_status_state import TRANSPORT_BLE
-        self._status_state.client_connected(TRANSPORT_BLE, emulator=client_type)
+
+        snap = self._status_state.to_dict()
+        peer = peer_from_connected_devices(snap.get("devices") or [])
+        self._status_state.client_connected(
+            TRANSPORT_BLE, emulator=client_type, peer=peer
+        )
 
         if self._on_connected:
             self._on_connected(client_type)
     
     def _notify_disconnected(self):
         """Notify that a client disconnected."""
+        if not self.connected and self.client_type is None:
+            # Idempotent: BlueZ Device1 + ActiveInstances may both fire for one
+            # drop; a second call must not re-enter on_disconnected.
+            return
+
         self.connected = False
         self.client_type = None
-        
+        self._ble_ads_paused_while_connected = False
+
         log.info("[BleManager] Client disconnected")
 
         self._status_state.client_disconnected()
 
         if self._on_disconnected:
             self._on_disconnected()
+
+    def _end_ble_session_if_advertising_resumed(self, active_instances: int) -> None:
+        """Clear a stuck chess-app link when LE advertising resumes without StopNotify."""
+        from universalchess.managers.ble_session_teardown import (
+            should_end_ble_session_after_active_instances,
+        )
+        from universalchess.managers.bluetooth_status_state import TRANSPORT_BLE
+
+        if self.connected and active_instances == 0:
+            self._ble_ads_paused_while_connected = True
+
+        if not should_end_ble_session_after_active_instances(
+            session_active=self.connected,
+            transport=TRANSPORT_BLE if self.connected else None,
+            active_instances=active_instances,
+            advertising_was_paused=self._ble_ads_paused_while_connected,
+        ):
+            return
+        log.info(
+            "[BleManager] LE advertising resumed while chess app session "
+            "still active - treating as disconnect"
+        )
+        self._notify_disconnected()
+
+    def _end_ble_session_if_device_left(self, address: str) -> None:
+        """Clear a stuck chess-app link when the BlueZ central disconnects without StopNotify."""
+        from universalchess.managers.ble_session_teardown import (
+            should_end_ble_session_after_device_disconnect,
+        )
+        from universalchess.managers.bluetooth_status_state import TRANSPORT_BLE
+
+        if not address:
+            return
+        snap = self._status_state.to_dict()
+        peer = snap.get("peer") or {}
+        remaining = frozenset(
+            d["address"] for d in (snap.get("devices") or []) if d.get("address")
+        )
+        if not should_end_ble_session_after_device_disconnect(
+            session_active=self.connected,
+            transport=TRANSPORT_BLE if self.connected else None,
+            peer_address=peer.get("address") if isinstance(peer, dict) else None,
+            disconnected_address=address,
+            remaining_device_addresses=remaining,
+        ):
+            return
+        log.info(
+            f"[BleManager] BlueZ device {address} disconnected while chess app "
+            "session still active - treating as disconnect"
+        )
+        self._notify_disconnected()
     
     def _notify_data_received(self, data: bytes, client_type: str):
         """Notify that data was received."""
@@ -529,7 +602,11 @@ class BleManager:
             if interface == "org.bluez.Adapter1" and "Powered" in changed:
                 self._status_state.set_powered(bool(changed["Powered"]))
             elif interface == LE_ADVERTISING_MANAGER_IFACE and "ActiveInstances" in changed:
-                self._status_state.set_active_instances(int(changed["ActiveInstances"]))
+                count = int(changed["ActiveInstances"])
+                self._status_state.set_active_instances(count)
+                # Ads resuming while StartNotify never got StopNotify left the
+                # web showing Millennium with no central on the link.
+                self._end_ble_session_if_advertising_resumed(count)
             elif interface == "org.bluez.Device1" and "Connected" in changed:
                 if bool(changed["Connected"]):
                     self._status_state.device_connected(
@@ -537,8 +614,9 @@ class BleManager:
                         self._device_name_safe(path),
                     )
                 else:
-                    self._status_state.device_disconnected(
-                        self._device_address_from_path(path))
+                    address = self._device_address_from_path(path)
+                    self._status_state.device_disconnected(address)
+                    self._end_ble_session_if_device_left(address)
 
         def _on_interfaces_added(path, interfaces):
             if "org.bluez.Device1" in interfaces:
@@ -551,8 +629,9 @@ class BleManager:
 
         def _on_interfaces_removed(path, interfaces):
             if "org.bluez.Device1" in interfaces:
-                self._status_state.device_disconnected(
-                    self._device_address_from_path(path))
+                address = self._device_address_from_path(path)
+                self._status_state.device_disconnected(address)
+                self._end_ble_session_if_device_left(address)
 
         self._bus.add_signal_receiver(
             _on_properties_changed,

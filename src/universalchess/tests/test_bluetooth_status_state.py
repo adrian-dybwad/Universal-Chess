@@ -183,6 +183,28 @@ def test_client_connect_then_disconnect_clears_link(engine, recorder):
     assert cleared["connected_since"] is None
 
 
+def test_re_recording_the_same_ble_link_without_a_peer_keeps_the_bound_peer(engine):
+    """board_app mirrors BleManager's connect without a peer; the peer must stick.
+
+    How the regression manifests: peer becomes None, so Device1 Connected=false
+    for the HIARCS host cannot match and Millennium stays on the web after the
+    ACL drops without StopNotify.
+    """
+    engine.client_connected(
+        TRANSPORT_BLE,
+        emulator="millennium",
+        peer={"address": "84:7B:57:FA:01:1C", "name": "NAUTILUS"},
+    )
+    since = engine.to_dict()["connected_since"]
+
+    engine.client_connected(TRANSPORT_BLE, emulator="millennium", peer=None)
+
+    snap = engine.to_dict()
+    assert snap["peer"] == {"address": "84:7B:57:FA:01:1C", "name": "NAUTILUS"}
+    assert snap["connected_since"] == since
+    assert snap["emulator"] == "millennium"
+
+
 def test_rfcomm_connection_sets_rfcomm_transport(engine, recorder):
     # An RFCOMM (classic) link is reported with transport 'rfcomm' and no
     # emulator. RFCOMM does not pause LE advertising, so adv_state is NOT
