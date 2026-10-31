@@ -1,15 +1,17 @@
-"""Physical start is a new game only when the live game has left start.
+"""Physical start is a new game except for remote catch-up at ply 0.
 
 Why these tests exist
 ---------------------
 A Lichess seek can connect while the pieces are still unset. Completing the
 starting setup then ran the same abandon path as a mid-game board-reset:
 EVENT_NEW_GAME rebuilt the players and started a local game in place of the
-remote one. When the live occupancy is already start, the physical start is
-the board catching up -- unless that live game has already ended (flag,
-resign, agreement). Matching start with an external result left
-``is_game_over`` set, so every later move was refused as "after game ended"
-and a second home-rank setup did nothing because it looked like catch-up.
+remote one. When the live occupancy is already start on a remote game, the
+physical start is the board catching up.
+
+A local game already at start (takeback to ply 0, or never moved) must still
+reset: matching start was treated as catch-up, so the clock kept running and
+``_reset_game`` (double beep) never ran. The same continue path left a finished
+opening (flag/resign at start) with ``is_game_over`` set so later moves aborted.
 """
 
 import chess
@@ -28,8 +30,8 @@ def _occupancy(board: chess.Board) -> bytearray:
     return state
 
 
-def test_physical_start_continues_a_game_already_at_start():
-    """Setting up start to match a live start must not abandon.
+def test_physical_start_continues_a_remote_game_already_at_start():
+    """Remote catch-up at ply 0 must not abandon.
 
     How the regression manifests: interpret_physical_start returns abandon, so
     EVENT_NEW_GAME tears down the Lichess game.
@@ -40,8 +42,30 @@ def test_physical_start_continues_a_game_already_at_start():
             board_size=BOARD_SIZE,
             expected_logical_state=_occupancy(chess.Board()),
             game_is_over=False,
+            allow_matching_continue=True,
         )
         == "continue"
+    )
+
+
+def test_physical_start_abandons_a_local_game_already_at_start():
+    """Home-rank on a local opening must reset even when occupancy already matches.
+
+    Why: takeback to ply 0 (or never moving) left the clock running at start.
+    Matching occupancy returned continue, so ``_reset_game`` never ran -- no
+    double beep, clock kept counting.
+
+    How the regression manifests: continue while allow_matching_continue is False.
+    """
+    assert (
+        interpret_physical_start(
+            current_state=START,
+            board_size=BOARD_SIZE,
+            expected_logical_state=_occupancy(chess.Board()),
+            game_is_over=False,
+            allow_matching_continue=False,
+        )
+        == "abandon"
     )
 
 
@@ -60,6 +84,7 @@ def test_physical_start_abandons_when_the_finished_game_is_already_at_start():
             board_size=BOARD_SIZE,
             expected_logical_state=_occupancy(chess.Board()),
             game_is_over=True,
+            allow_matching_continue=True,
         )
         == "abandon"
     )

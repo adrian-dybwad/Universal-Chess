@@ -844,6 +844,7 @@ class GameManager:
             exit_correction_mode_fn=self._exit_correction_mode,
             provide_correction_guidance_fn=self._provide_correction_guidance,
             game_is_over=self._game_state.is_game_over,
+            allow_matching_continue=self._matching_start_is_remote_catch_up(),
         )
     
     def _handle_king_lift_resign(self, field: int, piece_color):
@@ -1115,6 +1116,7 @@ class GameManager:
             board_size=BOARD_SIZE,
             expected_logical_state=expected_state,
             game_is_over=self._game_state.is_game_over,
+            allow_matching_continue=self._matching_start_is_remote_catch_up(),
         )
         if start_action == "continue":
             log.info(
@@ -1182,6 +1184,15 @@ class GameManager:
         """
         pm = self._player_manager
         return pm is not None and pm.requires_rebuild_on_new_game
+
+    def _matching_start_is_remote_catch_up(self) -> bool:
+        """True when matching home ranks are board catch-up, not a new game.
+
+        A Lichess (or other rebuild-on-new-game) session can be live at ply 0
+        before the pieces are set. Completing start then must not abandon.
+        Local games at start (takeback, or never moved) still reset.
+        """
+        return self._back_owned_by_remote_session()
     
     def set_player_manager(self, player_manager) -> None:
         """Set the player manager for this game.
@@ -1591,6 +1602,7 @@ class GameManager:
                 board_size=BOARD_SIZE,
                 expected_logical_state=expected_state,
                 game_is_over=self._game_state.is_game_over,
+                allow_matching_continue=self._matching_start_is_remote_catch_up(),
             )
             if start_action == "continue":
                 log.info(

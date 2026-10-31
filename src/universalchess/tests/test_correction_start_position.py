@@ -1,10 +1,12 @@
-"""Correction mode must not abandon a live game that is already at start.
+"""Correction mode must not abandon a remote game that is already at start.
 
 Why these tests exist
 ---------------------
 Starting-position detection ran before the physical==logical match check.
 A Lichess game that connected at ply 0, then entered correction while the
 pieces were unset, treated the completed starting setup as a new game.
+Local matching start must still reset (takeback to ply 0 with the clock
+running), and a finished opening at start must reset rather than exit.
 """
 
 from unittest.mock import MagicMock
@@ -24,7 +26,14 @@ def _occupancy(board: chess.Board) -> bytearray:
     return state
 
 
-def _run(*, chess_board, physical, monkeypatch, game_is_over=False):
+def _run(
+    *,
+    chess_board,
+    physical,
+    monkeypatch,
+    game_is_over=False,
+    allow_matching_continue=False,
+):
     monkeypatch.setattr(
         "universalchess.managers.game.correction_flow.time.sleep", lambda *_a, **_k: None
     )
@@ -43,20 +52,43 @@ def _run(*, chess_board, physical, monkeypatch, game_is_over=False):
         exit_correction_mode_fn=exit_correction,
         provide_correction_guidance_fn=MagicMock(),
         game_is_over=game_is_over,
+        allow_matching_continue=allow_matching_continue,
     )
     return reset, exit_correction
 
 
-def test_correction_at_live_start_exits_instead_of_abandoning(monkeypatch):
-    """Physical start that matches ply 0 must leave correction and keep the game.
+def test_correction_at_remote_live_start_exits_instead_of_abandoning(monkeypatch):
+    """Remote ply-0 catch-up must leave correction and keep the game.
 
     How the regression manifests: reset_game_fn runs and exit_correction does not.
     """
     reset, exit_correction = _run(
-        chess_board=chess.Board(), physical=START, monkeypatch=monkeypatch
+        chess_board=chess.Board(),
+        physical=START,
+        monkeypatch=monkeypatch,
+        allow_matching_continue=True,
     )
     reset.assert_not_called()
     exit_correction.assert_called_once()
+
+
+def test_correction_at_local_live_start_resets(monkeypatch):
+    """Local matching start must reset, not exit correction alone.
+
+    Why: takeback to ply 0 with the clock still running left occupancy at start.
+    Catch-up continue exited correction with no double beep and the clock kept
+    counting.
+
+    How the regression manifests: exit_correction runs and reset_game_fn does not.
+    """
+    reset, exit_correction = _run(
+        chess_board=chess.Board(),
+        physical=START,
+        monkeypatch=monkeypatch,
+        allow_matching_continue=False,
+    )
+    reset.assert_called_once()
+    exit_correction.assert_not_called()
 
 
 def test_correction_start_still_abandons_a_game_in_progress(monkeypatch):
@@ -86,6 +118,7 @@ def test_correction_at_finished_start_resets_instead_of_exiting(monkeypatch):
         physical=START,
         monkeypatch=monkeypatch,
         game_is_over=True,
+        allow_matching_continue=True,
     )
     reset.assert_called_once()
     exit_correction.assert_not_called()

@@ -26,15 +26,17 @@ def handle_field_event_in_correction_mode(
     exit_correction_mode_fn: Callable[[], None],
     provide_correction_guidance_fn: Callable[[Sequence[int], Sequence[int]], None],
     game_is_over: bool = False,
+    allow_matching_continue: bool = False,
 ) -> None:
     """Handle field events while correction mode is active.
 
     Behavior preserved from prior inline implementation:
     - On PLACE events, delays briefly to let sensors settle (sliding pieces).
     - Reads current physical state.
-    - If starting position is detected and the live game has left start, or the
-      live game has already ended while still at start, abandons/resets.
-      Physical start that already matches an in-progress live game (a Lichess
+    - If starting position is detected and the live game has left start, the
+      live game has already ended while still at start, or matching start is a
+      local new-game gesture, abandons/resets. Physical start that already
+      matches an in-progress remote game (``allow_matching_continue``, a Lichess
       seek that connected before the pieces were set) exits correction instead.
     - Recomputes expected logical state from the authoritative chess board.
     - If physical matches expected, exits correction mode.
@@ -52,6 +54,8 @@ def handle_field_event_in_correction_mode(
         provide_correction_guidance_fn: Callback to update LEDs for correction guidance
         game_is_over: When True, matching start is a new-game reset (clear finished
             result), not board catch-up
+        allow_matching_continue: When True (remote ply-0 catch-up), matching start
+            exits correction instead of resetting
     """
     # Small delay to allow sensors to settle after piece placement (sliding pieces).
     is_place = piece_event == 1
@@ -74,6 +78,7 @@ def handle_field_event_in_correction_mode(
         board_size=board_size,
         expected_logical_state=expected_state,
         game_is_over=game_is_over,
+        allow_matching_continue=allow_matching_continue,
     )
     if start_action == "abandon":
         log.warning(
