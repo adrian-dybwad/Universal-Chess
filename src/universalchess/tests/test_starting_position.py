@@ -6,7 +6,10 @@ A Lichess seek can connect while the pieces are still unset. Completing the
 starting setup then ran the same abandon path as a mid-game board-reset:
 EVENT_NEW_GAME rebuilt the players and started a local game in place of the
 remote one. When the live occupancy is already start, the physical start is
-the board catching up.
+the board catching up -- unless that live game has already ended (flag,
+resign, agreement). Matching start with an external result left
+``is_game_over`` set, so every later move was refused as "after game ended"
+and a second home-rank setup did nothing because it looked like catch-up.
 """
 
 import chess
@@ -36,8 +39,29 @@ def test_physical_start_continues_a_game_already_at_start():
             current_state=START,
             board_size=BOARD_SIZE,
             expected_logical_state=_occupancy(chess.Board()),
+            game_is_over=False,
         )
         == "continue"
+    )
+
+
+def test_physical_start_abandons_when_the_finished_game_is_already_at_start():
+    """Home-rank after a flag/resign at the opening must clear the ended game.
+
+    Why: takeback to ply 0 left the clock running; White flagged with the board
+    still at start. Matching occupancy returned continue, so ``_reset_game``
+    never cleared ``TIME_FORFEIT`` and every legal move aborted as game-over.
+
+    How the regression manifests: continue (or None) while game_is_over is True.
+    """
+    assert (
+        interpret_physical_start(
+            current_state=START,
+            board_size=BOARD_SIZE,
+            expected_logical_state=_occupancy(chess.Board()),
+            game_is_over=True,
+        )
+        == "abandon"
     )
 
 

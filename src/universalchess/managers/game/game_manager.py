@@ -843,6 +843,7 @@ class GameManager:
             reset_game_fn=self._reset_game,
             exit_correction_mode_fn=self._exit_correction_mode,
             provide_correction_guidance_fn=self._provide_correction_guidance,
+            game_is_over=self._game_state.is_game_over,
         )
     
     def _handle_king_lift_resign(self, field: int, piece_color):
@@ -1113,6 +1114,7 @@ class GameManager:
             current_state=current_state,
             board_size=BOARD_SIZE,
             expected_logical_state=expected_state,
+            game_is_over=self._game_state.is_game_over,
         )
         if start_action == "continue":
             log.info(
@@ -1588,6 +1590,7 @@ class GameManager:
                 current_state=current_state,
                 board_size=BOARD_SIZE,
                 expected_logical_state=expected_state,
+                game_is_over=self._game_state.is_game_over,
             )
             if start_action == "continue":
                 log.info(

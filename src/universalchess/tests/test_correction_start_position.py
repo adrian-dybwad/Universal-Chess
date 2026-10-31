@@ -24,7 +24,7 @@ def _occupancy(board: chess.Board) -> bytearray:
     return state
 
 
-def _run(*, chess_board, physical, monkeypatch):
+def _run(*, chess_board, physical, monkeypatch, game_is_over=False):
     monkeypatch.setattr(
         "universalchess.managers.game.correction_flow.time.sleep", lambda *_a, **_k: None
     )
@@ -42,6 +42,7 @@ def _run(*, chess_board, physical, monkeypatch):
         reset_game_fn=reset,
         exit_correction_mode_fn=exit_correction,
         provide_correction_guidance_fn=MagicMock(),
+        game_is_over=game_is_over,
     )
     return reset, exit_correction
 
@@ -67,6 +68,24 @@ def test_correction_start_still_abandons_a_game_in_progress(monkeypatch):
     board.push_san("e4")
     reset, exit_correction = _run(
         chess_board=board, physical=START, monkeypatch=monkeypatch
+    )
+    reset.assert_called_once()
+    exit_correction.assert_not_called()
+
+
+def test_correction_at_finished_start_resets_instead_of_exiting(monkeypatch):
+    """Matching start after a flag/resign must reset, not exit correction alone.
+
+    Why: takeback to ply 0 then TIME_FORFEIT leaves occupancy at start with
+    ``is_game_over`` set. Match-first exit left the finished result in place.
+
+    How the regression manifests: exit_correction runs and reset_game_fn does not.
+    """
+    reset, exit_correction = _run(
+        chess_board=chess.Board(),
+        physical=START,
+        monkeypatch=monkeypatch,
+        game_is_over=True,
     )
     reset.assert_called_once()
     exit_correction.assert_not_called()

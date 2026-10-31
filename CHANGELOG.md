@@ -1837,6 +1837,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   across the board_app re-record, and Connectivity's Connected app row has
   Disconnect.
 
+- **Home-rank setup after a finished opening left the board stuck**:
+  takeback to the start with the clock still running, then a flag, left
+  occupancy at the starting position with ``TIME_FORFEIT`` set. Matching
+  start was treated as board catch-up, so the new-game reset never ran,
+  every later move was refused as after game ended, and a second home-rank
+  setup did nothing. Physical start now resets when the live game is
+  already over, even if occupancy already matches start. The database
+  forfeit or resign result is left alone; only in-progress rows become
+  abandoned.
+
 - **The board never took over when a DGT/Millennium/Chessnut app
   disconnected on its own move, and touching a piece then left the game
   stuck in correction**: the engine set aside for the session kept a reply

@@ -7,6 +7,12 @@ A remote game can already be at that start (a Lichess seek that connected before
 the pieces were set). Completing the starting setup then is the board catching
 up, not a new game -- abandoning it cancelled the remote game and started a
 local one.
+
+When the live game has already ended (flag, resign, agreement) while occupancy
+is still start -- for example takeback to ply 0 then a clock flag -- matching
+start is no longer catch-up: home-rank setup must run the new-game reset so
+``is_game_over`` clears. ``abandon_current_game`` only writes ``*`` when the
+database row has no result yet, so a finished forfeit/resign stays recorded.
 """
 
 from __future__ import annotations
@@ -32,15 +38,20 @@ def interpret_physical_start(
     current_state: Optional[Sequence[int]],
     board_size: int,
     expected_logical_state: Optional[Sequence[int]],
+    game_is_over: bool = False,
 ) -> Optional[str]:
     """How a physical starting setup relates to the live game.
 
-    Returns ``continue`` when the live occupancy is already start (board catching
-    up), ``abandon`` when start disagrees with the live position (new-game
-    gesture), and ``None`` when the physical board is not at start.
+    Returns ``continue`` when the live occupancy is already start and the game
+    is still in progress (board catching up), ``abandon`` when start disagrees
+    with the live position or the live game has already ended (new-game
+    gesture / clear finished state), and ``None`` when the physical board is
+    not at start.
     """
     if not is_starting_position_state(current_state=current_state, board_size=board_size):
         return None
+    if game_is_over:
+        return "abandon"
     if expected_logical_state is not None and ChessGameState.states_match(
         current_state, expected_logical_state
     ):
@@ -54,10 +65,12 @@ def reset_game_if_starting_position(
     board_size: int,
     reset_game_fn: Callable[[], None],
     expected_logical_state: Optional[Sequence[int]] = None,
+    game_is_over: bool = False,
 ) -> bool:
     """Reset the game if the physical board is in the starting position.
 
-    Does not reset when that start already matches the live game.
+    Does not reset when that start already matches a still-in-progress live game.
+    Resets when the live game has ended even if occupancy already matches start.
 
     Returns:
         True if reset was triggered, False otherwise.
@@ -67,6 +80,7 @@ def reset_game_if_starting_position(
             current_state=current_state,
             board_size=board_size,
             expected_logical_state=expected_logical_state,
+            game_is_over=game_is_over,
         )
         != "abandon"
     ):
