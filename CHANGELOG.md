@@ -1847,6 +1847,13 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   forfeit or resign result is left alone; only in-progress rows become
   abandoned.
 
+- **A HIARCS (or other app) new game left the Centaur in midgame correction**:
+  when the app started a fresh game and the pieces were already at home ranks,
+  disconnect hand-back and the post-web-play resync still entered correction
+  toward the leftover midgame shadow, so the board never opened that new
+  game. Occupancy at start now resets the shadow to the opening instead of
+  guiding pieces back to the old position.
+
 - **The board never took over when a DGT/Millennium/Chessnut app
   disconnected on its own move, and touching a piece then left the game
   stuck in correction**: the engine set aside for the session kept a reply

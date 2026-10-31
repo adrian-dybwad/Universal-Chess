@@ -316,6 +316,58 @@ def test_session_exit_enters_correction_when_physical_board_mismatches(gm, monke
     assert gm.correction_mode.is_active is True
 
 
+def test_session_exit_resets_when_physical_board_is_already_at_start(gm, monkeypatch):
+    """Disconnect with pieces at home ranks must open a local start, not midgame correction.
+
+    Why: HIARCS (or another app) starts a new game and the pieces are set to
+    start while the Centaur shadow is still midgame. Disconnect hand-back
+    entered correction toward that midgame, so the board never started the
+    opening the pieces already showed.
+
+    How the regression manifests: correction_mode.is_active is True and fen is
+    still the midgame position after disconnect.
+    """
+    gm.set_remote_app_session(True)
+    assert gm._on_player_move(chess.Move.from_uci("e2e4")) is True
+    assert gm.chess_board.peek().uci() == "e2e4"
+    # Pieces already rebuilt for the app's new game (start), shadow still e2e4.
+    monkeypatch.setattr(
+        "universalchess.managers.game.game_manager.board.getChessState",
+        lambda: bytearray(START_OCCUPANCY),
+    )
+
+    gm.set_remote_app_session(False)
+
+    assert gm.correction_mode.is_active is False
+    assert gm.chess_board.fen() == chess.STARTING_FEN
+
+
+def test_resync_after_web_play_resets_when_physical_board_is_at_start(gm, monkeypatch):
+    """First physical touch after web play must follow an app new-game at start.
+
+    Why: with the app connected, a web move arms resync. HIARCS then starts a
+    new game and the pieces are at start while the shadow is still midgame.
+    Resync entered correction toward that midgame, so the Centaur never
+    aligned with the app's opening.
+
+    How the regression manifests: correction_mode.is_active is True and
+    ``_resyncing_physical_board`` stays True after ``_begin_physical_resync``.
+    """
+    gm.set_remote_app_session(True)
+    assert gm._on_player_move(chess.Move.from_uci("e2e4")) is True
+    monkeypatch.setattr(
+        "universalchess.managers.game.game_manager.board.getChessState",
+        lambda: bytearray(START_OCCUPANCY),
+    )
+
+    gm._begin_physical_resync()
+
+    assert gm.correction_mode.is_active is False
+    assert gm._resyncing_physical_board is False
+    assert gm.chess_board.fen() == chess.STARTING_FEN
+    assert gm.is_remote_app_session is True
+
+
 def test_session_exit_skips_correction_when_physical_board_matches(gm):
     """Matching occupancy on disconnect must not enter correction.
 
@@ -334,7 +386,7 @@ def test_session_exit_skips_correction_when_physical_board_matches(gm):
     )
 
 
-def test_moves_made_during_the_session_earn_no_increment_after_disconnect(gm, clock):
+def test_moves_made_during_the_session_earn_no_increment_after_disconnect(gm, clock, monkeypatch):
     """Session moves were the app's: the board must not credit their increment.
 
     While the app is connected the turn handler skips apply_clock_move, so the
@@ -351,6 +403,12 @@ def test_moves_made_during_the_session_earn_no_increment_after_disconnect(gm, cl
 
     gm.set_remote_app_session(True)
     _play(gm, SESSION_MOVES)
+    # Occupancy must match the shadow midgame: the fixture defaults to start,
+    # which would reset on disconnect instead of continuing this game.
+    monkeypatch.setattr(
+        "universalchess.managers.game.game_manager.board.getChessState",
+        lambda: gm._chess_board_to_state(gm.chess_board),
+    )
     gm.set_remote_app_session(False)
     assert clock.is_running and not clock.is_paused
     # Freeze the countdown so the arithmetic below is exact.

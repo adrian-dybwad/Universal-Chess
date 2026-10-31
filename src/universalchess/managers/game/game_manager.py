@@ -78,7 +78,7 @@ from universalchess.services.analysis import get_analysis_service
 from universalchess.services.pgn_time import pgn_time_control_tag
 from .post_move import handle_game_end, validate_physical_board_after_move
 from .correction_flow import handle_field_event_in_correction_mode
-from .starting_position import interpret_physical_start
+from .starting_position import interpret_physical_start, is_starting_position_state
 from .field_events import FieldEventContext, process_field_event
 from .player_moves import (
     PlayerMoveContext,
@@ -1054,6 +1054,21 @@ class GameManager:
         the game; meanwhile the app is shown no physical events. A board the user
         mirrored by hand needs no correction. Unreadable occupancy starts nothing:
         without it there is no mismatch to guide.
+
+        Home ranks mean the app started a new game: align the shadow to start
+        instead of guiding back to the leftover midgame (see
+        ``_align_physical_board_after_app_authority``).
+        """
+        self._align_physical_board_after_app_authority(reason="web-play resync")
+
+    def _align_physical_board_after_app_authority(self, *, reason: str) -> None:
+        """After the app stops owning the pieces, match UC to occupancy.
+
+        Matching occupancy needs nothing. Home ranks mean a new opening (HIARCS
+        new game, or pieces already rebuilt): reset the shadow instead of
+        entering correction toward a leftover midgame -- that correction kept
+        the Centaur off the opening the pieces already showed. Any other
+        mismatch enters correction as before.
         """
         current_state = board.getChessState()
         expected_state = self._chess_board_to_state(self.chess_board)
@@ -1061,8 +1076,23 @@ class GameManager:
             return
         if ChessGameState.states_match(current_state, expected_state):
             return
-        log.info("[GameManager] Pieces lag the web board's game - correcting before the app sees them")
-        self._resyncing_physical_board = True
+        if is_starting_position_state(
+            current_state=current_state,
+            board_size=BOARD_SIZE,
+        ):
+            log.info(
+                f"[GameManager] Physical board at start after {reason} - "
+                "resetting to the opening instead of midgame correction"
+            )
+            self._resyncing_physical_board = False
+            self._reset_game()
+            return
+        log.info(
+            f"[GameManager] Pieces disagree with the game after {reason} - "
+            "correcting before play continues"
+        )
+        if self._remote_app_session:
+            self._resyncing_physical_board = True
         board.beep(board.SOUND_WRONG_MOVE, event_type="error")
         self._enter_correction_mode()
         self._provide_correction_guidance(current_state, expected_state)
@@ -1376,15 +1406,7 @@ class GameManager:
                     self._clock_service.resume()
             except Exception as e:
                 log.debug(f"[GameManager.set_remote_app_session] clock resume failed: {e}")
-            current_state = board.getChessState()
-            expected_state = self._chess_board_to_state(self.chess_board)
-            if (
-                current_state is not None
-                and expected_state is not None
-                and not ChessGameState.states_match(current_state, expected_state)
-            ):
-                self._enter_correction_mode()
-                self._provide_correction_guidance(current_state, expected_state)
+            self._align_physical_board_after_app_authority(reason="app disconnect")
 
         if self.on_remote_app_session is not None:
             try:
