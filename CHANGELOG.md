@@ -1478,6 +1478,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Engine-list checkboxes painted through the button border and over the
+  teaser**: each Chess Engines row is a horizontal icon button with a
+  checkbox and a wrapped description under the name. The description took
+  vertical space first, so the leftover icon band was shorter than the
+  36px checkbox; the glyph was still centered there and climbed out of the
+  frame onto the label and teaser. The icon+label band is reserved first,
+  the teaser keeps only what remains, and the drawn icon is clamped to that
+  band (as the trailing radio already was).
+
 - **The analysis quality bar kept English move labels on a non-English board**:
   Blunder, Mistake, Inaccuracy, Good, and Brilliant were drawn from the
   classifier as-is, so a French device showed "Inaccuracy" instead of

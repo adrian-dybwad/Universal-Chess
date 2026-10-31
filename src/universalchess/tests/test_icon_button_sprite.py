@@ -251,6 +251,62 @@ def test_selected_universal_logo_keeps_black_ink_and_white_halo():
     assert sprite.getpixel(ring) in _WHITE, "dither meets the silhouette; white halo missing"
 
 
+def test_horizontal_checkbox_with_description_stays_inside_border():
+    """Engine-list rows: checkbox must not climb through the button border.
+
+    Why this test exists: Chess Engines draws each engine as a horizontal
+    IconButton with a checkbox icon plus a teaser description under the
+    name. Description wrapping used to claim vertical space first, leaving
+    an icon_label band shorter than icon_size; the 36px checkbox was still
+    centered in that band and painted through the top border and over the
+    teaser text.
+
+    How a regression manifests: black ink appears in the transparent margin
+    above the border (y < margin), the same overflow seen on the board.
+    """
+    margin = 4
+    width, height = 200, 64
+    widget = IconButtonWidget(
+        0, 0, width, height,
+        update_callback=lambda *a, **k: None,
+        key="stockfish",
+        label="Stockfish (~12m)\n~3550 Elo",
+        icon_name="checkbox_checked",
+        selected=False,
+        enabled=True,
+        margin=margin,
+        icon_size=36,
+        layout="horizontal",
+        font_size=11,
+        border_width=2,
+        padding=2,
+        description=(
+            "A strong open-source chess engine used worldwide "
+            "for analysis and play."
+        ),
+        description_font_size=10,
+    )
+    sprite = Image.new("L", (width, height), 255)
+    widget.render(sprite)
+
+    outside = 0
+    for y in range(height):
+        for x in range(width):
+            if sprite.getpixel((x, y)) >= 128:
+                continue
+            if (
+                x < margin
+                or x > width - 1 - margin
+                or y < margin
+                or y > height - 1 - margin
+            ):
+                outside += 1
+    assert outside == 0, (
+        f"{outside} ink pixels outside the button border "
+        "(checkbox overflowed the frame)"
+    )
+
+
 def test_selected_universal_logo_mattes_enclosed_face_and_neck():
     """Enclosed white of the horse (face, neck) must stay white on a selected row.
 

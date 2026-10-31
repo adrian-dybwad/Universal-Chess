@@ -398,7 +398,44 @@ class IconButtonWidget(Widget):
             chars_per_line = max(20, int(content_width / avg_char_width))
             description_lines = self._wrap_description(self.description, chars_per_line)
             description_height = len(description_lines) * description_line_height + 4  # +4 for gap
-        
+
+        # Reserve the icon+label band before the description/footer can claim
+        # it. Engine-list rows (horizontal checkbox + teaser) used to wrap the
+        # description first; the leftover band was shorter than icon_size, so
+        # the checkbox centered there painted through the top border and over
+        # the teaser. Cap the below-band height so icon+label keep what they
+        # need (icon and label share a row horizontally; they stack vertically).
+        label_needed = len(lines) * line_height if self._has_visible_label() else 0
+        if self.layout == "vertical":
+            icon_text_gap = 4 if self._has_visible_label() else 0
+            min_icon_label = min(
+                content_height,
+                self.icon_size + icon_text_gap + label_needed,
+            )
+        else:
+            min_icon_label = min(
+                content_height,
+                max(self.icon_size, label_needed),
+            )
+        max_below = max(0, content_height - min_icon_label)
+        if state_footer:
+            footer_height = min(footer_height, max_below)
+            description_lines = []
+            description_height = 0
+        elif description_lines:
+            desc_gap = 4
+            max_lines = (
+                max(0, (max_below - desc_gap) // description_line_height)
+                if max_below > desc_gap
+                else 0
+            )
+            description_lines = description_lines[:max_lines]
+            description_height = (
+                len(description_lines) * description_line_height + desc_gap
+                if description_lines
+                else 0
+            )
+
         # Reduce content height for icon+label if a description/footer is present
         icon_label_height = content_height - description_height - footer_height
         
@@ -487,27 +524,32 @@ class IconButtonWidget(Widget):
         whitespace-only label skips the text slot so the icon is centered in
         the cell (the half-width Positions/Settings pair).
         """
+        # Never draw larger than the band we were given; a short cell (or a
+        # description that still leaves less than icon_size) must shrink the
+        # glyph rather than paint through the border.
+        draw_size = min(self.icon_size, max(1, content_height))
+
         if not self._has_visible_label():
             icon_x = content_left + content_width // 2
             icon_y = content_top + content_height // 2
-            self._draw_main_icon(draw, icon_x, icon_y, self.icon_size, self.selected)
+            self._draw_main_icon(draw, icon_x, icon_y, draw_size, self.selected)
             return
 
         icon_text_gap = 4
-        text_area_height = max(self.font_size + 2, content_height - self.icon_size - icon_text_gap)
+        text_area_height = max(self.font_size + 2, content_height - draw_size - icon_text_gap)
         text_widget = self._get_cached_text_widget(
             content_width, True, height=text_area_height, overflow=Overflow.FIT
         )
         text_widget.set_text(self.label)
         used = text_widget.used_height()
-        total_content = self.icon_size + icon_text_gap + used
+        total_content = draw_size + icon_text_gap + used
         start_y = content_top + (content_height - total_content) // 2
         
         icon_x = content_left + content_width // 2
-        icon_y = start_y + self.icon_size // 2
-        self._draw_main_icon(draw, icon_x, icon_y, self.icon_size, self.selected)
+        icon_y = start_y + draw_size // 2
+        self._draw_main_icon(draw, icon_x, icon_y, draw_size, self.selected)
         
-        text_start_y = start_y + self.icon_size + icon_text_gap
+        text_start_y = start_y + draw_size + icon_text_gap
         text_widget.draw_on(sprite, content_left, text_start_y, text_color=text_color)
     
     def _render_horizontal_layout(self, sprite: Image.Image, draw: ImageDraw.Draw,
@@ -530,6 +572,9 @@ class IconButtonWidget(Widget):
             line_height: Height of each text line
             text_color: Color for text (0 or 255)
         """
+        # Match trailing_icon: never draw larger than the icon+label band.
+        draw_size = min(self.icon_size, max(1, content_height))
+
         if not self._has_visible_label():
             content_left = inside_left + self.padding
             content_width = self.width - 2 * (
@@ -537,24 +582,24 @@ class IconButtonWidget(Widget):
             )
             icon_x = content_left + content_width // 2
             icon_y = content_top + content_height // 2
-            self._draw_main_icon(draw, icon_x, icon_y, self.icon_size, self.selected)
+            self._draw_main_icon(draw, icon_x, icon_y, draw_size, self.selected)
             return
 
         # Draw icon on the left, centered vertically in content area
         icon_left = inside_left + self.icon_margin
-        icon_x = icon_left + self.icon_size // 2
+        icon_x = icon_left + draw_size // 2
         # Center icon vertically in content area
         icon_y = content_top + content_height // 2
-        self._draw_main_icon(draw, icon_x, icon_y, self.icon_size, self.selected)
+        self._draw_main_icon(draw, icon_x, icon_y, draw_size, self.selected)
         
         # Icon right edge (including icon_margin on right side)
-        icon_right = icon_left + self.icon_size + self.icon_margin
+        icon_right = icon_left + draw_size + self.icon_margin
         
         # Draw an optional trailing icon (e.g. radio indicator) at the right edge
         # and reserve space for it so text does not overlap.
         trailing_reserved = 0
         if self.trailing_icon_name:
-            trailing_size = min(self.icon_size, content_height)
+            trailing_size = min(draw_size, content_height)
             trailing_cx = (self.width - self.margin - self.border_width
                            - self.padding - self.icon_margin - trailing_size // 2)
             trailing_cy = content_top + content_height // 2
@@ -2279,10 +2324,10 @@ class IconButtonWidget(Widget):
             checked: If True, draw checkmark inside the box
         """
         s = size / 36.0
-        line_width = max(2, int(2 * s))
-        
-        # Box dimensions
-        box_half = int(12 * s)
+        # Box stays inside the icon slot. Cap stroke so a short cell (engine
+        # list with a teaser) cannot push the outline past size/2 of center.
+        box_half = max(1, int(12 * s))
+        line_width = max(1, min(int(2 * s) if s >= 1 else 1, box_half))
         left = x - box_half
         top = y - box_half
         right = x + box_half
