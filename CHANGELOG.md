@@ -1520,7 +1520,10 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   ``cf-mitigated: challenge``) that berserk cannot pass, so verification
   never reached Lichess and the UI said to check the token. That case is
   now ``host_blocked`` with copy that the server blocked the board and
-  the token was not checked (try lichess.org, or retry later).
+  the token was not checked (try lichess.org, or retry later). Detection
+  uses only the ``cf-mitigated: challenge`` header Cloudflare documents for
+  Challenge Pages, not HTML or ``challenges.cloudflare.com`` substrings that
+  change with the interstitial.
 
 - **Lichess Elo on the e-paper clock no longer sits truncated beside the
   username**: ratings were packed into the PlayersState name as

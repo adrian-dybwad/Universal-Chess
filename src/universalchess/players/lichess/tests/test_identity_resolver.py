@@ -17,6 +17,7 @@ import pytest
 
 from universalchess.players.lichess.lobby import (
     get_lichess_connection,
+    is_cloudflare_challenge,
     resolve_lichess_identity,
 )
 
@@ -104,6 +105,38 @@ def test_empty_username_is_auth_failed(fake_berserk):
     result = resolve_lichess_identity("lip_valid", host_id="org")
     assert result.error == "auth_failed"
     assert result.identity == ""
+
+
+def test_cloudflare_challenge_is_detected_from_cf_mitigated_header_only():
+    """Challenge detection must use Cloudflare's header, not HTML/URL substrings.
+
+    Why: Cloudflare documents ``cf-mitigated: challenge`` as the signal for
+    every Challenge Page type. Scraping ``Just a moment`` or
+    ``challenges.cloudflare.com`` from the body is brittle (copy and script
+    URLs change) and trips incomplete-URL-substring CodeQL. How a regression
+    manifests: a header-only challenge is missed, or HTML that merely mentions
+    Cloudflare without the header is treated as a challenge.
+    """
+    class _HeaderOnly:
+        headers = {"cf-mitigated": "challenge", "content-type": "application/json"}
+        text = ""
+
+    class _BodyOnly:
+        headers = {"content-type": "text/html; charset=UTF-8", "server": "cloudflare"}
+        text = (
+            "<!DOCTYPE html><title>Just a moment...</title>"
+            "<script src=\"https://challenges.cloudflare.com/turnstile/v0/api.js\"></script>"
+        )
+
+    class _WithHeader(Exception):
+        response = _HeaderOnly()
+
+    class _WithoutHeader(Exception):
+        response = _BodyOnly()
+
+    assert is_cloudflare_challenge(_WithHeader()) is True
+    assert is_cloudflare_challenge(_WithoutHeader()) is False
+    assert is_cloudflare_challenge(RuntimeError("no response")) is False
 
 
 def test_cloudflare_challenge_is_host_blocked_not_auth_failed(fake_berserk):

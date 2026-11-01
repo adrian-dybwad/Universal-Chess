@@ -14,28 +14,24 @@ _MISSING_SCOPE = re.compile(r"Missing scope:\s*([a-z0-9:_-]+)", re.IGNORECASE)
 
 
 def is_cloudflare_challenge(exc: BaseException) -> bool:
-    """True when Lichess (or its CDN) returned a Cloudflare managed challenge.
+    """True when Lichess (or its CDN) returned a Cloudflare Challenge Page.
 
     A JavaScript challenge cannot be solved by berserk/requests, so the token
     was never checked: ``lichess.dev`` currently answers ``GET /api/account``
-    with HTML ``Just a moment…`` and ``cf-mitigated: challenge`` instead of a
-    JSON 401. Treating that as ``auth_failed`` told the user to re-check a
-    token that never reached the API.
+    with a Challenge Page instead of a JSON 401. Treating that as
+    ``auth_failed`` told the user to re-check a token that never reached the
+    API.
+
+    Detection uses Cloudflare's documented signal only: the response header
+    ``cf-mitigated: challenge`` (set for every Challenge Page type). HTML body
+    fingerprints (``Just a moment``, script hostnames) change and are not the
+    supported check.
     """
     response = getattr(exc, "response", None)
     if response is None:
         return False
     headers = getattr(response, "headers", None) or {}
-    if str(headers.get("cf-mitigated", "")).lower() == "challenge":
-        return True
-    content_type = str(headers.get("content-type", "")).lower()
-    if "text/html" not in content_type:
-        return False
-    try:
-        body = (response.text or "")[:400].lower()
-    except Exception:
-        return False
-    return "just a moment" in body or "challenges.cloudflare.com" in body
+    return str(headers.get("cf-mitigated", "")).lower() == "challenge"
 
 
 def _row(node_id: str, key: str) -> str:
