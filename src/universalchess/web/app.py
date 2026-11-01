@@ -3821,8 +3821,9 @@ def api_system_info():
     a partial import is not launchable.
 
     ``centaur_needs_epaper_recapture`` is true when that install is complete but
-    ``settings/epaper.info`` is missing -- original DGT then dies with Invalid
-    epaper definition file. The Original Centaur tab shows recapture steps.
+    ``settings/epaper.info`` is missing -- some launches then fail with Invalid
+    epaper definition file (others, notably Translate Mode, may still run). The
+    Original Centaur tab shows a non-fatal recapture notice.
 
     ``has_wifi`` / ``has_bluetooth`` report which radios the board physically has,
     read from the same module that gates the on-board Connectivity rows, so a
@@ -4146,6 +4147,30 @@ def api_system_event_log():
             limit = 200
         limit = max(1, min(1000, limit))
         return jsonify({"events": read_events(limit=limit)})
+    except Exception as e:
+        return _internal_error(e)
+
+
+@app.route("/api/system/centaur-log", methods=["GET"])
+@requires_auth
+def api_system_centaur_log():
+    """Return the Original Centaur launch log for the Settings viewer.
+
+    Auth-gated like the Event Log and debug-log download: the capture is
+    Centaur's stdout/stderr and can name engines, paths, and board state.
+    Serves the tail of ``centaur.log`` beside the structured event log (the same
+    file the handoff writes). Returns JSON ``{"text": "...", "truncated": bool}``.
+    404 when no handoff has created the file yet so the UI can show an empty
+    state rather than a blank dump.
+    """
+    try:
+        from universalchess.services.event_log import read_centaur_log_tail
+
+        try:
+            text, truncated = read_centaur_log_tail()
+        except FileNotFoundError:
+            return jsonify({"success": False, "error": "No Centaur log found"}), 404
+        return jsonify({"text": text, "truncated": truncated})
     except Exception as e:
         return _internal_error(e)
 

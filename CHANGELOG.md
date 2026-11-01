@@ -15,6 +15,16 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Centaur launch log in Original Centaur Troubleshooting**: Centaur's
+  stdout/stderr were captured to `centaur.log` and only named from the
+  Event Log ("See centaur.log for details"), so a board stuck on the
+  handoff Loading splash needed SSH to read the crash text. Settings ->
+  Original Centaur -> Troubleshooting now shows that log (selectable for
+  copy or screenshot), with Refresh, an empty state before the first
+  launch, and a note when only the tail of a large file is served. The
+  System Event Log and this viewer share one auth/refresh shell
+  (`LogViewerShell`).
+
 - **Seven-segment digits on the e-paper chess clock**: Remaining time
   used the proportional TrueType face, so clock numbers looked unlike a
   physical chess clock and shifted as digits changed. Digit and colon
@@ -1477,6 +1487,17 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
   was also a stray way to power the board off.
 
 ### Fixed
+
+- **Original Centaur no longer says it cannot start when only
+  ``settings/epaper.info`` is missing**: that file comes from the DGT SD
+  data partition, and some launches do fail with Invalid epaper definition
+  file without it, but Translate Mode (and some Direct Mode boards) can
+  still run. The Settings notice is now an incomplete-settings warning that
+  says Centaur may still run, the import Event Log matches that wording, and
+  only a handoff that actually exits with Invalid epaper uses the stronger
+  exit diagnosis. The notice is no longer a red alert that implies Switch
+  will not work.
+
 
 - **Engine-list checkboxes painted through the button border and over the
   teaser**: each Chess Engines row is a horizontal icon button with a

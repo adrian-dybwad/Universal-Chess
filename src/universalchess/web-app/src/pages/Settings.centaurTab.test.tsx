@@ -385,49 +385,50 @@ describe('Original Centaur tab', () => {
   });
 
   it('shows recapture steps when settings/epaper.info is missing', async () => {
-    // Why: original dgt_epaper.createEPaper dies with Invalid epaper definition
-    // file when that file is missing, and the Event Log warns the same. The
-    // tab used to offer only Switch to Original Centaur, which bounced back
-    // to Universal Chess. The recapture card must name the missing file, say
-    // to recapture the original SD with the current script, and open the
-    // importer so the user does not have to find Re-import from SD.
+    // Why: a missing data-partition settings file leaves the install incomplete.
+    // createEPaper can fail some launches, but Translate Mode often still runs,
+    // so the card must not say "cannot start". It must name the file, say
+    // Centaur may still run, point at recapture, and open the importer.
 
-    // How the regression manifests: the alert is absent, the download buttons
-    // stay hidden behind Re-import, or a working install (flag false) still
-    // shows the card.
+    // How the regression manifests: the notice is absent, "cannot start" returns,
+    // Switch is removed, download buttons stay hidden behind Re-import, or a
+    // working install (flag false) still shows the card.
     installCentaurFetchMock({ centaurAvailable: true, needsEpaperRecapture: true });
     renderCentaurTab();
 
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Original Centaur cannot start');
-    expect(alert).toHaveTextContent('settings/epaper.info');
-    expect(alert).toHaveTextContent(/recapture that card/i);
-    expect(alert).toHaveTextContent(/older app-only/i);
+    const notice = await screen.findByRole('status');
+    expect(notice).toHaveTextContent('Original Centaur settings are incomplete');
+    expect(notice).toHaveTextContent('settings/epaper.info');
+    expect(notice).toHaveTextContent(/may still run/i);
+    expect(notice).toHaveTextContent(/recapture that card/i);
+    expect(notice).toHaveTextContent(/older app-only/i);
+    expect(screen.queryByText('Original Centaur cannot start')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Download script \(macOS\/Linux\)/i })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Switch to Original Centaur' })).toBeInTheDocument();
   });
 
   it('does not show the recapture card on a working Original Centaur install', async () => {
-    // Why: boards that already launch must not be told to recapture. Manifests
-    // as Original Centaur cannot start appearing whenever Centaur is installed.
+    // Why: boards that already have epaper.info must not be told to recapture.
+    // Manifests as the incomplete-settings notice whenever Centaur is installed.
     installCentaurFetchMock({ centaurAvailable: true, needsEpaperRecapture: false });
     renderCentaurTab();
 
     await screen.findByRole('button', { name: 'Switch to Original Centaur' });
+    expect(screen.queryByText('Original Centaur settings are incomplete')).not.toBeInTheDocument();
     expect(screen.queryByText('Original Centaur cannot start')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Download script \(macOS\/Linux\)/i })).not.toBeInTheDocument();
   });
 
   it('does not show the recapture card before Centaur is imported', async () => {
     // Why: the not-installed importer is the first import, not a recapture.
-    // Manifests as Invalid-epaper recapture copy on a board that has never
-    // imported Centaur.
+    // Manifests as incomplete-settings copy on a board that has never imported.
     installCentaurFetchMock({ centaurAvailable: false, needsEpaperRecapture: false });
     renderCentaurTab();
 
     expect(
       await screen.findByText(/The original DGT Centaur software is not installed yet/i)
     ).toBeInTheDocument();
+    expect(screen.queryByText('Original Centaur settings are incomplete')).not.toBeInTheDocument();
     expect(screen.queryByText('Original Centaur cannot start')).not.toBeInTheDocument();
   });
 

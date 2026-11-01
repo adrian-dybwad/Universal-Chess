@@ -732,6 +732,22 @@
   border-radius: var(--radius-md);
 }
 
+/* Original Centaur launch log (Troubleshooting). Plain text from centaur.log so
+   operators can select, copy, or screenshot crash output. Same height bound as
+   the Event Log list so the card stays usable on a phone. */
+.centaur-launch-log {
+  max-height: 24rem;
+  overflow: auto;
+  margin: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .event-log-row {
   display: flex;
   align-items: baseline;

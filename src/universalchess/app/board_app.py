@@ -5978,10 +5978,10 @@ def _run_centaur_binary(cmd, *, cwd, env=None):
     """
     import datetime
     import subprocess  # nosec B404 - fixed centaur command, no shell, no user input
-    from universalchess.services.event_log import event_log_path, log_event
+    from universalchess.services.event_log import centaur_log_path, log_event
     from universalchess.services.power import classify_centaur_exit
 
-    centaur_log = event_log_path().parent / "centaur.log"
+    centaur_log = centaur_log_path()
     log.info("[centaur] launching %s (cwd=%s); output -> %s", cmd, cwd, centaur_log)
     try:
         centaur_log.parent.mkdir(parents=True, exist_ok=True)

@@ -33,7 +33,7 @@ from universalchess.services.centaur_import import (
 from universalchess.services.centaur_import.events import EVENT_CATEGORY
 from universalchess.services.centaur_import.installer import (
     ARMHF_SETUP_HELPER,
-    EPAPER_RECAPTURE_EVENT,
+    EPAPER_SETTINGS_INCOMPLETE_EVENT,
     MOUNT_HELPER,
     _gunzip_to,
     ensure_armhf_support,
@@ -1177,7 +1177,7 @@ def test_successful_import_records_each_stage_and_a_timed_completion(tmp_path, r
     # A root-only capture (this fixture) has no settings/epaper.info. Original
     # DGT dies on launch without that file, so the import must record it.
     assert oldest_first[8]["level"] == "warning"
-    assert oldest_first[8]["message"] == EPAPER_RECAPTURE_EVENT
+    assert oldest_first[8]["message"] == EPAPER_SETTINGS_INCOMPLETE_EVENT
     assert oldest_first[8]["category"] == EVENT_CATEGORY
 
     completion = events[0]

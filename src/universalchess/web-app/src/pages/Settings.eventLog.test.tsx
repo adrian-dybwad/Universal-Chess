@@ -63,7 +63,7 @@ const importEvents = [
     level: 'warning',
     category: 'centaur_import',
     message:
-      'Original Centaur cannot start: Invalid epaper definition file. settings/epaper.info is missing.',
+      'Original Centaur exited with Invalid epaper definition file (settings/epaper.info is missing).',
   },
 ];
 

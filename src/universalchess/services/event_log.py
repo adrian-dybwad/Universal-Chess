@@ -70,6 +70,49 @@ def event_log_path() -> Path:
     return Path(os.environ.get(_ENV_PATH) or _DEFAULT_PATH)
 
 
+# Append-only capture of Original Centaur stdout/stderr (board_app handoff).
+# Lives beside the structured event log so both share one log directory and the
+# Settings Centaur viewer can find the same file the launcher writes.
+_CENTAUR_LOG_NAME = "centaur.log"
+
+# Tail budget for GET /api/system/centaur-log: enough for several launch dumps
+# without shipping a multi-megabyte session into the browser on a Pi.
+CENTAUR_LOG_TAIL_BYTES = 256 * 1024
+
+
+def centaur_log_path() -> Path:
+    """Resolve the Original Centaur launch-log path beside the event log."""
+    return event_log_path().parent / _CENTAUR_LOG_NAME
+
+
+def read_centaur_log_tail(
+    *, max_bytes: int = CENTAUR_LOG_TAIL_BYTES, path: Optional[Path] = None
+) -> tuple[str, bool]:
+    """Return ``(text, truncated)`` for the Centaur launch log.
+
+    Reads at most the last ``max_bytes`` of the file so a long-lived Centaur
+    session cannot flood the Settings viewer. When the file is larger, the first
+    partial line of the tail window is dropped so the UI does not start mid-line,
+    and ``truncated`` is True. Raises ``FileNotFoundError`` when the log does not
+    exist yet (no handoff has written it).
+    """
+    target = path if path is not None else centaur_log_path()
+    if not target.is_file():
+        raise FileNotFoundError(str(target))
+    size = target.stat().st_size
+    truncated = size > max_bytes
+    with open(target, "rb") as handle:
+        if truncated:
+            handle.seek(-max_bytes, os.SEEK_END)
+            raw = handle.read()
+            newline = raw.find(b"\n")
+            if 0 <= newline < len(raw) - 1:
+                raw = raw[newline + 1 :]
+        else:
+            raw = handle.read()
+    return raw.decode("utf-8", errors="replace"), truncated
+
+
 def _normalize_level(level: str) -> str:
     """Coerce to a known severity; unknown/none degrades to ``info``."""
     lowered = (level or "").lower()

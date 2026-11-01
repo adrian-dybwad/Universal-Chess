@@ -13,6 +13,12 @@ import { EngineDefaultsCard } from '../components/EngineDefaultsCard';
 import { BoardUnreachableCard } from '../components/BoardUnreachableCard';
 import type { FieldValue } from '../components/CatalogField';
 import { useLoginRetry } from '../components/useLoginRetry';
+import {
+  LogViewerShell,
+  type LogFetchResult,
+  type LogViewerFetchContext,
+  type LogViewerShellLabels,
+} from '../components/LogViewerShell';
 import { useRadioCapability } from '../hooks/useRadioCapability';
 import { MenuIcon } from '../components/MenuIcon';
 import { DeviceClockCard } from '../components/DeviceClockCard';
@@ -3983,116 +3989,130 @@ function formatEventTimestamp(ts: string): string {
   return formatDateTime(ts) || ts;
 }
 
+function useSharedLogViewerLabels(
+  title: string,
+  intro: string,
+  none: string,
+  loadFailed: string,
+): LogViewerShellLabels {
+  const { t } = useTranslation();
+  return {
+    title,
+    intro,
+    none,
+    loadFailed,
+    errorLabel: t('settingsPage.eventLog.errorLabel'),
+    refresh: t('settingsPage.eventLog.refresh'),
+    refreshing: t('settingsPage.eventLog.refreshing'),
+    networkError: t('settingsPage.eventLog.networkError'),
+  };
+}
+
 // System -> Event Log viewer. Shows the persistent record of important events
 // (engine installs and how long they took, BlueZ self-heal, updates, reboots)
-// from /api/system/event-log. Auth-gated like the debug-log download; a 401
-// opens the shared login dialog and retries, matching DebugCard.
+// from /api/system/event-log. Auth chrome lives in LogViewerShell.
 function LogViewer() {
   const { t } = useTranslation();
-  const [events, setEvents] = useState<EventLogEntry[]>([]);
-  // Starts true because the mount effect loads immediately. loadEvents does NOT
-  // set loading synchronously (every state update happens after the awaited
-  // fetch) so the on-mount effect triggers no synchronous render cascade -- the
-  // pattern the page's main loader uses, enforced by react-hooks/set-state-in-effect.
-  // The Refresh button flips it back to true from its (allowed) event handler.
-  const [loading, setLoading] = useState(true);
-  const [loaded, setLoaded] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const { requireLogin, loginDialog } = useLoginRetry();
+  const labels = useSharedLogViewerLabels(
+    t('settingsPage.eventLog.title'),
+    t('settingsPage.eventLog.intro'),
+    t('settingsPage.eventLog.none'),
+    t('settingsPage.eventLog.loadFailed'),
+  );
 
-  const loadEvents = useCallback(async () => {
-    // Named inner closure so the load can queue itself as its own retry, which
-    // referencing loadEvents from inside its own useCallback cannot do.
-    const submit = async (): Promise<void> => {
-      try {
-        const response = await apiFetch('/api/system/event-log?limit=200', { requiresAuth: true });
-        if (requireLogin(response, submit)) return;
-        if (!response.ok) {
-          setError(t('settingsPage.eventLog.loadFailed'));
-          return;
-        }
-        const data = await response.json().catch(() => ({ events: [] }));
-        setError(null);
-        setEvents(Array.isArray(data.events) ? data.events : []);
-        setLoaded(true);
-      } catch {
-        setError(t('settingsPage.eventLog.networkError'));
-      } finally {
-        setLoading(false);
-      }
-    };
-    await submit();
-  }, [requireLogin, t]);
-
-  const handleRefresh = () => {
-    setLoading(true);
-    void loadEvents();
-  };
-
-  // Wrapped in an inline async function (the same shape the page's main loader
-  // uses) so the load is an async boundary: every setState inside loadEvents
-  // runs after the awaited fetch, not synchronously in the effect tick.
-  useEffect(() => {
-    void (async () => {
-      await loadEvents();
-    })();
-  }, [loadEvents]);
+  const fetchLog = useCallback(
+    async ({ requireLogin, retryLoad }: LogViewerFetchContext): Promise<LogFetchResult<EventLogEntry[]>> => {
+      const response = await apiFetch('/api/system/event-log?limit=200', { requiresAuth: true });
+      if (requireLogin(response, retryLoad)) return { kind: 'pending' };
+      if (!response.ok) return { kind: 'error', message: labels.loadFailed };
+      const data = await response.json().catch(() => ({ events: [] }));
+      const events = Array.isArray(data.events) ? data.events as EventLogEntry[] : [];
+      return events.length === 0 ? { kind: 'empty' } : { kind: 'ok', data: events };
+    },
+    [labels.loadFailed],
+  );
 
   return (
-    <>
-      {loginDialog}
-      <section>
-        <h4 className="settings-group-title">{t('settingsPage.eventLog.title')}</h4>
-        <p className="text-muted mb-4">
-          {t('settingsPage.eventLog.intro')}
-        </p>
-        {error && (
-          <Card variant="danger" className="mb-4">
-            <strong>{t('settingsPage.eventLog.errorLabel')}</strong> {error}
-          </Card>
-        )}
-        <div className="mb-4">
-          <Button variant="secondary" onClick={handleRefresh} disabled={loading}>
-            {loading ? t('settingsPage.eventLog.refreshing') : t('settingsPage.eventLog.refresh')}
-          </Button>
+    <LogViewerShell labels={labels} fetchLog={fetchLog} isEmpty={(events) => events.length === 0}>
+      {(events) => (
+        <div className="event-log-list">
+          {events.map((event) => {
+            const duration = formatEventDuration(event.duration_ms);
+            // Key from the record's content (never the array index): the log is
+            // append-only and replaced wholesale on refresh, so a content key
+            // is stable across reorders. Rows hold no state, so the only cost of
+            // a (astronomically rare) same-second duplicate is a dev warning.
+            const key = `${event.ts}|${event.level}|${event.category}|${event.duration_ms ?? ''}|${event.message}`;
+            return (
+              <div key={key} className="event-log-row">
+                <span className="event-log-time">{formatEventTimestamp(event.ts)}</span>
+                <Badge variant={eventLevelVariant(event.level)}>
+                  {EVENT_CATEGORY_LABEL_KEYS[event.category] ? t(EVENT_CATEGORY_LABEL_KEYS[event.category]) : event.category}
+                </Badge>
+                <span className="event-log-message">
+                  {event.message}
+                  {eventLogNeedsEpaperRecapture(event.message) && (
+                    <>
+                      {' '}
+                      <Link to="/settings/centaur">
+                        {t('settingsPage.systemActions.epaperRecaptureEventLogCta')}
+                      </Link>
+                    </>
+                  )}
+                </span>
+                {duration && <span className="event-log-duration">{duration}</span>}
+              </div>
+            );
+          })}
         </div>
-        {loaded && events.length === 0 && !error && (
-          <p className="text-muted">{t('settingsPage.eventLog.none')}</p>
-        )}
-        {events.length > 0 && (
-          <div className="event-log-list">
-            {events.map((event) => {
-              const duration = formatEventDuration(event.duration_ms);
-              // Key from the record's content (never the array index): the log is
-              // append-only and replaced wholesale on refresh, so a content key
-              // is stable across reorders. Rows hold no state, so the only cost of
-              // a (astronomically rare) same-second duplicate is a dev warning.
-              const key = `${event.ts}|${event.level}|${event.category}|${event.duration_ms ?? ''}|${event.message}`;
-              return (
-                <div key={key} className="event-log-row">
-                  <span className="event-log-time">{formatEventTimestamp(event.ts)}</span>
-                  <Badge variant={eventLevelVariant(event.level)}>
-                    {EVENT_CATEGORY_LABEL_KEYS[event.category] ? t(EVENT_CATEGORY_LABEL_KEYS[event.category]) : event.category}
-                  </Badge>
-                  <span className="event-log-message">
-                    {event.message}
-                    {eventLogNeedsEpaperRecapture(event.message) && (
-                      <>
-                        {' '}
-                        <Link to="/settings/centaur">
-                          {t('settingsPage.systemActions.epaperRecaptureEventLogCta')}
-                        </Link>
-                      </>
-                    )}
-                  </span>
-                  {duration && <span className="event-log-duration">{duration}</span>}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-    </>
+      )}
+    </LogViewerShell>
+  );
+}
+
+type CentaurLogPayload = { text: string; truncated: boolean };
+
+// Original Centaur -> Troubleshooting: selectable dump of centaur.log so a user
+// stuck on the handoff Loading splash can copy or screenshot the crash text
+// without SSH. Shares LogViewerShell with the System Event Log.
+function CentaurLaunchLogViewer() {
+  const { t } = useTranslation();
+  const labels = useSharedLogViewerLabels(
+    t('settingsPage.systemActions.centaurLogTitle'),
+    t('settingsPage.systemActions.centaurLogIntro'),
+    t('settingsPage.systemActions.centaurLogNone'),
+    t('settingsPage.systemActions.centaurLogLoadFailed'),
+  );
+
+  const fetchLog = useCallback(
+    async ({ requireLogin, retryLoad }: LogViewerFetchContext): Promise<LogFetchResult<CentaurLogPayload>> => {
+      const response = await apiFetch('/api/system/centaur-log', { requiresAuth: true });
+      if (requireLogin(response, retryLoad)) return { kind: 'pending' };
+      if (response.status === 404) return { kind: 'empty' };
+      if (!response.ok) return { kind: 'error', message: labels.loadFailed };
+      const data = await response.json().catch(() => null);
+      if (!data || typeof data.text !== 'string') {
+        return { kind: 'error', message: labels.loadFailed };
+      }
+      return {
+        kind: 'ok',
+        data: { text: data.text, truncated: Boolean(data.truncated) },
+      };
+    },
+    [labels.loadFailed],
+  );
+
+  return (
+    <LogViewerShell labels={labels} fetchLog={fetchLog}>
+      {(payload) => (
+        <>
+          {payload.truncated && (
+            <p className="text-muted mb-2">{t('settingsPage.systemActions.centaurLogTruncated')}</p>
+          )}
+          <pre className="centaur-launch-log" tabIndex={0}>{payload.text}</pre>
+        </>
+      )}
+    </LogViewerShell>
   );
 }
 
@@ -5421,7 +5441,9 @@ function CentaurSettings() {
         {centaurAvailable ? (
           <>
             {needsEpaperRecapture && (
-              <Card variant="danger" className="mb-4" role="alert">
+              // Incomplete SD import (missing epaper.info): notice, not a hard
+              // failure -- Translate Mode often still runs. Keep Switch enabled.
+              <Card variant="primary" className="mb-4" role="status">
                 <h4 className="settings-group-title">{t('settingsPage.systemActions.epaperRecaptureTitle')}</h4>
                 <p className="mb-0">{t('settingsPage.systemActions.epaperRecaptureBody')}</p>
               </Card>
@@ -5550,6 +5572,7 @@ function CentaurSettings() {
           always on the tab (not gated on the importer) so a Windows user who
           already downloaded the script can still find the PowerShell remedies. */}
       <CollapsibleCard title={t('settingsPage.systemActions.troubleshootingTitle')}>
+        <CentaurLaunchLogViewer />
         <h4 className="settings-group-title">{t('settingsPage.systemActions.troubleshootingWindowsHeading')}</h4>
         <div className="centaur-troubleshoot">
           <p>

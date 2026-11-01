@@ -70,7 +70,8 @@ def classify_centaur_exit(returncode: int, *, log_text: Optional[str] = None) ->
     after the launch marker). Original DGT's ``createEPaper`` writes
     ``Invalid epaper definition file`` there when ``settings/epaper.info`` is
     missing; that diagnosis replaces the generic code-1 line so the Event Log
-    names the recapture.
+    records that this handoff failed and names the recapture (distinct from
+    the softer incomplete-settings import warning).
 
     Returns ``("info", ...)`` for a clean exit (0) or an expected termination
     signal (the return/exit chord, shutdown), and ``("error", ...)`` for a crash

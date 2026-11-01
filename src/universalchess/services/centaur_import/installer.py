@@ -105,16 +105,25 @@ _EPAPER_INFO_RELPATH = ("settings", "epaper.info")
 # as SystemError) when settings/epaper.info is missing or unreadable.
 INVALID_EPAPER_DEFINITION = "Invalid epaper definition file"
 
-# Event Log / UI copy for a board that imported without the data partition.
-# Author-written: names the missing file, the recapture, and why re-importing
-# an older app-only image cannot fix it. Shared by the import warning and the
-# launch-exit classifier so both Event Log rows agree.
+# Event Log copy when an import finished without the data-partition settings
+# file. Presence alone must not say "cannot start": Translate Mode (and some
+# Direct Mode boards) can still run; createEPaper only fails some launches.
+# Names the file, the risk, the recapture, and why re-importing an older
+# app-only image cannot fix it.
+EPAPER_SETTINGS_INCOMPLETE_EVENT = (
+    "Original Centaur is missing settings/epaper.info from the DGT SD data "
+    "partition. Some launches can fail with Invalid epaper definition file; "
+    "recapture the original SD with the current image script and import that "
+    "new image. Re-importing an older app-only image cannot create the file."
+)
+
+# Event Log copy when a handoff actually exited with Invalid epaper definition
+# file (classify_centaur_exit). That launch did fail; same recapture remedy.
 EPAPER_RECAPTURE_EVENT = (
-    "Original Centaur cannot start: Invalid epaper definition file. "
-    "settings/epaper.info is missing. That file lives on the original DGT SD "
-    "data partition. Recapture the original SD with the current image script "
-    "and import that new image. Re-importing an older app-only image cannot "
-    "create the file."
+    "Original Centaur exited with Invalid epaper definition file "
+    "(settings/epaper.info is missing). Recapture the original SD with the "
+    "current image script and import that new image. Re-importing an older "
+    "app-only image cannot create the file."
 )
 
 
@@ -252,10 +261,12 @@ def needs_epaper_settings_recapture(app_dir=CENTAUR_HOME) -> bool:
     """True when Original Centaur is installed but ``settings/epaper.info`` is absent.
 
     Official DGT's ``dgt_epaper.createEPaper`` opens that file relative to cwd
-    and treats a missing file as ``SystemError: Invalid epaper definition file``.
-    The import warns in the Event Log; the Original Centaur tab uses this flag
-    to show recapture steps. An incomplete tree (no executable/engines/fonts)
-    is the not-installed importer, not a recapture.
+    and can raise ``SystemError: Invalid epaper definition file`` when it is
+    missing. The install is incomplete either way: some launches still succeed
+    (notably Translate Mode on a UC-driven panel). The import warns in the
+    Event Log; the Original Centaur tab uses this flag for a non-fatal
+    recapture notice, not a hard "cannot start". An incomplete tree (no
+    executable/engines/fonts) is the not-installed importer, not a recapture.
 
     ``app_dir`` is injected in tests; production uses ``CENTAUR_HOME``.
     """
@@ -627,10 +638,10 @@ def install_from_image(
     with _step("Create factory marker", FINALIZE_FAILED_MSG):
         ensure_factory_marker(dest)
     if not (dest / "settings" / "epaper.info").is_file():
-        # Original dgt_epaper.createEPaper treats a missing file as a fatal
-        # definition error. A root-only (legacy) capture never had the data
-        # partition, which is the usual reason this file is absent.
-        log_import_event(EPAPER_RECAPTURE_EVENT, level="warning")
+        # A root-only (legacy) capture never had the data partition, which is
+        # the usual reason this file is absent. Warn as incomplete settings --
+        # not "cannot start" -- because some launches still succeed without it.
+        log_import_event(EPAPER_SETTINGS_INCOMPLETE_EVENT, level="warning")
     file_count = sum(1 for p in dest.rglob("*") if p.is_file())
     # The completion record is the baseline a slow import is measured against and
     # the confirmation that the tree really was written; a failed import has no
