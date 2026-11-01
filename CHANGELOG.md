@@ -1496,6 +1496,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Web-app and analyzer advisories cleared**: the development lockfile
+  moves ``vite`` to 7.3.7 and ``vitest`` / ``@vitest/mocker`` to 4.1.12,
+  and overrides ``zod`` to 4.6.7 so Dependabot's open vite, vitest, and
+  zod findings close. ``requirements-dev.txt`` pins ``semgrep`` 1.183.0
+  (from 1.166.0), which clears the prior mcp/pyjwt findings pulled into
+  CI; remaining mcp/otel CVEs wait on a newer Semgrep release that
+  accepts those patches. These packages are build and analyze tools, not
+  the bundle the board serves.
+
 - **Claudia starts with the shared 16 MB Hash default**: Claudia advertises
   Hash min 32, so python-chess rejected the shared default and configure
   aborted. Spin values are now raised (or lowered) to each engine's

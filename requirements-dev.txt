@@ -26,7 +26,7 @@ bandit==1.9.4
 # Taint-aware static analysis. Provides the path-injection ("Uncontrolled data
 # used in a path expression") detection plus broad security rule packs. Rules
 # live in .semgrep/ and the registry packs referenced by scripts/analyze.sh.
-semgrep==1.166.0
+semgrep==1.183.0
 
 # Optional: run the tools as git hooks (see .pre-commit-config.yaml).
 pre-commit>=3.5
