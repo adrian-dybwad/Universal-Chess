@@ -30,7 +30,6 @@ log.debug(f"[protocol import] game: {(_t.time() - _s)*1000:.0f}ms"); _s = _t.tim
 # Import Player and Assistant managers
 from universalchess.players import PlayerManager
 from universalchess.managers.assistant import AssistantManager
-from universalchess.state.players import format_player_label
 log.debug(f"[protocol import] players/assistant managers: {(_t.time() - _s)*1000:.0f}ms"); _s = _t.time()
 
 import chess
@@ -222,6 +221,9 @@ class ProtocolManager:
                                black_player: str, black_rating: str):
         """Handle game info update from a remote player.
 
+        Names and ratings stay separate through GameManager / PlayersState so
+        the clock does not have to unpack ``alice(1500)``.
+
         Args:
             white_player: White player's username.
             white_rating: White player's rating.
@@ -229,9 +231,15 @@ class ProtocolManager:
             black_rating: Black player's rating.
         """
         if self.game_manager:
-            white_str = format_player_label(white_player, white_rating)
-            black_str = format_player_label(black_player, black_rating)
-            self.game_manager.set_game_info("", "", "", white_str, black_str)
+            self.game_manager.set_game_info(
+                "",
+                "",
+                "",
+                white_player,
+                black_player,
+                white_rating=white_rating,
+                black_rating=black_rating,
+            )
     
     # =========================================================================
     # App Connection Management

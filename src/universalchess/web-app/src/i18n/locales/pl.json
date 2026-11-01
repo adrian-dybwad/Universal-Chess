@@ -1248,6 +1248,7 @@
         "missing_field": "Wypełnij wszystkie wymagane pola.",
         "missing_identity": "Identyfikator konta jest wymagany.",
         "auth_failed": "Nie udało się zweryfikować konta. Sprawdź token i spróbuj ponownie.",
+        "host_blocked": "Ten serwer Lichess zablokował żądanie z planszy (wyzwanie Cloudflare). Token nie został sprawdzony. Spróbuj lichess.org albo później.",
         "no_token": "Token jest wymagany.",
         "no_berserk": "Klient Lichess jest niedostępny na szachownicy.",
         "unknown_type": "Nieznany typ konta.",

@@ -20,7 +20,6 @@ import chess
 from universalchess.board import board, centaur
 from universalchess.board.logging import log
 from universalchess.i18n import t
-from universalchess.state.players import format_player_label
 from ..base import Player, PlayerConfig, PlayerState, PlayerType
 
 
@@ -107,11 +106,6 @@ def _lichess_player_ids(info: dict) -> set:
         if value:
             ids.add(str(value).casefold())
     return ids
-
-
-def lichess_player_label(name: str, rating) -> str:
-    """Clock / LiveBoard label: ``alice(1500)``, or name alone when unrated."""
-    return format_player_label(name, rating)
 
 
 def lichess_side_is_white(color) -> bool:

@@ -1234,6 +1234,7 @@
         "missing_field": "Please fill in all required fields.",
         "missing_identity": "Account identifier is required.",
         "auth_failed": "Could not verify the account. Check the token and try again.",
+        "host_blocked": "That Lichess server blocked the board's request (Cloudflare challenge). The token was not checked. Try lichess.org, or try again later.",
         "no_token": "A token is required.",
         "no_berserk": "The Lichess client is unavailable on the board.",
         "unknown_type": "Unknown account type.",

@@ -1241,6 +1241,7 @@
         "missing_field": "Veuillez remplir tous les champs obligatoires.",
         "missing_identity": "L'identifiant du compte est obligatoire.",
         "auth_failed": "Impossible de vérifier le compte. Vérifiez le jeton et réessayez.",
+        "host_blocked": "Ce serveur Lichess a bloqué la requête du plateau (défi Cloudflare). Le jeton n’a pas été vérifié. Essayez lichess.org, ou réessayez plus tard.",
         "no_token": "Un jeton est requis.",
         "no_berserk": "Le client Lichess n'est pas disponible sur le plateau.",
         "unknown_type": "Type de compte inconnu.",

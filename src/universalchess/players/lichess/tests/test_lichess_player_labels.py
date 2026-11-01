@@ -20,12 +20,11 @@ from universalchess.players.human import HumanPlayer
 from universalchess.players.lichess.player import (
     LichessPlayer,
     lichess_player_display_name,
-    lichess_player_label,
     lichess_side_is_white,
 )
 from universalchess.players.lichess.session import LichessPlaySession
 from universalchess.players.manager import PlayerManager
-from universalchess.state.players import get_players_state, reset_players_state
+from universalchess.state.players import format_player_label, get_players_state, reset_players_state
 
 
 def _extract_and_connect(*, username, white, black, human_starts_white=True):
@@ -40,8 +39,7 @@ def _extract_and_connect(*, username, white, black, human_starts_white=True):
         manager = PlayerManager(remote, human)
     remote.set_game_info_callback(
         lambda w, wr, b, br: get_players_state().set_player_names(
-            lichess_player_label(w, wr),
-            lichess_player_label(b, br),
+            w, b, white_rating=wr, black_rating=br,
         )
     )
     session = LichessPlaySession.from_players(human, remote)
@@ -76,8 +74,10 @@ def test_names_survive_remap_when_account_is_white():
     )
     assert remote.player_is_white is True
     assert manager.white_player.name == "Human"
-    assert state.white_name == "alice(1500)"
-    assert state.black_name == "bob(1400)"
+    assert state.white_name == "alice"
+    assert state.black_name == "bob"
+    assert state.white_rating == "1500"
+    assert state.black_rating == "1400"
 
 
 def test_names_survive_remap_when_account_is_black():
@@ -92,8 +92,10 @@ def test_names_survive_remap_when_account_is_black():
     )
     assert remote.player_is_white is False
     assert manager.black_player.name == "Human"
-    assert state.white_name == "bob(1400)"
-    assert state.black_name == "alice(1500)"
+    assert state.white_name == "bob"
+    assert state.black_name == "alice"
+    assert state.white_rating == "1400"
+    assert state.black_rating == "1500"
 
 
 def test_colour_matches_username_case_insensitively():
@@ -121,8 +123,10 @@ def test_colour_matches_id_when_name_is_missing():
         black={"username": "bob", "rating": 1400},
     )
     assert remote.player_is_white is True
-    assert state.white_name == "alice(1500)"
-    assert state.black_name == "bob(1400)"
+    assert state.white_name == "alice"
+    assert state.black_name == "bob"
+    assert state.white_rating == "1500"
+    assert state.black_rating == "1400"
 
 
 def test_ai_opponent_has_a_label():
@@ -135,8 +139,10 @@ def test_ai_opponent_has_a_label():
         white={"name": "alice", "rating": 1500},
         black={"aiLevel": 8},
     )
-    assert state.white_name == "alice(1500)"
+    assert state.white_name == "alice"
+    assert state.white_rating == "1500"
     assert state.black_name == "AI 8"
+    assert state.black_rating == ""
 
 
 def test_lichess_player_display_name_prefers_name_then_username_then_id():
@@ -152,15 +158,15 @@ def test_lichess_player_display_name_prefers_name_then_username_then_id():
     assert lichess_player_display_name({}) == ""
 
 
-def test_lichess_player_label_omits_empty_rating():
-    """Unrated / AI must not show empty parentheses.
+def test_format_player_label_omits_empty_rating():
+    """LiveBoard's optional single-line join must not show empty parentheses.
 
-    How the regression manifests: the clock shows alice().
+    How the regression manifests: the SSE label is alice().
     """
-    assert lichess_player_label("alice", "1500") == "alice(1500)"
-    assert lichess_player_label("alice", "") == "alice"
-    assert lichess_player_label("alice", None) == "alice"
-    assert lichess_player_label("", "1500") == ""
+    assert format_player_label("alice", "1500") == "alice(1500)"
+    assert format_player_label("alice", "") == "alice"
+    assert format_player_label("alice", None) == "alice"
+    assert format_player_label("", "1500") == ""
 
 
 def test_lichess_side_is_white_accepts_enum_and_case():

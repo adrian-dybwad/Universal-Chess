@@ -1241,6 +1241,7 @@
         "missing_field": "Compila tutti i campi obbligatori.",
         "missing_identity": "L'identificatore dell'account è obbligatorio.",
         "auth_failed": "Impossibile verificare l'account. Controlla il token e riprova.",
+        "host_blocked": "Quel server Lichess ha bloccato la richiesta della scacchiera (sfida Cloudflare). Il token non è stato controllato. Prova lichess.org o riprova più tardi.",
         "no_token": "Serve un token.",
         "no_berserk": "Il client Lichess non è disponibile sulla scacchiera.",
         "unknown_type": "Tipo di account sconosciuto.",

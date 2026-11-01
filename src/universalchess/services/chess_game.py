@@ -21,6 +21,7 @@ except ImportError:
 
 from universalchess.state import get_chess_game as get_game_state
 from universalchess.state import get_players_state
+from universalchess.state.players import format_player_label
 from universalchess.paths import write_fen_log
 from universalchess.services.game_broadcast import broadcast_game_state
 from universalchess.services.chess_clock import get_chess_clock_service
@@ -431,8 +432,10 @@ class ChessGameService:
                 game_over=self._state.is_game_over,
                 result=self._state.result,
                 termination=self._state.termination,
-                white=players.white_name,
-                black=players.black_name,
+                # Join only at this display edge; PlayersState keeps name and
+                # rating apart for the e-paper clock.
+                white=format_player_label(players.white_name, players.white_rating),
+                black=format_player_label(players.black_name, players.black_rating),
                 pending_move=pending,
                 chess960=chess960,
                 start_fen=self._state.start_fen,

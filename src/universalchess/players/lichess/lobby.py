@@ -13,6 +13,31 @@ from .match import has_lichess_slot, lichess_account_id
 _MISSING_SCOPE = re.compile(r"Missing scope:\s*([a-z0-9:_-]+)", re.IGNORECASE)
 
 
+def is_cloudflare_challenge(exc: BaseException) -> bool:
+    """True when Lichess (or its CDN) returned a Cloudflare managed challenge.
+
+    A JavaScript challenge cannot be solved by berserk/requests, so the token
+    was never checked: ``lichess.dev`` currently answers ``GET /api/account``
+    with HTML ``Just a moment…`` and ``cf-mitigated: challenge`` instead of a
+    JSON 401. Treating that as ``auth_failed`` told the user to re-check a
+    token that never reached the API.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return False
+    headers = getattr(response, "headers", None) or {}
+    if str(headers.get("cf-mitigated", "")).lower() == "challenge":
+        return True
+    content_type = str(headers.get("content-type", "")).lower()
+    if "text/html" not in content_type:
+        return False
+    try:
+        body = (response.text or "")[:400].lower()
+    except Exception:
+        return False
+    return "just a moment" in body or "challenges.cloudflare.com" in body
+
+
 def _row(node_id: str, key: str) -> str:
     """Return a catalog string for a lobby row in the device's language.
 
@@ -122,6 +147,16 @@ def resolve_lichess_identity(token, log=None, host_id: str = ""):
             log.error("[Lichess] berserk library not installed")
         return ResolvedIdentity(error="no_berserk", message=t("lichess.identity.no_berserk"))
     except Exception as e:
+        if is_cloudflare_challenge(e):
+            if log:
+                log.error(
+                    "[Lichess] Token verification blocked by Cloudflare challenge "
+                    f"on host {host_id!r}: {e}"
+                )
+            return ResolvedIdentity(
+                error="host_blocked",
+                message=t("lichess.identity.host_blocked"),
+            )
         if log:
             log.error(f"[Lichess] Token verification failed: {e}")
         return ResolvedIdentity(error="auth_failed", message=t("lichess.identity.unverified"))

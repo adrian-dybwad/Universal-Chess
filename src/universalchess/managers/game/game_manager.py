@@ -2024,11 +2024,22 @@ class GameManager:
             self.database_session = None
             self.database_engine = None
     
-    def set_game_info(self, event: str, site: str, round_str: str, white: str, black: str):
-        """Set game metadata for PGN files.
-        
-        Also updates PlayersState if player names have changed,
-        which triggers UI updates in widgets observing the state.
+    def set_game_info(
+        self,
+        event: str,
+        site: str,
+        round_str: str,
+        white: str,
+        black: str,
+        white_rating: str = "",
+        black_rating: str = "",
+    ):
+        """Set game metadata for PGN files and PlayersState identity.
+
+        ``white`` / ``black`` are usernames only. Optional Elo values are kept
+        on PlayersState (and not packed into the name) so the e-paper clock can
+        draw them on a separate line. Omitting a name keeps the current one;
+        ratings always replace (empty clears a leftover Lichess Elo).
         """
         self.game_info = {
             'event': event,
@@ -2040,15 +2051,17 @@ class GameManager:
         
         # Update PlayersState with new names if provided
         # This allows Lichess games to update UI with actual player names
-        if white or black:
+        if white or black or white_rating or black_rating:
             from universalchess.state.players import get_players_state
             players_state = get_players_state()
-            current_white = players_state.white_name
-            current_black = players_state.black_name
-            new_white = white if white else current_white
-            new_black = black if black else current_black
-            if new_white != current_white or new_black != current_black:
-                players_state.set_player_names(new_white, new_black)
+            new_white = white if white else players_state.white_name
+            new_black = black if black else players_state.black_name
+            players_state.set_player_names(
+                new_white,
+                new_black,
+                white_rating=white_rating,
+                black_rating=black_rating,
+            )
     
     def set_clock(self, white_seconds: int, black_seconds: int, ticking_color: Optional[str] = None):
         """Set remaining times from a remote clock and start ticking.

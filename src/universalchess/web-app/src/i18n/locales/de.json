@@ -1234,6 +1234,7 @@
         "missing_field": "Bitte füllen Sie alle erforderlichen Felder aus.",
         "missing_identity": "Die Kontokennung ist erforderlich.",
         "auth_failed": "Das Konto konnte nicht überprüft werden. Prüfen Sie das Token und versuchen Sie es erneut.",
+        "host_blocked": "Dieser Lichess-Server hat die Anfrage der Brettsoftware blockiert (Cloudflare-Challenge). Das Token wurde nicht geprüft. Versuchen Sie lichess.org oder später erneut.",
         "no_token": "Ein Token ist erforderlich.",
         "no_berserk": "Der Lichess-Client ist auf dem Brett nicht verfügbar.",
         "unknown_type": "Unbekannter Kontotyp.",

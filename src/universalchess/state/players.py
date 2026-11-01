@@ -1,7 +1,7 @@
 """
 Players state.
 
-Holds observable player names for UI widgets.
+Holds observable player names (and optional ratings) for UI widgets.
 UI widgets observe this state to display player information.
 
 The actual Player objects and game logic remain in PlayerManager -
@@ -15,10 +15,11 @@ log = logging.getLogger(__name__)
 
 
 def format_player_label(name: str, rating) -> str:
-    """Clock / LiveBoard label: ``alice(1500)``, or name alone when unrated.
+    """Optional single-line label: ``alice(1500)``, or name alone when unrated.
 
-    Empty parentheses after an unrated or AI name hid the username and
-    looked like a missing rating.
+    Used at display edges that still want one string (e.g. LiveBoard SSE).
+    Names and ratings are stored separately in :class:`PlayersState`; this does
+    not write state and must not be round-tripped through ``split``.
     """
     text = (name or "").strip()
     rating_text = "" if rating is None else str(rating).strip()
@@ -27,12 +28,22 @@ def format_player_label(name: str, rating) -> str:
     return text
 
 
+def normalize_rating(rating) -> str:
+    """Strip a rating to a stored string; empty when absent or blank."""
+    if rating is None:
+        return ""
+    return str(rating).strip()
+
+
 class PlayersState:
     """Observable players state.
     
-    Holds player names and hand-brain mode (white and black) for UI display.
+    Holds player names, optional Elo ratings, and hand-brain mode (white and
+    black) for UI display. Ratings stay on their own fields so the e-paper
+    clock can draw username and ``ELO: xxx`` without packing them into the
+    name string.
     
-    Observers are notified when player names or hand-brain settings change
+    Observers are notified when player names or ratings change
     (e.g., when a remote client takes over from the local engine, or when
     Lichess game info arrives with actual player names).
     
@@ -44,6 +55,8 @@ class PlayersState:
         """Initialize players state with defaults."""
         self._white_name: str = ""
         self._black_name: str = ""
+        self._white_rating: str = ""
+        self._black_rating: str = ""
         self._white_hand_brain: bool = False
         self._black_hand_brain: bool = False
         
@@ -56,13 +69,23 @@ class PlayersState:
     
     @property
     def white_name(self) -> str:
-        """White player's display name."""
+        """White player's display name (username only; rating is separate)."""
         return self._white_name
     
     @property
     def black_name(self) -> str:
-        """Black player's display name."""
+        """Black player's display name (username only; rating is separate)."""
         return self._black_name
+
+    @property
+    def white_rating(self) -> str:
+        """White player's Elo as a string, or empty when unrated / unknown."""
+        return self._white_rating
+
+    @property
+    def black_rating(self) -> str:
+        """Black player's Elo as a string, or empty when unrated / unknown."""
+        return self._black_rating
     
     @property
     def white_hand_brain(self) -> bool:
@@ -79,13 +102,14 @@ class PlayersState:
     # -------------------------------------------------------------------------
     
     def on_names_change(self, callback: Callable[[str, str], None]) -> None:
-        """Register callback for player name changes.
+        """Register callback for player name / rating changes.
         
-        Called when player names change (e.g., when a remote client
+        Called when player names or ratings change (e.g., when a remote client
         takes over from the local engine).
         
         Args:
             callback: Function(white_name, black_name) called on change.
+                Ratings are read from this state in the same callback.
         """
         if callback not in self._on_names_change:
             self._on_names_change.append(callback)
@@ -111,19 +135,38 @@ class PlayersState:
     # State mutations (called by PlayerManager)
     # -------------------------------------------------------------------------
     
-    def set_player_names(self, white_name: str, black_name: str) -> None:
-        """Set player names.
+    def set_player_names(
+        self,
+        white_name: str,
+        black_name: str,
+        *,
+        white_rating: str = "",
+        black_rating: str = "",
+    ) -> None:
+        """Set player names and optional Elo ratings.
         
         Called when PlayerManager is initialized, players are swapped,
-        or Lichess game info arrives with actual player names.
+        or Lichess game info arrives with actual player names. Ratings default
+        to empty so local / engine games clear any leftover Lichess Elo.
         
         Args:
             white_name: White player's display name.
             black_name: Black player's display name.
+            white_rating: White Elo string, or empty when unrated.
+            black_rating: Black Elo string, or empty when unrated.
         """
-        if self._white_name != white_name or self._black_name != black_name:
+        white_rating = normalize_rating(white_rating)
+        black_rating = normalize_rating(black_rating)
+        if (
+            self._white_name != white_name
+            or self._black_name != black_name
+            or self._white_rating != white_rating
+            or self._black_rating != black_rating
+        ):
             self._white_name = white_name
             self._black_name = black_name
+            self._white_rating = white_rating
+            self._black_rating = black_rating
             self._notify_names_change()
     
     def set_hand_brain(self, white_hand_brain: bool, black_hand_brain: bool) -> None:
@@ -143,9 +186,16 @@ class PlayersState:
         
         Called when a game ends or is cleaned up.
         """
-        if self._white_name or self._black_name:
+        if (
+            self._white_name
+            or self._black_name
+            or self._white_rating
+            or self._black_rating
+        ):
             self._white_name = ""
             self._black_name = ""
+            self._white_rating = ""
+            self._black_rating = ""
             self._notify_names_change()
         self._white_hand_brain = False
         self._black_hand_brain = False

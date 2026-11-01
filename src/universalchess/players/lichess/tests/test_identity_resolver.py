@@ -106,6 +106,33 @@ def test_empty_username_is_auth_failed(fake_berserk):
     assert result.identity == ""
 
 
+def test_cloudflare_challenge_is_host_blocked_not_auth_failed(fake_berserk):
+    """A Cloudflare HTML challenge must not tell the user the token is wrong.
+
+    Why: lichess.dev (and occasional org incidents) answer /api/account with
+    ``cf-mitigated: challenge`` HTML; berserk raises ResponseError 403 and the
+    token never reaches Lichess. How a regression manifests: error stays
+    ``auth_failed``, so Add Account says "check the token" while org works
+    and .dev is unreachable to any API client.
+    """
+    class _Resp:
+        headers = {
+            "cf-mitigated": "challenge",
+            "content-type": "text/html; charset=UTF-8",
+            "server": "cloudflare",
+        }
+        text = "<!DOCTYPE html><title>Just a moment...</title>"
+
+    class _Challenge(Exception):
+        response = _Resp()
+        status_code = 403
+
+    fake_berserk["raises"] = _Challenge("403 Forbidden")
+    result = resolve_lichess_identity("lip_valid", host_id="dev")
+    assert result.error == "host_blocked"
+    assert result.identity == ""
+
+
 @pytest.mark.parametrize(
     "raises,expected_error",
     [(None, None), (RuntimeError("boom"), "auth_failed")],

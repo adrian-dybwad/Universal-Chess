@@ -1241,6 +1241,7 @@
         "missing_field": "Rellena todos los campos obligatorios.",
         "missing_identity": "El identificador de la cuenta es obligatorio.",
         "auth_failed": "No se pudo verificar la cuenta. Revisa el token e inténtalo de nuevo.",
+        "host_blocked": "Ese servidor de Lichess bloqueó la petición del tablero (desafío de Cloudflare). El token no se comprobó. Prueba lichess.org o inténtalo más tarde.",
         "no_token": "Se requiere un token.",
         "no_berserk": "El cliente de Lichess no está disponible en el tablero.",
         "unknown_type": "Tipo de cuenta desconocido.",

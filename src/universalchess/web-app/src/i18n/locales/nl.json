@@ -1234,6 +1234,7 @@
         "missing_field": "Vul alle vereiste velden in.",
         "missing_identity": "Account-id is vereist.",
         "auth_failed": "Kon het account niet verifiëren. Controleer het token en probeer het opnieuw.",
+        "host_blocked": "Die Lichess-server blokkeerde de aanvraag van het bord (Cloudflare-challenge). Het token is niet gecontroleerd. Probeer lichess.org, of later opnieuw.",
         "no_token": "Een token is vereist.",
         "no_berserk": "De Lichess-client is niet beschikbaar op het bord.",
         "unknown_type": "Onbekend accounttype.",

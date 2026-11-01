@@ -1496,6 +1496,22 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Add Account on lichess.dev no longer blames the token when Cloudflare
+  blocks the board**: ``GET https://lichess.dev/api/account`` currently
+  returns a Cloudflare managed challenge (HTML ``Just a moment…``,
+  ``cf-mitigated: challenge``) that berserk cannot pass, so verification
+  never reached Lichess and the UI said to check the token. That case is
+  now ``host_blocked`` with copy that the server blocked the board and
+  the token was not checked (try lichess.org, or retry later).
+
+- **Lichess Elo on the e-paper clock no longer sits truncated beside the
+  username**: ratings were packed into the PlayersState name as
+  ``alice(1500)`` and truncated on one line under White/Black. Username and
+  Elo are now separate PlayersState fields; the timed clock draws color,
+  username, and ``ELO: xxx`` as three evenly spaced lines when a rating is
+  present. LiveBoard still joins at the SSE edge for its single-line header.
+  Compact turn mode shows the bare username only.
+
 - **Original Centaur no longer says it cannot start when only
   ``settings/epaper.info`` is missing**: that file comes from the DGT SD
   data partition, and some launches do fail with Invalid epaper definition

@@ -2,7 +2,8 @@
 Chess clock widget displaying game time for both players.
 
 Layout:
-- Timed mode: Remaining time for white and black players with turn indicator
+- Timed mode: Remaining time for both players with turn indicator; left column
+  shows color, username, and ``ELO: xxx`` on evenly spaced lines when rated
 - Untimed mode (compact): Just "White Turn" or "Black Turn" text
 
 Turn indicator comes from ChessGameState (single source of truth for whose turn).
@@ -28,6 +29,22 @@ from universalchess.state import get_chess_game as get_game_state
 from universalchess.state.players import get_players_state
 from universalchess.i18n import t
 from universalchess.state.time_control import DelayMode, TimeControl
+
+
+def evenly_spaced_line_ys(section_y: int, section_height: int, line_count: int) -> list[int]:
+    """Top Y for each of ``line_count`` text lines evenly packed in a section.
+
+    Used by the timed clock so color, username, and Elo share the left column
+    without stacking against a fixed +12 offset (which clipped ``name(elo)``).
+    Returns an empty list when ``line_count`` is zero; a single line sits at
+    ``section_y``.
+    """
+    if line_count <= 0:
+        return []
+    if line_count == 1:
+        return [section_y]
+    slot = section_height // line_count
+    return [section_y + i * slot for i in range(line_count)]
 
 
 def format_increment_delay(time_control: TimeControl, color: str) -> str:
@@ -141,11 +158,16 @@ class ChessClockWidget(Widget):
                                         text=t("chess.color.white"), font_size=label_font,
                                         justify=Justify.LEFT, transparent=True,
                                         overflow=Overflow.FIT, min_font_size=8)
-        # White player name (smaller, under the label)
+        # White player name (smaller, under the color label)
         self._white_name_text = TextWidget(20, 0, 60, name_font + 4, self._handle_child_update,
                                            text="", font_size=name_font,
                                            justify=Justify.LEFT, transparent=True,
                                            overflow=Overflow.FIT, min_font_size=6)
+        # White Elo (third line when a rating is present)
+        self._white_elo_text = TextWidget(20, 0, 60, name_font + 4, self._handle_child_update,
+                                          text="", font_size=name_font,
+                                          justify=Justify.LEFT, transparent=True,
+                                          overflow=Overflow.FIT, min_font_size=6)
         # White time (right aligned)
         self._white_time_text = TextWidget(60, 0, 64, time_font + 4, self._handle_child_update,
                                            text="00:00", font_size=time_font,
@@ -156,11 +178,16 @@ class ChessClockWidget(Widget):
                                        text=t("chess.color.black"), font_size=label_font,
                                        justify=Justify.LEFT, transparent=True,
                                        overflow=Overflow.FIT, min_font_size=8)
-        # Black player name (smaller, under the label)
+        # Black player name (smaller, under the color label)
         self._black_name_text = TextWidget(20, 0, 60, name_font + 4, self._handle_child_update,
                                            text="", font_size=name_font,
                                            justify=Justify.LEFT, transparent=True,
                                            overflow=Overflow.FIT, min_font_size=6)
+        # Black Elo (third line when a rating is present)
+        self._black_elo_text = TextWidget(20, 0, 60, name_font + 4, self._handle_child_update,
+                                          text="", font_size=name_font,
+                                          justify=Justify.LEFT, transparent=True,
+                                          overflow=Overflow.FIT, min_font_size=6)
         # Black time
         self._black_time_text = TextWidget(60, 0, 64, time_font + 4, self._handle_child_update,
                                            text="00:00", font_size=time_font,
@@ -500,6 +527,39 @@ class ChessClockWidget(Widget):
             return f"delay {self._clock.delay_remaining}"
         return format_increment_delay(time_control, color)
 
+    def _draw_player_identity(
+        self,
+        sprite: Image.Image,
+        section_y: int,
+        section_height: int,
+        show_names: bool,
+        color_label: TextWidget,
+        name: str,
+        rating: str,
+        name_widget: TextWidget,
+        elo_widget: TextWidget,
+    ) -> None:
+        """Draw color, username, and optional Elo evenly spaced in a section.
+
+        ``name`` and ``rating`` come from separate PlayersState fields. When the
+        section is too short, only the color label is drawn at the top.
+        Otherwise the present lines share the section height in equal slots.
+        """
+        display_name = name if show_names else ""
+        display_rating = rating if show_names else ""
+        # Optional text to set before draw; color label is fixed at construction.
+        lines: list[tuple[TextWidget, Optional[str]]] = [(color_label, None)]
+        if display_name:
+            lines.append((name_widget, display_name))
+        if display_rating:
+            lines.append((elo_widget, t("clock.elo", rating=display_rating)))
+
+        ys = evenly_spaced_line_ys(section_y, section_height, len(lines))
+        for (widget, text), y in zip(lines, ys, strict=True):
+            if text is not None:
+                widget.set_text(text)
+            widget.draw_on(sprite, 20, y)
+
     def render(self, sprite: Image.Image) -> None:
         """
         Render the chess clock widget onto the sprite image.
@@ -530,12 +590,15 @@ class ChessClockWidget(Widget):
         # Two equal sections fill the widget, split at the middle. The compact
         # move-history layout is produced by DisplayManager shrinking the widget
         # height (not by repacking here), so the sections stay centered and just
-        # get shorter. Player names are drawn only when a section is tall enough
-        # to fit a name line under the color label.
+        # get shorter. Color / username / Elo are drawn only when a section is
+        # tall enough for three evenly spaced lines (Lichess ratings used to sit
+        # in brackets on the name line and get truncated).
         section_height = (self.height - 4) // 2  # -4 for top/middle separators
         top_y = 4
         separator_y = self.height // 2
         bottom_y = separator_y + 4
+        # 28px fits three ~9px slots for color / name / Elo; shorter sections
+        # are the compact move-history layout and drop the identity lines.
         show_names = section_height >= 28
         
         # Get times from clock state, active side from the clock (honors the
@@ -545,6 +608,8 @@ class ChessClockWidget(Widget):
         active_color = self.active_color
         white_name = self._players.white_name
         black_name = self._players.black_name
+        white_rating = self._players.white_rating
+        black_rating = self._players.black_rating
         
         # Determine which color goes on top based on flip setting
         if self._flip:
@@ -554,8 +619,12 @@ class ChessClockWidget(Widget):
             bottom_label = self._black_label
             top_name_widget = self._white_name_text
             bottom_name_widget = self._black_name_text
+            top_elo_widget = self._white_elo_text
+            bottom_elo_widget = self._black_elo_text
             top_name = white_name
             bottom_name = black_name
+            top_rating = white_rating
+            bottom_rating = black_rating
             top_time_widget = self._white_time_text
             bottom_time_widget = self._black_time_text
             top_time = white_time
@@ -573,8 +642,12 @@ class ChessClockWidget(Widget):
             bottom_label = self._white_label
             top_name_widget = self._black_name_text
             bottom_name_widget = self._white_name_text
+            top_elo_widget = self._black_elo_text
+            bottom_elo_widget = self._white_elo_text
             top_name = black_name
             bottom_name = white_name
+            top_rating = black_rating
+            bottom_rating = white_rating
             top_time_widget = self._black_time_text
             bottom_time_widget = self._white_time_text
             top_time = black_time
@@ -599,15 +672,10 @@ class ChessClockWidget(Widget):
             draw.ellipse([(4, indicator_y), (4 + indicator_size, indicator_y + indicator_size)], 
                         fill=255, outline=0)
         
-        # Top label using TextWidget - draw directly onto sprite
-        top_label.draw_on(sprite, 20, top_y)
-        
-        # Top player name (if set) - drawn below the color label. Dropped when
-        # the section is too short (compact layout) to fit a name line.
-        if top_name and show_names:
-            display_name = top_name[:10] if len(top_name) > 10 else top_name
-            top_name_widget.set_text(display_name)
-            top_name_widget.draw_on(sprite, 20, top_y + 12)
+        self._draw_player_identity(
+            sprite, top_y, section_height, show_names,
+            top_label, top_name, top_rating, top_name_widget, top_elo_widget,
+        )
         
         # Brain hint letter (to the left of clock, may overlap player name)
         if top_brain_hint:
@@ -640,15 +708,11 @@ class ChessClockWidget(Widget):
             draw.ellipse([(4, indicator_y), (4 + indicator_size, indicator_y + indicator_size)], 
                         fill=255, outline=0)
         
-        # Bottom label using TextWidget - draw directly onto sprite
-        bottom_label.draw_on(sprite, 20, bottom_y)
-        
-        # Bottom player name (if set) - drawn below the color label. Dropped when
-        # the section is too short (compact layout) to fit a name line.
-        if bottom_name and show_names:
-            display_name = bottom_name[:10] if len(bottom_name) > 10 else bottom_name
-            bottom_name_widget.set_text(display_name)
-            bottom_name_widget.draw_on(sprite, 20, bottom_y + 12)
+        self._draw_player_identity(
+            sprite, bottom_y, section_height, show_names,
+            bottom_label, bottom_name, bottom_rating,
+            bottom_name_widget, bottom_elo_widget,
+        )
         
         # Brain hint letter (to the left of clock, may overlap player name)
         if bottom_brain_hint:
@@ -695,6 +759,7 @@ class ChessClockWidget(Widget):
         if self._clock.kept_by_app:
             subline = t("clock.on_app")
         else:
+            # Compact mode has one subline; username only (timed mode draws Elo).
             subline = player_name[:15]
 
         # Compact move-history layout: DisplayManager has shrunk the widget, so

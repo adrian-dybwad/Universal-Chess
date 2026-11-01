@@ -1513,6 +1513,7 @@ const ADD_ERROR_KEYS: Record<string, string> = {
   missing_field: 'connectivity.accounts.errors.missing_field',
   missing_identity: 'connectivity.accounts.errors.missing_identity',
   auth_failed: 'connectivity.accounts.errors.auth_failed',
+  host_blocked: 'connectivity.accounts.errors.host_blocked',
   no_token: 'connectivity.accounts.errors.no_token',
   no_berserk: 'connectivity.accounts.errors.no_berserk',
   unknown_type: 'connectivity.accounts.errors.unknown_type',

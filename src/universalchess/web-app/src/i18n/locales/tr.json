@@ -1234,6 +1234,7 @@
         "missing_field": "Gerekli tüm alanları doldur.",
         "missing_identity": "Hesap kimliği gerekli.",
         "auth_failed": "Hesap doğrulanamadı. Tokeni kontrol et ve yeniden dene.",
+        "host_blocked": "Bu Lichess sunucusu tahtanın isteğini engelledi (Cloudflare doğrulaması). Token kontrol edilmedi. lichess.org deneyin veya daha sonra tekrar deneyin.",
         "no_token": "Bir token gerekli.",
         "no_berserk": "Lichess istemcisi tahtada kullanılamıyor.",
         "unknown_type": "Bilinmeyen hesap türü.",
