@@ -134,9 +134,17 @@
     "delete": "Löschen",
     "resume": "Fortsetzen",
     "confirmDelete": "Diese Partie löschen? Das kann nicht rückgängig gemacht werden.",
+    "confirmDeleteMany": "{{count}} Partien löschen? Das kann nicht rückgängig gemacht werden.",
     "resumeConfirm": "Diese Partie auf dem Brett fortsetzen? Eine gerade laufende Partie wird abgebrochen (sie kann später wieder fortgesetzt werden).",
     "statusInProgress": "Läuft",
-    "statusAbandoned": "Abgebrochen"
+    "statusAbandoned": "Abgebrochen",
+    "selectGame": "{{white}} gegen {{black}} auswählen",
+    "selectionToolbar": "Ausgewählte Partien",
+    "selectedCount": "{{count}} ausgewählt",
+    "selectAllMonth": "Alle auswählen",
+    "clearSelectionMonth": "Auswahl in diesem Monat aufheben",
+    "clearSelection": "Alles aufheben",
+    "deleteSelected": "Auswahl löschen ({{count}})"
   },
   "liveBoard": {
     "confirmNewGameTitle": "Neue Partie starten?",

@@ -136,9 +136,17 @@
     "delete": "Usuń",
     "resume": "Wznów",
     "confirmDelete": "Usunąć tę partię? Tej operacji nie można cofnąć.",
+    "confirmDeleteMany": "Usunąć {{count}} partie? Tej operacji nie można cofnąć.",
     "resumeConfirm": "Wznowić tę partię na szachownicy? Partia obecnie w toku zostanie porzucona (możesz ją wznowić później).",
     "statusInProgress": "W toku",
-    "statusAbandoned": "Porzucona"
+    "statusAbandoned": "Porzucona",
+    "selectGame": "Zaznacz {{white}} vs {{black}}",
+    "selectionToolbar": "Zaznaczone partie",
+    "selectedCount": "Zaznaczono: {{count}}",
+    "selectAllMonth": "Zaznacz wszystkie",
+    "clearSelectionMonth": "Odznacz w tym miesiącu",
+    "clearSelection": "Odznacz wszystkie",
+    "deleteSelected": "Usuń zaznaczone ({{count}})"
   },
   "liveBoard": {
     "confirmNewGameTitle": "Rozpocząć nową partię?",

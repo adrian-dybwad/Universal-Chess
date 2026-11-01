@@ -135,9 +135,17 @@
     "delete": "Elimina",
     "resume": "Riprendi",
     "confirmDelete": "Eliminare questa partita? Non si può annullare.",
+    "confirmDeleteMany": "Eliminare {{count}} partite? Non si può annullare.",
     "resumeConfirm": "Riprendere questa partita sulla scacchiera? La partita in corso verrà abbandonata (potrai riprenderla più tardi).",
     "statusInProgress": "In corso",
-    "statusAbandoned": "Abbandonata"
+    "statusAbandoned": "Abbandonata",
+    "selectGame": "Seleziona {{white}} vs {{black}}",
+    "selectionToolbar": "Partite selezionate",
+    "selectedCount": "{{count}} selezionate",
+    "selectAllMonth": "Seleziona tutto",
+    "clearSelectionMonth": "Deseleziona questo mese",
+    "clearSelection": "Deseleziona tutto",
+    "deleteSelected": "Elimina selezionate ({{count}})"
   },
   "liveBoard": {
     "confirmNewGameTitle": "Iniziare una nuova partita?",

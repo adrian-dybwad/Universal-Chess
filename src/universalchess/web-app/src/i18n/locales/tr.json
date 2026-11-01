@@ -134,9 +134,17 @@
     "delete": "Sil",
     "resume": "Devam et",
     "confirmDelete": "Bu oyun silinsin mi? Geri alınamaz.",
+    "confirmDeleteMany": "{{count}} oyun silinsin mi? Geri alınamaz.",
     "resumeConfirm": "Bu oyun tahtada sürdürülsün mü? Şu anda devam eden oyun bırakılır (sonra yine sürdürebilirsin).",
     "statusInProgress": "Devam ediyor",
-    "statusAbandoned": "Bırakıldı"
+    "statusAbandoned": "Bırakıldı",
+    "selectGame": "{{white}} vs {{black}} seç",
+    "selectionToolbar": "Seçili oyunlar",
+    "selectedCount": "{{count}} seçili",
+    "selectAllMonth": "Tümünü seç",
+    "clearSelectionMonth": "Bu aydaki seçimi kaldır",
+    "clearSelection": "Tüm seçimi kaldır",
+    "deleteSelected": "Seçilenleri sil ({{count}})"
   },
   "liveBoard": {
     "confirmNewGameTitle": "Yeni oyun başlatılsın mı?",

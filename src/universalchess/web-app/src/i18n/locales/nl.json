@@ -134,9 +134,17 @@
     "delete": "Verwijderen",
     "resume": "Hervatten",
     "confirmDelete": "Deze partij verwijderen? Dit kan niet worden teruggedraaid.",
+    "confirmDeleteMany": "{{count}} partijen verwijderen? Dit kan niet worden teruggedraaid.",
     "resumeConfirm": "Deze partij op het bord hervatten? Een partij die nu bezig is wordt afgebroken (je kunt die later weer hervatten).",
     "statusInProgress": "Bezig",
-    "statusAbandoned": "Afgebroken"
+    "statusAbandoned": "Afgebroken",
+    "selectGame": "Selecteer {{white}} vs {{black}}",
+    "selectionToolbar": "Geselecteerde partijen",
+    "selectedCount": "{{count}} geselecteerd",
+    "selectAllMonth": "Alles selecteren",
+    "clearSelectionMonth": "Selectie in deze maand wissen",
+    "clearSelection": "Alles wissen",
+    "deleteSelected": "Selectie verwijderen ({{count}})"
   },
   "liveBoard": {
     "confirmNewGameTitle": "Nieuwe partij starten?",

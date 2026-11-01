@@ -135,9 +135,17 @@
     "delete": "Supprimer",
     "resume": "Reprendre",
     "confirmDelete": "Supprimer cette partie ? Cette action est irréversible.",
+    "confirmDeleteMany": "Supprimer {{count}} parties ? Cette action est irréversible.",
     "resumeConfirm": "Reprendre cette partie sur le plateau ? Toute partie en cours sera abandonnée (vous pourrez la reprendre plus tard).",
     "statusInProgress": "En cours",
-    "statusAbandoned": "Abandonnée"
+    "statusAbandoned": "Abandonnée",
+    "selectGame": "Sélectionner {{white}} vs {{black}}",
+    "selectionToolbar": "Parties sélectionnées",
+    "selectedCount": "{{count}} sélectionnée(s)",
+    "selectAllMonth": "Tout sélectionner",
+    "clearSelectionMonth": "Désélectionner ce mois",
+    "clearSelection": "Tout désélectionner",
+    "deleteSelected": "Supprimer la sélection ({{count}})"
   },
   "liveBoard": {
     "confirmNewGameTitle": "Commencer une nouvelle partie ?",

@@ -136,9 +136,17 @@
     "delete": "Удалить",
     "resume": "Продолжить",
     "confirmDelete": "Удалить эту партию? Это нельзя отменить.",
+    "confirmDeleteMany": "Удалить {{count}} партий? Это нельзя отменить.",
     "resumeConfirm": "Продолжить эту партию на доске? Текущая партия будет брошена (её можно продолжить позже).",
     "statusInProgress": "В процессе",
-    "statusAbandoned": "Брошена"
+    "statusAbandoned": "Брошена",
+    "selectGame": "Выбрать {{white}} vs {{black}}",
+    "selectionToolbar": "Выбранные партии",
+    "selectedCount": "Выбрано: {{count}}",
+    "selectAllMonth": "Выбрать все",
+    "clearSelectionMonth": "Снять выбор в этом месяце",
+    "clearSelection": "Снять весь выбор",
+    "deleteSelected": "Удалить выбранные ({{count}})"
   },
   "liveBoard": {
     "confirmNewGameTitle": "Начать новую партию?",

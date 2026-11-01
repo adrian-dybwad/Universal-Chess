@@ -135,9 +135,17 @@
     "delete": "Eliminar",
     "resume": "Reanudar",
     "confirmDelete": "¿Eliminar esta partida? Esto no se puede deshacer.",
+    "confirmDeleteMany": "¿Eliminar {{count}} partidas? Esto no se puede deshacer.",
     "resumeConfirm": "¿Reanudar esta partida en el tablero? Cualquier partida en curso será abandonada (podrás reanudarla de nuevo más tarde).",
     "statusInProgress": "En curso",
-    "statusAbandoned": "Abandonada"
+    "statusAbandoned": "Abandonada",
+    "selectGame": "Seleccionar {{white}} vs {{black}}",
+    "selectionToolbar": "Partidas seleccionadas",
+    "selectedCount": "{{count}} seleccionadas",
+    "selectAllMonth": "Seleccionar todo",
+    "clearSelectionMonth": "Quitar selección de este mes",
+    "clearSelection": "Quitar toda la selección",
+    "deleteSelected": "Eliminar selección ({{count}})"
   },
   "liveBoard": {
     "confirmNewGameTitle": "¿Iniciar una nueva partida?",

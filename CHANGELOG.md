@@ -15,6 +15,14 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Added
 
+- **Multi-select delete on Games**: Removing several history rows required
+  a confirm and an auth round-trip per card. The Games screen now has
+  checkboxes on each card, a sticky toolbar (select all / clear for the
+  visible month, clear all, delete selected) when anything is checked,
+  one confirm for the batch, and `POST /api/games/delete` so a single
+  login covers the whole set. Selection is kept across month changes;
+  legacy `POST /deletegame/<id>` remains for single-card delete.
+
 - **Centaur launch log in Original Centaur Troubleshooting**: Centaur's
   stdout/stderr were captured to `centaur.log` and only named from the
   Event Log ("See centaur.log for details"), so a board stuck on the

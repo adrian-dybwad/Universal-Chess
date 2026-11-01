@@ -1660,6 +1660,42 @@ def deletegame(gameid):
         session.close()
     return "ok"
 
+
+@app.route("/api/games/delete", methods=["POST"])
+@requires_auth
+def api_games_bulk_delete():
+    """Delete many stored games in one authenticated request.
+
+    Body: ``{"ids": [int, ...]}`` with at least one positive integer id. Matching
+    ``GameMove`` rows are removed before their ``Game`` rows (same order as
+    ``/deletegame/<id>``). Unknown ids are skipped so a stale selection does not
+    fail the batch. Response: ``{"success": true, "deleted": <count>}`` where
+    ``deleted`` is how many game rows were removed.
+    """
+    body = request.get_json(silent=True) or {}
+    raw_ids = body.get("ids")
+    if not isinstance(raw_ids, list) or len(raw_ids) == 0:
+        abort(400)
+    ids: list[int] = []
+    for value in raw_ids:
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            abort(400)
+        ids.append(value)
+
+    session = get_db_session()
+    try:
+        # Distinct so a duplicated id in the body cannot inflate the count.
+        unique_ids = list(dict.fromkeys(ids))
+        move_stmt = delete(models.GameMove).where(models.GameMove.gameid.in_(unique_ids))
+        session.execute(move_stmt)
+        game_stmt = delete(models.Game).where(models.Game.id.in_(unique_ids))
+        result = session.execute(game_stmt)
+        session.commit()
+        deleted = int(result.rowcount or 0)
+    finally:
+        session.close()
+    return jsonify({"success": True, "deleted": deleted})
+
 @app.route("/getgames/<page>")
 def getGames(page):
     # Return batches of 10 games by listing games in reverse order
