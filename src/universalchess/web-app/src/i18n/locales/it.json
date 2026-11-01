@@ -492,6 +492,7 @@
       "description": "Hash, thread e margine mossa si applicano a ogni motore che li annuncia. Ogni motore può deselezionare Usa predefiniti condivisi nell'editor dei profili.",
       "hash": "Hash (MB)",
       "hashHelp": "Dimensione della tabella di trasposizione. Più grande può rafforzare il gioco ma usa più RAM.",
+      "hashConstrained": "Questa scheda riporta {{ram}} MB di RAM. Un Hash sopra {{safe}} MB può mettere sotto pressione la memoria con motori NNUE; alzalo solo se un motore lo richiede.",
       "threads": "Thread",
       "threadsHelp": "Thread CPU con cui cerca ogni motore.",
       "moveOverhead": "Margine mossa (ms)",

@@ -260,6 +260,7 @@
   "engine.defaults_threads": "Threads\n{value}",
   "engine.defaults_overhead": "Move overhead\n{value} ms",
   "engine.defaults_note": "Tablebase probe knobs are under Tablebases.",
+  "engine.defaults_hash_constrained": "This board reports {ram} MB of RAM. Hash above {safe} MB can pressure memory with NNUE engines.",
   "engine.not_supported": "Not supported on this device",
   "engine.needs_repair": "Needs repair",
   "engine.paused_at": "Paused at {percent}%",

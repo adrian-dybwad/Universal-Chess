@@ -489,6 +489,7 @@
       "description": "Hash, threads, and move overhead apply to every engine that advertises them. Each engine can uncheck Use shared defaults in its profile editor.",
       "hash": "Hash (MB)",
       "hashHelp": "Transposition table size. Larger can strengthen play but uses more RAM.",
+      "hashConstrained": "This board reports {{ram}} MB of RAM. Hash above {{safe}} MB can pressure memory with NNUE engines; raise it only if an engine needs it.",
       "threads": "Threads",
       "threadsHelp": "CPU threads each engine searches with.",
       "moveOverhead": "Move overhead (ms)",

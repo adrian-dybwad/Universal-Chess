@@ -489,6 +489,7 @@
       "description": "Hash, threads en zetoverhead gelden voor elke motor die ze aankondigt. Elke motor kan in de profieleditor Gedeelde standaarden gebruiken uitvinken.",
       "hash": "Hash (MB)",
       "hashHelp": "Grootte van de transpositietabel. Groter kan sterker spelen maar gebruikt meer RAM.",
+      "hashConstrained": "Dit bord meldt {{ram}} MB RAM. Hash boven {{safe}} MB kan het geheugen belasten bij NNUE-engines; verhoog het alleen als een engine het nodig heeft.",
       "threads": "Threads",
       "threadsHelp": "CPU-threads waarmee elke motor zoekt.",
       "moveOverhead": "Zetoverhead (ms)",

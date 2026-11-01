@@ -906,8 +906,12 @@ class TestEngineRegistry:
         from universalchess.services.engine_registry import EngineHandle
 
         engine = MagicMock()
+        # Real Option metadata so the spin clamp leaves in-range values alone.
         engine.options = chess.engine.UciOptionMap(
-            [("Threads", object()), ("Hash", object())]
+            [
+                ("Threads", chess.engine.Option("Threads", "spin", 1, 1, 1024, None)),
+                ("Hash", chess.engine.Option("Hash", "spin", 16, 1, 33554432, None)),
+            ]
         )
         handle = EngineHandle(path="/usr/games/stockfish", engine=engine)
 
@@ -916,6 +920,47 @@ class TestEngineRegistry:
         handle.configure({"threads": "2", "Hash": "16"})
 
         engine.configure.assert_called_once_with({"threads": "2", "Hash": "16"})
+
+    def test_configure_raises_shared_hash_to_engine_min(self, monkeypatch):
+        """Shared Hash below an engine's spin min is raised before configure.
+
+        Why this test exists: Claudia advertises Hash min 32; the shared default
+        is 16. Without a min-clamp, python-chess rejects the spin and Claudia
+        never starts. How a regression manifests: configure is called with
+        Hash "16", or an engine whose min is already <= 16 is changed.
+        """
+        from unittest.mock import MagicMock
+
+        import chess.engine
+
+        from universalchess.services import engine_defaults as ed
+        from universalchess.services.engine_registry import EngineHandle
+
+        monkeypatch.setattr(
+            ed,
+            "values",
+            lambda: {
+                "Hash": "16",
+                "Threads": "1",
+                "Move Overhead": "100",
+                "SyzygyProbeLimit": "5",
+                "SyzygyProbeDepth": "1",
+                "Syzygy50MoveRule": "true",
+            },
+        )
+
+        engine = MagicMock()
+        engine.options = chess.engine.UciOptionMap(
+            [
+                ("Hash", chess.engine.Option("Hash", "spin", 32, 32, 2048, None)),
+                ("Threads", chess.engine.Option("Threads", "spin", 1, 1, 1, None)),
+            ]
+        )
+        handle = EngineHandle(path="/opt/universalchess/engines/claudia", engine=engine)
+        handle.configure({})
+
+        forwarded = engine.configure.call_args[0][0]
+        assert forwarded["Hash"] == "32"
 
     def test_play_filters_unsupported_options_before_search(self):
         """EngineHandle.play strips unsupported options before applying them.

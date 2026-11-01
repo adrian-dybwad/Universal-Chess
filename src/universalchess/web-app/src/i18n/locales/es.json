@@ -492,6 +492,7 @@
       "description": "Hash, hilos y margen de jugada se aplican a todo motor que los anuncie. Cada motor puede desmarcar Usar valores compartidos en su editor de perfiles.",
       "hash": "Hash (MB)",
       "hashHelp": "Tamaño de la tabla de transposición. Más grande puede fortalecer el juego, pero usa más RAM.",
+      "hashConstrained": "Esta placa informa {{ram}} MB de RAM. Un Hash por encima de {{safe}} MB puede presionar la memoria con motores NNUE; súbelo solo si un motor lo necesita.",
       "threads": "Hilos",
       "threadsHelp": "Hilos de CPU con los que busca cada motor.",
       "moveOverhead": "Margen de jugada (ms)",

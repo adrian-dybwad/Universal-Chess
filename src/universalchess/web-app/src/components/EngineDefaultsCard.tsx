@@ -43,13 +43,16 @@ export function parseEngineDefaults(raw: unknown): EngineDefaultsStatus {
     syzygy_probe_limit: num('syzygy_probe_limit', 5),
     syzygy_probe_depth: num('syzygy_probe_depth', 1),
     syzygy_50_move_rule: value.syzygy_50_move_rule !== false,
-    hash_max_mb: num('hash_max_mb', 16),
+    hash_max_mb: num('hash_max_mb', 64),
     threads_max: num('threads_max', 8),
     move_overhead_max: num('move_overhead_max', 1000),
     ram_mb: nullableNum('ram_mb'),
     constrained: value.constrained === true,
   };
 }
+
+/** Shared default Hash; above this on a constrained board shows a RAM warning. */
+const HASH_SAFE_DEFAULT_MB = 16;
 
 export async function postEngineDefaults(
   payload: Record<string, number | boolean>,
@@ -104,6 +107,14 @@ export function EngineDefaultsCard() {
       <CardHeader title={t('settingsPage.engineDefaults.title')} />
       <p className="text-muted syzygy-card-copy">{t('settingsPage.engineDefaults.description')}</p>
       {error && <p className="syzygy-card-error" role="alert">{error}</p>}
+      {status.constrained && status.hash > HASH_SAFE_DEFAULT_MB && (
+        <p className="syzygy-card-constrained" role="status">
+          {t('settingsPage.engineDefaults.hashConstrained', {
+            ram: status.ram_mb ?? 0,
+            safe: HASH_SAFE_DEFAULT_MB,
+          })}
+        </p>
+      )}
       <FormRow label={t('settingsPage.engineDefaults.hash')} help={t('settingsPage.engineDefaults.hashHelp')}>
         <Slider
           value={status.hash}

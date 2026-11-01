@@ -190,4 +190,37 @@ describe('Shared engine defaults card', () => {
       expect(lastDefaultsPost).toEqual({ hash: 3 });
     });
   });
+
+  it('warns when Hash is above 16 MB on a constrained board', async () => {
+    // Why: the constrained ceiling is 64 so users can raise Hash for Claudia,
+    // but NNUE Stockfish plus a large hash can thrash a ~512 MB board. The
+    // warning must appear when the draft value is above the 16 MB default, not
+    // merely when the board is constrained at Hash 16. How a regression
+    // manifests: no warning at Hash 64 on a 415 MB board, or a warning while
+    // Hash is still 16.
+    mockFetch();
+    defaultsState = {
+      ...idleDefaults,
+      hash: 16,
+      hash_max_mb: 64,
+      ram_mb: 415,
+      constrained: true,
+    };
+    setLiveStatus({
+      activity: { active: false, activities: [] },
+      engine: null,
+      syzygy: null,
+      engineDefaults: defaultsState as unknown as Record<string, unknown>,
+      wifi: null,
+      bluetooth: null,
+      updates: null,
+      webBuild: null,
+    });
+    renderEnginesTab();
+    await screen.findByRole('heading', { name: 'Shared engine defaults' });
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    const hashSlider = screen.getAllByRole('slider')[0];
+    fireEvent.change(hashSlider, { target: { value: '64' } });
+    expect(await screen.findByRole('status')).toHaveTextContent(/415 MB/i);
+  });
 });

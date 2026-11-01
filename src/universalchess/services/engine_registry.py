@@ -222,7 +222,10 @@ class EngineHandle:
                 f"[EngineHandle] {self.path}: ignoring options not advertised "
                 f"by engine: {dropped}"
             )
-        return supported
+        # Raise/lower spins to each engine's advertised bounds. Shared Hash can
+        # be below Claudia's min (32) while Stockfish accepts 16; forwarding the
+        # raw shared value makes python-chess reject configure.
+        return engine_defaults.clamp_spins_to_advertised(supported, advertised)
 
     def full_strength_options(self) -> Dict[str, object]:
         """Return the options that clear any playing-strength limit on this engine.

@@ -495,6 +495,7 @@
       "description": "Hash, wątki i narzut ruchu dotyczą każdego silnika, który je ogłasza. Każdy silnik może odznaczyć Używaj wspólnych ustawień w edytorze profili.",
       "hash": "Hash (MB)",
       "hashHelp": "Rozmiar tablicy transpozycji. Większy może wzmocnić grę, ale zużywa więcej RAM.",
+      "hashConstrained": "Ta płyta zgłasza {{ram}} MB RAM. Hash powyżej {{safe}} MB może obciążać pamięć przy silnikach NNUE; podnoś go tylko, gdy silnik tego wymaga.",
       "threads": "Wątki",
       "threadsHelp": "Wątki CPU, z którymi każdy silnik szuka.",
       "moveOverhead": "Narzut ruchu (ms)",

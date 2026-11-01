@@ -260,6 +260,7 @@
   "engine.defaults_threads": "Threads\n{value}",
   "engine.defaults_overhead": "Zugoverhead\n{value} ms",
   "engine.defaults_note": "Tablebase-Abfrage unter Tabellen.",
+  "engine.defaults_hash_constrained": "Dieses Brett meldet {ram} MB RAM. Hash über {safe} MB kann bei NNUE-Engines den Speicher belasten.",
   "engine.not_supported": "Auf diesem Gerät nicht unterstützt",
   "engine.needs_repair": "Reparatur nötig",
   "engine.paused_at": "Pausiert bei {percent}%",

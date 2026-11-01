@@ -122,7 +122,8 @@ def handle_engine_defaults_menu(
 
     def build_entries():
         status = read_status()
-        return [
+        hash_mb = int(status.get("hash") or 0)
+        entries = [
             IconMenuEntry(
                 key="note",
                 label=t("engine.defaults_note"),
@@ -133,37 +134,63 @@ def handle_engine_defaults_menu(
                 layout="horizontal",
                 font_size=11,
             ),
-            IconMenuEntry(
-                key="hash",
-                label=t("engine.defaults_hash", value=status.get("hash") or 0),
-                icon_name="settings",
-                enabled=True,
-                selectable=True,
-                height_ratio=0.8,
-                layout="horizontal",
-                font_size=12,
-            ),
-            IconMenuEntry(
-                key="threads",
-                label=t("engine.defaults_threads", value=status.get("threads") or 0),
-                icon_name="settings",
-                enabled=True,
-                selectable=True,
-                height_ratio=0.8,
-                layout="horizontal",
-                font_size=12,
-            ),
-            IconMenuEntry(
-                key="overhead",
-                label=t("engine.defaults_overhead", value=status.get("move_overhead") or 0),
-                icon_name="settings",
-                enabled=True,
-                selectable=True,
-                height_ratio=0.8,
-                layout="horizontal",
-                font_size=12,
-            ),
         ]
+        # Above the 16 MB default on a low-RAM board: NNUE + large hash can thrash.
+        if status.get("constrained") and hash_mb > engine_defaults.DEFAULT_HASH_MB:
+            entries.append(
+                IconMenuEntry(
+                    key="hash_warn",
+                    label=t(
+                        "engine.defaults_hash_constrained",
+                        ram=status.get("ram_mb") or 0,
+                        safe=engine_defaults.DEFAULT_HASH_MB,
+                    ),
+                    icon_name="info",
+                    enabled=True,
+                    selectable=False,
+                    height_ratio=1.2,
+                    layout="horizontal",
+                    font_size=11,
+                )
+            )
+        entries.extend(
+            [
+                IconMenuEntry(
+                    key="hash",
+                    label=t("engine.defaults_hash", value=hash_mb),
+                    icon_name="settings",
+                    enabled=True,
+                    selectable=True,
+                    height_ratio=0.8,
+                    layout="horizontal",
+                    font_size=12,
+                ),
+                IconMenuEntry(
+                    key="threads",
+                    label=t("engine.defaults_threads", value=status.get("threads") or 0),
+                    icon_name="settings",
+                    enabled=True,
+                    selectable=True,
+                    height_ratio=0.8,
+                    layout="horizontal",
+                    font_size=12,
+                ),
+                IconMenuEntry(
+                    key="overhead",
+                    label=t(
+                        "engine.defaults_overhead",
+                        value=status.get("move_overhead") or 0,
+                    ),
+                    icon_name="settings",
+                    enabled=True,
+                    selectable=True,
+                    height_ratio=0.8,
+                    layout="horizontal",
+                    font_size=12,
+                ),
+            ]
+        )
+        return entries
 
     def handle_selection(result: MenuSelection):
         status = read_status()

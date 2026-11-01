@@ -489,6 +489,7 @@
       "description": "Hash, iş parçacığı ve hamle payı bunları bildiren her motora uygulanır. Her motor profil düzenleyicisinde Paylaşılan varsayılanları kullan işaretini kaldırabilir.",
       "hash": "Hash (MB)",
       "hashHelp": "Transpozisyon tablosu boyutu. Daha büyük oyunu güçlendirebilir ama daha fazla RAM kullanır.",
+      "hashConstrained": "Bu kart {{ram}} MB RAM bildiriyor. {{safe}} MB üzerindeki Hash, NNUE motorlarında belleği zorlayabilir; yalnızca bir motor gerektiriyorsa yükseltin.",
       "threads": "İş parçacığı",
       "threadsHelp": "Her motorun aradığı CPU iş parçacığı sayısı.",
       "moveOverhead": "Hamle payı (ms)",

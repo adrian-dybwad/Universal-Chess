@@ -260,6 +260,7 @@
   "engine.defaults_threads": "Потоки\n{value}",
   "engine.defaults_overhead": "Запас хода\n{value} мс",
   "engine.defaults_note": "Параметры Syzygy в Tablebases.",
+  "engine.defaults_hash_constrained": "Эта плата сообщает {ram} МБ ОЗУ. Hash выше {safe} МБ может давить на память с NNUE-движками.",
   "engine.not_supported": "Недоступно\nна этой доске",
   "engine.needs_repair": "Нужен ремонт",
   "engine.paused_at": "Пауза на {percent}%",

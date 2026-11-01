@@ -260,6 +260,7 @@
   "engine.defaults_threads": "Wątki\n{value}",
   "engine.defaults_overhead": "Narzut ruchu\n{value} ms",
   "engine.defaults_note": "Sondowanie baz w Tablebases.",
+  "engine.defaults_hash_constrained": "Ta płyta zgłasza {ram} MB RAM. Hash powyżej {safe} MB może obciążać pamięć przy silnikach NNUE.",
   "engine.not_supported": "Brak wsparcia na tym urządzeniu",
   "engine.needs_repair": "Wymaga naprawy",
   "engine.paused_at": "Wstrzymano na {percent}%",

@@ -31,7 +31,10 @@ DEFAULT_SYZYGY_PROBE_LIMIT = 5
 DEFAULT_SYZYGY_PROBE_DEPTH = 1
 DEFAULT_SYZYGY_50_MOVE_RULE = True
 
-CONSTRAINED_HASH_MAX_MB = 16
+# Ceiling on boards with under LOW_RAM_MB. Higher than the 16 MB default so a
+# user can reach Claudia's Hash min (32) and a careful 64 MB; still far below
+# Stockfish's advertised multi-terabyte max, which OOMs a ~512 MB board.
+CONSTRAINED_HASH_MAX_MB = 64
 UNCONSTRAINED_HASH_CAP_MB = 1024
 LOW_RAM_MB = 2048
 # Shared and per-engine overlay sliders share these ceilings. Stockfish
@@ -66,12 +69,14 @@ __all__ = [
     "DEFAULT_MOVE_OVERHEAD_MS",
     "DEFAULT_SYZYGY_PROBE_LIMIT",
     "DEFAULT_SYZYGY_PROBE_DEPTH",
+    "CONSTRAINED_HASH_MAX_MB",
     "RESOURCE_NAMES",
     "SYZYGY_NAMES",
     "values",
     "status",
     "hash_max_mb",
     "slider_cap",
+    "clamp_spins_to_advertised",
     "THREADS_SLIDER_MAX",
     "MOVE_OVERHEAD_SLIDER_MAX_MS",
     "merge_options",
@@ -96,9 +101,10 @@ def _ram_mb() -> Optional[int]:
 def hash_max_mb(ram_mb: Optional[int] = None) -> int:
     """Return a Hash slider ceiling that will not OOM this board.
 
-    Stockfish advertises a multi-terabyte max. Constrained boards stay at the
-    16 MB floor already used as the shared default. A Pi 5 / CM5 may use up to
-    one eighth of reported RAM, capped at 1 GB.
+    Stockfish advertises a multi-terabyte max. Constrained boards use
+    :data:`CONSTRAINED_HASH_MAX_MB` (above the 16 MB shared default so Claudia's
+    min of 32 is reachable). A Pi 5 / CM5 may use up to one eighth of reported
+    RAM, capped at 1 GB.
     """
     ram = _ram_mb() if ram_mb is None else ram_mb
     if ram is None:
@@ -139,6 +145,46 @@ def clamp_shared_int(name: str, value: int) -> int:
     if folded == "syzygyprobedepth":
         return max(1, min(100, value))
     return value
+
+
+def _as_int(value: object) -> Optional[int]:
+    """Parse ``value`` as an int, or None when it is not a decimal spin."""
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def clamp_spins_to_advertised(
+    options: Mapping[str, object],
+    advertised: Mapping[str, object],
+) -> Dict[str, object]:
+    """Clamp spin values to each engine's advertised min/max.
+
+    Shared Hash can sit below an engine's spin min (Claudia advertises min 32
+    while the shared default is 16). python-chess rejects out-of-range spins,
+    which aborts configure. Non-spin options and spins without bounds are left
+    unchanged. Values already inside the range are not moved.
+    """
+    out: Dict[str, object] = dict(options)
+    for name, value in list(out.items()):
+        option = advertised.get(name)
+        if option is None or getattr(option, "type", None) != "spin":
+            continue
+        lo = getattr(option, "min", None)
+        hi = getattr(option, "max", None)
+        if lo is None and hi is None:
+            continue
+        number = _as_int(value)
+        if number is None:
+            # Leave non-decimal values for the engine; only clamp known spins.
+            continue
+        if lo is not None:
+            number = max(int(lo), number)
+        if hi is not None:
+            number = min(int(hi), number)
+        out[name] = str(number)
+    return out
 
 
 def values() -> Dict[str, str]:

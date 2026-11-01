@@ -260,6 +260,7 @@
   "engine.defaults_threads": "İş parçacığı\n{value}",
   "engine.defaults_overhead": "Hamle payı\n{value} ms",
   "engine.defaults_note": "Tablebase sorgusu Tablebases altında.",
+  "engine.defaults_hash_constrained": "Bu kart {ram} MB RAM bildiriyor. {safe} MB üzerindeki Hash, NNUE motorlarında belleği zorlayabilir.",
   "engine.not_supported": "Bu cihazda desteklenmiyor",
   "engine.needs_repair": "Onarım gerekir",
   "engine.paused_at": "%{percent} duraklatıldı",

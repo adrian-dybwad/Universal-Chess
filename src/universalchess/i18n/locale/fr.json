@@ -260,6 +260,7 @@
   "engine.defaults_threads": "Fils\n{value}",
   "engine.defaults_overhead": "Marge de coup\n{value} ms",
   "engine.defaults_note": "Sondage des tables sous Tables de finales.",
+  "engine.defaults_hash_constrained": "Ce plateau signale {ram} Mo de RAM. Hash au-dessus de {safe} Mo peut mettre la mémoire sous pression avec des moteurs NNUE.",
   "engine.not_supported": "Non pris en charge sur cet appareil",
   "engine.needs_repair": "À réparer",
   "engine.paused_at": "En pause à {percent}%",

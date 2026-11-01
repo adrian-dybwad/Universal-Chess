@@ -260,6 +260,7 @@
   "engine.defaults_threads": "Threads\n{value}",
   "engine.defaults_overhead": "Zetoverhead\n{value} ms",
   "engine.defaults_note": "Tablebase-sondes onder Tablebases.",
+  "engine.defaults_hash_constrained": "Dit bord meldt {ram} MB RAM. Hash boven {safe} MB kan het geheugen belasten bij NNUE-engines.",
   "engine.not_supported": "Niet ondersteund op dit apparaat",
   "engine.needs_repair": "Herstel nodig",
   "engine.paused_at": "Gepauzeerd bij {percent}%",

@@ -489,6 +489,7 @@
       "description": "Hash, Threads und Zugoverhead gelten für jede Engine, die sie anbietet. Jede Engine kann in ihrem Profil-Editor Gemeinsame Vorgaben verwenden abwählen.",
       "hash": "Hash (MB)",
       "hashHelp": "Größe der Transpositionstabelle. Größer kann stärker spielen, braucht aber mehr RAM.",
+      "hashConstrained": "Dieses Brett meldet {{ram}} MB RAM. Hash über {{safe}} MB kann bei NNUE-Engines den Speicher belasten; nur erhöhen, wenn eine Engine es braucht.",
       "threads": "Threads",
       "threadsHelp": "CPU-Threads, mit denen jede Engine sucht.",
       "moveOverhead": "Zugoverhead (ms)",

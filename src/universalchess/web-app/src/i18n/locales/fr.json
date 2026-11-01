@@ -492,6 +492,7 @@
       "description": "Hash, fils et marge de coup s'appliquent à chaque moteur qui les annonce. Chaque moteur peut décocher Utiliser les réglages partagés dans son éditeur de profils.",
       "hash": "Hash (Mo)",
       "hashHelp": "Taille de la table de transposition. Plus grand peut renforcer le jeu mais utilise plus de RAM.",
+      "hashConstrained": "Ce plateau signale {{ram}} Mo de RAM. Un Hash au-dessus de {{safe}} Mo peut mettre la mémoire sous pression avec des moteurs NNUE ; ne l'augmentez que si un moteur en a besoin.",
       "threads": "Fils",
       "threadsHelp": "Fils CPU avec lesquels chaque moteur cherche.",
       "moveOverhead": "Marge de coup (ms)",

@@ -1496,6 +1496,15 @@ reorganized with proper module structure, comprehensive tests, and modern CI/CD.
 
 ### Fixed
 
+- **Claudia starts with the shared 16 MB Hash default**: Claudia advertises
+  Hash min 32, so python-chess rejected the shared default and configure
+  aborted. Spin values are now raised (or lowered) to each engine's
+  advertised min/max at the EngineHandle boundary. The constrained-board
+  Hash ceiling rises from 16 MB to 64 MB so 32/64 are reachable on the
+  shared slider; the shipped default stays 16 MB. Raising Hash above 16 MB
+  on a board under 2 GB RAM shows a memory warning on the web card and the
+  board Engine defaults screen.
+
 - **Add Account on lichess.dev no longer blames the token when Cloudflare
   blocks the board**: ``GET https://lichess.dev/api/account`` currently
   returns a Cloudflare managed challenge (HTML ``Just a moment…``,

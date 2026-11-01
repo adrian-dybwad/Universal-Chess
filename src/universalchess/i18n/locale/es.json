@@ -260,6 +260,7 @@
   "engine.defaults_threads": "Hilos\n{value}",
   "engine.defaults_overhead": "Margen de jugada\n{value} ms",
   "engine.defaults_note": "Sondeo de tablas en Tablas de finales.",
+  "engine.defaults_hash_constrained": "Esta placa informa {ram} MB de RAM. Hash sobre {safe} MB puede presionar la memoria con motores NNUE.",
   "engine.not_supported": "No compatible con este equipo",
   "engine.needs_repair": "Necesita reparación",
   "engine.paused_at": "Pausado al {percent}%",

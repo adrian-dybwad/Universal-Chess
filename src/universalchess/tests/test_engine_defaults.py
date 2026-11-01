@@ -57,27 +57,60 @@ def test_shipped_hash_and_threads_match_the_low_power_seed():
     assert ed.DEFAULT_THREADS == 1
 
 
-def test_hash_max_is_sixteen_on_a_constrained_board():
-    """The Hash slider must not offer more RAM than a 512 MB board can spare.
+def test_hash_max_is_sixty_four_on_a_constrained_board():
+    """Constrained boards may raise Hash to 64 MB, not Stockfish's multi-TB max.
 
-    Why: Stockfish advertises a multi-terabyte max; using that as the slider
-    ceiling lets a tap set Hash to a value that OOMs the board. How a
-    regression manifests: hash_max_mb(415) is greater than 16.
+    Why: Claudia's Hash spin min is 32, and a careful user may want 64; the old
+    16 MB ceiling could not express either. Stockfish still advertises a
+    multi-terabyte max, so the device ceiling must stay well below that. How a
+    regression manifests: hash_max_mb(415) is not 64, or jumps above 64 toward
+    the engine's advertised max.
     """
-    assert ed.hash_max_mb(415) == 16
-    assert ed.hash_max_mb(2047) == 16
+    assert ed.CONSTRAINED_HASH_MAX_MB == 64
+    assert ed.hash_max_mb(415) == 64
+    assert ed.hash_max_mb(2047) == 64
 
 
 def test_hash_max_scales_on_a_pi5():
-    """A Pi 5 / CM5 with several GB may raise Hash above the 16 MB floor.
+    """A Pi 5 / CM5 with several GB may raise Hash above the constrained ceiling.
 
     Why: the feature exists so a larger board can use more RAM without each
     engine storing its own Hash. How a regression manifests: hash_max_mb(8192)
-    stays 16, or exceeds 1/8 of reported RAM.
+    stays at the constrained ceiling, or exceeds 1/8 of reported RAM.
     """
     assert ed.hash_max_mb(8192) == 1024
     assert ed.hash_max_mb(4096) == 512
-    assert ed.hash_max_mb(None) >= 16
+    assert ed.hash_max_mb(None) >= ed.CONSTRAINED_HASH_MAX_MB
+
+
+def test_clamp_spin_raises_hash_to_the_engine_advertised_min():
+    """Shared Hash below an engine's spin min is raised, not forwarded as-is.
+
+    Why: Claudia advertises Hash min 32 while the shared default is 16.
+    python-chess rejects out-of-range spins, so configure aborts and Claudia
+    never plays. How a regression manifests: Hash stays "16" when the
+    advertised Option.min is 32, or a value already at/above the min is changed.
+    """
+    import chess.engine
+
+    advertised = chess.engine.UciOptionMap(
+        [
+            (
+                "Hash",
+                chess.engine.Option("Hash", "spin", 32, 32, 2048, None),
+            ),
+            (
+                "Threads",
+                chess.engine.Option("Threads", "spin", 1, 1, 512, None),
+            ),
+        ]
+    )
+    raised = ed.clamp_spins_to_advertised({"Hash": "16", "Threads": "1"}, advertised)
+    assert raised["Hash"] == "32"
+    assert raised["Threads"] == "1"
+
+    untouched = ed.clamp_spins_to_advertised({"Hash": "64"}, advertised)
+    assert untouched["Hash"] == "64"
 
 
 def test_merge_applies_shared_hash_and_threads(shared_values):
