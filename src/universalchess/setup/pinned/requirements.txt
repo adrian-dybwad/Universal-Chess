@@ -35,8 +35,8 @@ deprecated==1.3.1 \
     --hash=sha256:597bfef186b6f60181535a29fbe44865ce137a5079f295b479886c82729d5f3f
 ndjson==0.3.1 \
     --hash=sha256:839c22275e6baa3040077b83c005ac24199b94973309a8a1809be962c753a410
-python-dateutil==3.0.0 \
-    --hash=sha256:3c79630202e4152c6add678446984236efe4f57e84d8e892aab0637bab82e9fd
+python-dateutil==4.0.0 \
+    --hash=sha256:a5e246f79eb80475e691bf93862cead98decd8a498cf53ba0516fcdc0f50dc1c
 python-pam==2.1.1 \
     --hash=sha256:4f85666ebb69ecdf4c2cdcc648e781d3ee0ec60f7048483e160e585a66ab914e
 segno==1.6.6 \
